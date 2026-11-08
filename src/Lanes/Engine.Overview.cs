@@ -347,9 +347,20 @@ sealed partial class Engine
         }
         g.Rect(0, 0, g.Width, g.Height, A(0xFF000000, 0.55f * pc));
 
-        // Lane rows.
+        // Where each window is at this moment.
+        var boxes = new Box[o.Thumbs.Count];
+        double highest = double.MaxValue;
+        for (int i = 0; i < boxes.Length; i++)
+        {
+            boxes[i] = o.From[i].Lerp(o.To[i], Math.Clamp(p, -0.05, 1.08));
+            highest = Math.Min(highest, boxes[i].Y);
+        }
+
+        // Lane rows. They come down from above the screen just ahead of the windows, so they
+        // never overlap them (as the Spaces bar does in Mission Control).
         float sp = Math.Clamp(p / 0.6f, 0, 1), sq = 1 - MathF.Pow(1 - sp, 3);
         float a = sq * keep, dy = (1 - sq) * -40 * s;
+        if (boxes.Length > 0) dy = Math.Min(dy, Math.Min(0, (float)highest - 30 * s - o.StripBottom));
         if (a > 0.002f)
         {
             var labelFont = g.Font(11 * s, FontWeight.SemiBold);
@@ -392,8 +403,8 @@ sealed partial class Engine
         var nameFont = g.Font(15 * s);
         for (int i = 0; i < o.Thumbs.Count; i++)
         {
-            var b = o.From[i].Lerp(o.To[i], Math.Clamp(p, -0.05, 1.08));
-            o.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep, (o.StripBottom + dy) * sq);
+            var b = boxes[i];
+            o.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep);
             if (la > 0.002f)
             {
                 float icon = 16 * s, gap = 8 * s, room = (float)b.W - 16 * s - icon - gap;
