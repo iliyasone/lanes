@@ -14,14 +14,11 @@ static class SwitchIndicator
         {
             if (!IsWindowVisible(h)) return true;
             var r = Frame(h);
-            // Small, in the lower middle of the screen.
-            bool lower = r.Top > mi.Monitor.Height / 2 && r.Width < mi.Monitor.Width * 0.6 && r.Height < 220;
             bool cloaked = Cloaked(h);
-            if (!lower && cloaked) return true;
             GetWindowThreadProcessId(h, out uint pid);
+            if (pid == Environment.ProcessId) return true;
             string proc;
             try { using var p = Process.GetProcessById((int)pid); proc = p.ProcessName; } catch { proc = "?"; }
-            if (!lower && proc != "explorer") return true;
             long ex = GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64();
             lines.Add($"  {proc} {h} class='{ClassName(h)}' title='{WindowText(h)}' rect={r} ex=0x{ex:X}{(cloaked ? " cloaked" : "")}");
             return true;

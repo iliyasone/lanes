@@ -35,13 +35,11 @@ static class Demo
             foreach (var d in new[] { top, research, agent, editor })
             {
                 Desktops.Switch(d);
-                foreach (int ms in new[] { 150, 400, 800, 1600 })
-                {
-                    await Task.Delay(ms == 150 ? 150 : ms / 2);
-                    engine.Post(() => SwitchIndicator.Describe($"{ms} ms after a switch"));
-                }
+                await Task.Delay(500);
+                if (d == top) engine.Post(() => SwitchIndicator.Describe("500 ms after a switch"));
                 // Windows' own "Desktop N" pill stays a while; the picture is taken after it.
-                await Task.Delay(1500);
+                await Task.Delay(2500);
+                if (d == top) engine.Post(() => SwitchIndicator.Describe("3 s after a switch"));
                 engine.Snapshot();
                 await Task.Delay(400);
             }
