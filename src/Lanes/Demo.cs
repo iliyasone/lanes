@@ -75,6 +75,25 @@ static class Demo
             Click(c.Left + c.Width / 2, c.Top + c.Height / 2);
             await Task.Delay(500);
             Log.Write(clicked ? "click reached the window under the overlay" : "CLICK BLOCKED by the overlay");
+            // With Windows' setting that Lanes turns on, the taskbar keeps the apps of other desktops.
+            using (var np = System.Diagnostics.Process.Start("notepad.exe")!)
+            {
+                IntPtr npw = IntPtr.Zero;
+                for (int i = 0; i < 50 && npw == IntPtr.Zero; i++) { await Task.Delay(100); np.Refresh(); npw = np.MainWindowHandle; }
+                Desktops.MoveWindow(npw, agent);
+                await Task.Delay(1000);
+                using var before = TaskbarShot(Path.Combine(dir, "16-taskbar-this-desktop.png"));
+                TaskbarSetting.ShowAllDesktops();
+                await Task.Delay(1500);
+                using var after = TaskbarShot(Path.Combine(dir, "17-taskbar-all-desktops.png"));
+                int changed = 0;
+                for (int y = 0; y < before.Height; y++)
+                    for (int x = before.Width / 4; x < before.Width * 3 / 4; x++)
+                        if (before.GetPixel(x, y) != after.GetPixel(x, y)) changed++;
+                Log.Write($"taskbar: {changed} pixels in the middle changed when windows of all desktops were turned on");
+                TaskbarSetting.Restore();
+                try { np.Kill(); } catch { }
+            }
             Tray.Instance?.ShowMenu(new Point(1800, 1000));
             await Task.Delay(800);
             engine.Screenshot(Path.Combine(dir, "6-tray-menu.png"));
@@ -128,6 +147,17 @@ static class Demo
         SetCursorPos(x, y);
         mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
         mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
+    }
+
+    static Bitmap TaskbarShot(string path)
+    {
+        var screen = Screen.PrimaryScreen!;
+        var b = screen.Bounds; var w = screen.WorkingArea;
+        var r = w.Bottom < b.Bottom ? Rectangle.FromLTRB(b.Left, w.Bottom, b.Right, b.Bottom) : Rectangle.FromLTRB(b.Left, b.Top, b.Right, w.Top);
+        var bmp = new Bitmap(r.Width, Math.Max(1, r.Height));
+        using (var g = Graphics.FromImage(bmp)) g.CopyFromScreen(r.Location, Point.Empty, bmp.Size);
+        bmp.Save(path);
+        return bmp;
     }
 
     static void Open(string title, Color back, Color accent, Rectangle at, Guid desktop)

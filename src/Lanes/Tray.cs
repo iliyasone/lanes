@@ -1,3 +1,4 @@
+using Lanes.Core;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -238,8 +239,10 @@ sealed class Tray : IDisposable
             Build();
             float h = 4 * S + Header + 9 * S + _items.Sum(i => i == null ? SepH : RowH) + 4 * S;
             Size = new Size((int)(300 * S), (int)h);
-            var wa = Screen.FromPoint(cur).WorkingArea;
-            Location = new Point(Math.Clamp(cur.X - Width / 2, wa.Left + (int)(12 * S), wa.Right - Width - (int)(12 * S)), wa.Bottom - Height - (int)(12 * S));
+            var screen = Screen.FromPoint(cur);
+            Rect R(Rectangle r) => new(r.Left, r.Top, r.Right, r.Bottom);
+            var (x, y) = MenuPlacement.Place(R(screen.Bounds), R(screen.WorkingArea), Width, Height, cur.X, cur.Y, (int)(12 * S));
+            Location = new Point(x, y);
             _hover = -1;
             Show();
             Activate();

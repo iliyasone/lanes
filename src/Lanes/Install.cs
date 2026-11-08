@@ -71,10 +71,11 @@ static class Install
     {
         if (Relaunched("--uninstall")) return 0;
         StopRunning();
-        // Your gesture settings back in the registry; then, in your own session, Explorer is told
+        // Your gesture and taskbar settings back in the registry; then, in your own session, Explorer is told
         // to reload them and the desktops Lanes made are removed. Run from that session itself,
         // this happens right here.
         WindowsGestures.GiveBack(force: true, notify: false);
+        TaskbarSetting.Restore();
         if (!SessionHelper.Ask("restore", 20000))
         {
             Log.Write("session helper unavailable; restoring from this process");
