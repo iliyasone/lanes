@@ -251,6 +251,16 @@ sealed partial class Engine : IGestureSink
         if (now - _lastSnapshot < 5000 || Touching) return;
         _lastSnapshot = now;
         Remember(_current, Capture.Screen(_overlay.PickArea()));
+        Warm();
+    }
+
+    // Puts the pictures a swipe from here may need on the GPU ahead of time, so the first frame
+    // of a swipe does not wait for uploads.
+    void Warm()
+    {
+        Picture(_current);
+        foreach (var d in new[] { Direction.Left, Direction.Right, Direction.Up, Direction.Down })
+            if (_lanes.Neighbor(_current, d) is Guid n) Picture(n);
     }
 
     void Remember(Guid desktop, Pixels pixels)
