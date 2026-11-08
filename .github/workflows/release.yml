@@ -1,0 +1,32 @@
+# Push a tag vX.Y.Z (matching <Version> in src/Lanes/Lanes.csproj) to publish a release.
+# Installed copies of Lanes find it through src/Lanes/Updater.cs and offer to update.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Tag matches the project version
+        run: |
+          $v = ([xml](Get-Content src/Lanes/Lanes.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          if ("v$v" -ne "$env:GITHUB_REF_NAME") { "tag $env:GITHUB_REF_NAME != project v$v"; exit 1 }
+      - run: dotnet test tests/Lanes.Tests -c Release
+      - run: dotnet publish src/Lanes -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o out
+      - name: Publish
+        run: gh release create "$env:GITHUB_REF_NAME" out/Lanes.exe --title "$($env:GITHUB_REF_NAME.TrimStart('v'))" --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

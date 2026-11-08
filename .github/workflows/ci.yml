@@ -1,0 +1,95 @@
+# Every push and PR: unit tests, the Windows build, and a demo run on a Windows runner that
+# performs the swipes with made-up touchpad reports and saves screenshots plus the log
+# (with frame timings) as the "demo" artifact. The runner has no GPU and no touchpad, so the
+# feel of a real swipe still has to be tried on a real machine.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet test tests/Lanes.Tests -c Release
+      - name: Build
+        run: dotnet publish src/Lanes -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o out
+      - name: Screen at 1920x1080, like the laptop it is made for
+        run: |
+          Add-Type -TypeDefinition @'
+          using System; using System.Runtime.InteropServices;
+          public static class Display {
+            [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+            public struct DEVMODE { [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName; public short dmSpecVersion, dmDriverVersion, dmSize, dmDriverExtra; public int dmFields, dmPositionX, dmPositionY, dmDisplayOrientation, dmDisplayFixedOutput; public short dmColor, dmDuplex, dmYResolution, dmTTOption, dmCollate; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName; public short dmLogPixels; public int dmBitsPerPel, dmPelsWidth, dmPelsHeight, dmDisplayFlags, dmDisplayFrequency, dmICMMethod, dmICMIntent, dmMediaType, dmDitherType, dmReserved1, dmReserved2, dmPanningWidth, dmPanningHeight; }
+            [DllImport("user32.dll")] static extern int EnumDisplaySettings(string d, int mode, ref DEVMODE dm);
+            [DllImport("user32.dll")] static extern int ChangeDisplaySettings(ref DEVMODE dm, int flags);
+            public static int Set(int w, int h) { var dm = new DEVMODE(); dm.dmSize = (short)Marshal.SizeOf(dm); EnumDisplaySettings(null, -1, ref dm); dm.dmPelsWidth = w; dm.dmPelsHeight = h; dm.dmFields = 0x80000 | 0x100000; return ChangeDisplaySettings(ref dm, 0); }
+          }
+          '@
+          "ChangeDisplaySettings: $([Display]::Set(1920, 1080))"
+      - name: Dark theme and a dark wallpaper, like the laptop it is made for
+        run: |
+          $p = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+          New-Item $p -Force | Out-Null
+          Set-ItemProperty $p AppsUseLightTheme 0 -Type DWord; Set-ItemProperty $p SystemUsesLightTheme 0 -Type DWord; Set-ItemProperty $p EnableTransparency 0 -Type DWord
+          Add-Type -AssemblyName System.Drawing
+          $bmp = New-Object System.Drawing.Bitmap 1920, 1080
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.Clear([System.Drawing.Color]::FromArgb(8, 12, 24))
+          foreach ($c in @(@(1350, 380, 900, 40, 90, 170), @(380, 820, 800, 20, 50, 120), @(1500, 900, 600, 90, 50, 130))) {
+            $path = New-Object System.Drawing.Drawing2D.GraphicsPath
+            $path.AddEllipse($c[0] - $c[2] / 2, $c[1] - $c[2] / 2, $c[2], $c[2])
+            $br = New-Object System.Drawing.Drawing2D.PathGradientBrush $path
+            $br.CenterColor = [System.Drawing.Color]::FromArgb(200, $c[3], $c[4], $c[5]); $br.SurroundColors = @([System.Drawing.Color]::FromArgb(0, $c[3], $c[4], $c[5]))
+            $g.FillPath($br, $path)
+          }
+          $bmp.Save("$env:RUNNER_TEMP\dark.jpg", [System.Drawing.Imaging.ImageFormat]::Jpeg)
+          Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class Wp { [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int SystemParametersInfo(int a, int b, string c, int d); }'
+          [Wp]::SystemParametersInfo(20, 0, "$env:RUNNER_TEMP\dark.jpg", 3) | Out-Null
+          Stop-Process -Name explorer -Force; Start-Sleep 4
+          if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Process explorer; Start-Sleep 4 }
+      - name: Demo run
+        run: |
+          $p = Start-Process ./out/Lanes.exe -ArgumentList '--demo', "$pwd\demo" -PassThru
+          if (-not $p.WaitForExit(240000)) { $p.Kill(); "demo timed out" }
+          Copy-Item "$env:LOCALAPPDATA\Lanes\log.txt" demo/ -ErrorAction SilentlyContinue
+          Get-Content demo/log.txt -ErrorAction SilentlyContinue
+          if (-not (Test-Path demo/4-overview-open.png)) { "screenshots missing"; exit 1 }
+          if (-not (Select-String -Path demo/log.txt -Pattern 'click reached the window' -Quiet)) { "the overlay blocks clicks"; exit 1 }
+      - name: Install and uninstall
+        run: |
+          $k = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PrecisionTouchPad'
+          New-Item $k -Force | Out-Null
+          Set-ItemProperty $k FourFingerLeft 4 -Type DWord; Set-ItemProperty $k ThreeFingerUp 2 -Type DWord
+          Remove-Item "$env:LOCALAPPDATA\Lanes\settings.json" -ErrorAction SilentlyContinue
+          Start-Process ./out/Lanes.exe -ArgumentList '--install' -Wait
+          Start-Sleep 6
+          $running = Get-Process Lanes -ErrorAction SilentlyContinue
+          "running: $($running.Path)"
+          schtasks /Query /TN Lanes /FO LIST | Select-String 'TaskName|Status|Logon Mode'
+          $during = (Get-ItemProperty $k).FourFingerLeft
+          "FourFingerLeft while Lanes runs: $during"
+          Start-Process 'C:\Program Files\Lanes\Lanes.exe' -ArgumentList '--uninstall' -Wait
+          Start-Sleep 4
+          $after = Get-ItemProperty $k
+          $ids = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops' -ErrorAction SilentlyContinue).VirtualDesktopIDs
+          $desktops = if ($ids) { $ids.Length / 16 } else { 1 }
+          "after uninstall: FourFingerLeft $($after.FourFingerLeft), ThreeFingerUp $($after.ThreeFingerUp), running $([bool](Get-Process Lanes -ErrorAction SilentlyContinue)), folder $(Test-Path 'C:\Program Files\Lanes'), tasks $((schtasks /Query /FO CSV | Select-String 'Lanes').Count), desktops $desktops"
+          Copy-Item "$env:LOCALAPPDATA\Lanes\log.txt" demo/install-log.txt -ErrorAction SilentlyContinue
+          if (-not $running -or $during -ne 0 -or $after.FourFingerLeft -ne 4 -or $after.ThreeFingerUp -ne 2 -or $desktops -ne 1) { "install check failed"; exit 1 }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: demo
+          path: demo/
