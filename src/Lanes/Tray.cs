@@ -239,7 +239,7 @@ sealed class Tray : IDisposable
             float h = 4 * S + Header + 9 * S + _items.Sum(i => i == null ? SepH : RowH) + 4 * S;
             Size = new Size((int)(300 * S), (int)h);
             var wa = Screen.FromPoint(cur).WorkingArea;
-            Location = new Point(Math.Clamp(cur.X - Width / 2, wa.Left + 8, wa.Right - Width - 8), wa.Bottom - Height - (int)(12 * S));
+            Location = new Point(Math.Clamp(cur.X - Width / 2, wa.Left + (int)(12 * S), wa.Right - Width - (int)(12 * S)), wa.Bottom - Height - (int)(12 * S));
             _hover = -1;
             Show();
             Activate();

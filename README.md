@@ -55,8 +55,8 @@ are on, in the middle: what is above and below you reads at a glance.
   right, or to close it. A lane left without desktops goes away.
 - **Esc**, a click on empty space or **three fingers down** close it.
 
-The blue ring is the desktop you are on; a blue dot after a name marks the desktop each lane
-will open on.
+The blue ring is the desktop you are on; the column it stands in holds, in every lane, the
+desktop a swipe up or down lands on.
 
 ### Tray menu
 

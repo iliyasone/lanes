@@ -30,6 +30,7 @@ sealed partial class Engine
         public Box[] From = Array.Empty<Box>(), To = Array.Empty<Box>();
         public List<Tile> Tiles = new();
         public float StripBottom;
+        public Box Column; // the band behind the column of current desktops
         public double P;
         public bool Tracking;
         public OverviewTrack Track = null!;
@@ -111,6 +112,7 @@ sealed partial class Engine
         float ny = top + n * (rowH + rowGap);
         o.Tiles.Add(new Tile(n, 0, Guid.Empty, new Box(column, ny, tw, newLaneH), true));
         o.StripBottom = ny + newLaneH + 8 * s;
+        o.Column = new Box(column - 16 * s, top - 8 * s, tw + 32 * s, ny + newLaneH + 16 * s - top);
         return o.StripBottom + 20 * s + 28 * s;
     }
 
@@ -384,20 +386,25 @@ sealed partial class Engine
         {
             var capFont = g.Font(14 * s, FontWeight.Normal, centred: true);
             var newLaneFont = g.Font(13 * s);
+            // The column of current desktops as one object: what is above and below you.
+            g.RoundRect((float)o.Column.X, (float)o.Column.Y + dy, (float)o.Column.W, (float)o.Column.H, 12 * s, A(0x0DFFFFFF, a));
             foreach (var t in o.Tiles)
             {
                 float x = (float)t.Rect.X, y = (float)t.Rect.Y + dy, w = (float)t.Rect.W, h = (float)t.Rect.H;
                 bool hover = o.HoverTile == t && o.Open;
                 if (t.Plus)
                 {
-                    g.RoundRect(x, y, w, h, 8 * s, A(hover ? 0x14FFFFFFu : 0x0AFFFFFFu, a));
-                    g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, 8 * s, A(0x47FFFFFF, a), 1);
                     bool newLane = t.Lane >= _lanes.Lanes.Count;
+                    // "New lane" comes in last, like the window names.
+                    float pa = newLane ? a * Math.Clamp((p - 0.7f) / 0.3f, 0, 1) : a;
+                    if (pa <= 0.002f) continue;
+                    g.RoundRect(x, y, w, h, 8 * s, A(hover ? 0x14FFFFFFu : 0x0AFFFFFFu, pa));
+                    g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, 8 * s, A(0x29FFFFFF, pa), 1);
                     float label = newLane ? g.TextWidth("New lane", newLaneFont) + 10 * s : 0;
                     float cx = x + (w - label) / 2, cy = y + h / 2, arm = (newLane ? 5 : 7) * s;
-                    g.Rect(cx - arm, cy - 0.8f * s, 2 * arm, 1.6f * s, A(0x99FFFFFF, a));
-                    g.Rect(cx - 0.8f * s, cy - arm, 1.6f * s, 2 * arm, A(0x99FFFFFF, a));
-                    if (newLane) g.Text("New lane", newLaneFont, cx + arm + 10 * s, y, label, h, A(0xB3FFFFFF, a));
+                    g.Rect(cx - arm, cy - 0.8f * s, 2 * arm, 1.6f * s, A(0x73FFFFFF, pa));
+                    g.Rect(cx - 0.8f * s, cy - arm, 1.6f * s, 2 * arm, A(0x73FFFFFF, pa));
+                    if (newLane) g.Text("New lane", newLaneFont, cx + arm + 10 * s, y, label, h, A(0xA6FFFFFF, pa));
                     continue;
                 }
                 g.Shadow(x, y, w, h, 8 * s, 18 * s, 6 * s, 0.4f * a);
@@ -407,11 +414,9 @@ sealed partial class Engine
                 if (t.Desktop == _current) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xFF4CC2FF, a), 2 * s);
                 else if (hover) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xD9FFFFFF, a), 2 * s);
                 string title = Title(t.Desktop);
-                bool remembered = _lanes.CurrentOf(t.Lane) == t.Desktop;
                 float tw = Math.Min(g.TextWidth(title, capFont), w + 16 * s);
-                float tx = x + (w - tw) / 2 - (remembered ? 5 * s : 0), ty = y + h + 6 * s;
+                float tx = x + (w - tw) / 2, ty = y + h + 6 * s;
                 g.Text(title, capFont, tx, ty, tw, 18 * s, A(0xFFE6E6E6, a));
-                if (remembered) g.RoundRect(tx + tw + 6 * s, ty + 9 * s - 2 * s, 4 * s, 4 * s, 2 * s, A(0xFF4CC2FF, a));
             }
         }
 
