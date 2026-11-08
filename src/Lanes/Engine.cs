@@ -344,7 +344,13 @@ sealed partial class Engine : IGestureSink
             DiscardTouchCapture();
             var area = _overlay.PickArea();
             _touchCaptureOf = _current;
-            _touchCapture = Task.Run(() => Capture.Screen(area));
+            _touchCapture = Task.Run(() =>
+            {
+                long t0 = Environment.TickCount64;
+                var p = Capture.Screen(area);
+                _captureMs = Environment.TickCount64 - t0;
+                return p;
+            });
         }
         if (!_recognizers.TryGetValue(device, out var r)) _recognizers[device] = r = new GestureRecognizer(this);
         if (_activeDevice != IntPtr.Zero && _activeDevice != device && !r.Tracking) return;
@@ -397,8 +403,13 @@ sealed partial class Engine : IGestureSink
         t?.ContinueWith(x => { if (x.Status == TaskStatus.RanToCompletion) x.Result.Dispose(); });
     }
 
+    long _captureMs;
+    // How long the last swipe's first frame waited for the picture of the screen, for the log.
+    public string CaptureNote = "";
+
     Pixels TakeTouchCapture()
     {
+        long t0 = Environment.TickCount64;
         Pixels? snap = null;
         try
         {
@@ -410,7 +421,10 @@ sealed partial class Engine : IGestureSink
         }
         catch { }
         DiscardTouchCapture();
-        return snap ?? Capture.Screen(_overlay.PickArea());
+        bool fresh = snap == null;
+        snap ??= Capture.Screen(_overlay.PickArea());
+        CaptureNote = $"screen picture {(fresh ? "taken late" : $"taken in {_captureMs} ms")}, first frame waited {Environment.TickCount64 - t0} ms";
+        return snap;
     }
 
     public void OpenOverviewFromMenu() => Post(() =>

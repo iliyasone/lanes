@@ -79,7 +79,7 @@ sealed partial class Engine
         _overlay.Place();
         RenderOverview();
         _overlay.Show();
-        Log.Write($"overview: {o.Windows.Count} windows");
+        Log.Write($"overview: {o.Windows.Count} windows; {CaptureNote}");
     }
 
     // Places the lane rows at the top; returns where the window spread may start.

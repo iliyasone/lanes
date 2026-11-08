@@ -60,7 +60,7 @@ sealed partial class Engine
             RenderSwitch();
             _overlay.Show();
         }
-        Log.Write($"switch {axis} from {Title(_current)}; previous {(s.Previous is Guid a ? Title(a) : "-")}, next {(s.Next is Guid b ? Title(b) : "-")}");
+        Log.Write($"switch {axis} from {Title(_current)}; previous {(s.Previous is Guid a ? Title(a) : "-")}, next {(s.Next is Guid b ? Title(b) : "-")}; {CaptureNote}");
     }
 
     double Along(double dx, double dy, Axis axis)

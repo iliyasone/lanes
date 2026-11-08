@@ -23,8 +23,8 @@ as any change to it.
   its frame times are only a regression signal; real smoothness is judged on the user's PC
   with a Magic Trackpad, and that check is the user's call — never install or run Lanes on
   the user's PC unasked.
-- Visual changes follow `docs/design/mock.html`; change the mockup in the same PR when the
-  design changes.
+- The reference for how things look is the CI demo's screenshots, which the README shows
+  (`docs/screenshots/`); refresh them in the same PR when the look changes.
 
 ## Releases
 
