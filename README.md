@@ -4,7 +4,7 @@ Lanes of virtual desktops on Windows 11, one above the other, moved between with
 four-finger swipes that follow your fingers, and an overview of every lane on a
 three-finger swipe up. Made for an Apple Magic Trackpad; works with any precision touchpad.
 
-![Four fingers down: the lane above comes down](docs/screenshots/1-vertical-swipe.png)
+![Three fingers up for the overview, then four fingers to the next desktop and to the lane above and back, without leaving it](docs/screenshots/overview.gif)
 
 ## What it does
 
@@ -18,6 +18,7 @@ it works in all four directions:
 | 4 fingers down / up | The lane above / below, on the desktop you last used there |
 | 3 fingers up | The overview: every lane, and this desktop's windows spread out |
 | 3 fingers down | Closes the overview |
+| 4 fingers in the overview | The next desktop or lane, and the overview stays open |
 
 Each lane remembers where you were. Say Messages lives in the lane above: from any desktop
 of your lane, a swipe down brings Messages. Go down to the lane below, open a code agent
@@ -55,13 +56,24 @@ are on, in the middle: what is above and below you reads at a glance.
 
 ![The overview](docs/screenshots/4-overview-open.png)
 
-- **Click a window** to bring it to the front and close the overview.
-- **Click a desktop** to go there; the overview zooms into it.
-- **Click +** at the end of a lane to make a new desktop there; **New lane** under the last
-  lane starts a new lane.
-- **Right-click a desktop** to move it to the lane above or below, to a new lane, left or
-  right, or to close it. A lane left without desktops goes away.
+- **Four fingers** move to the next desktop or lane as they do outside it, and the overview
+  stays: the windows of the next desktop slide in with the fingers, your lane slides under
+  the blue ring (or the ring moves to the next lane), and Windows switches when you let go.
+- **Drag a desktop** to another place in its lane or into another lane; a blue bar shows
+  where it goes. While you drag, a **New lane** opens above the lanes too, and dropping on
+  either one makes a lane for it. A lane left without desktops goes away.
+- **Drag a window** onto a desktop to move it there, onto a lane's **+** to move it to a new
+  desktop at the end of that lane, or onto **New lane** for a new lane with it.
+- **Middle-click** a window to close it, or a desktop to close the desktop (its windows go to
+  the desktop next to it), as in Task View.
+- **Click a window** to bring it to the front and close the overview; **click a desktop** to
+  go there (the overview zooms into it); **click +** or **New lane** for a new desktop there.
 - **Esc**, a click on empty space or **three fingers down** close it.
+
+The icons on your desktop stay where they are as the fingers start and fade as the overview
+opens.
+
+![Dragging a desktop into another lane](docs/screenshots/11-drag-desktop.png)
 
 The blue ring is the desktop you are on; the column it stands in holds, in every lane, the
 desktop a swipe up or down lands on.
@@ -137,7 +149,8 @@ click it.
   landing late or lifting early does not make the picture jump; `Motion.cs` maps finger
   travel to the picture and decides where it goes on release, then moves it with a
   critically damped spring that starts at the fingers' speed; `LaneMap.cs` keeps the
-  lanes; `Spread.cs` lays out the overview.
+  lanes; `Strip.cs` lays out the overview's lane rows and works out where a dragged desktop
+  goes; `Spread.cs` lays out its windows.
 - `src/Lanes`: `Touchpad.cs` reads raw HID reports; `Engine*.cs` runs everything a swipe
   needs on one thread: each frame is drawn right after the freshest report with Direct2D
   on a flip-model swap chain (`Gfx.cs`) in a topmost window shown on every desktop and

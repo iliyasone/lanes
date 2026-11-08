@@ -91,8 +91,9 @@ sealed partial class Engine : IGestureSink
             _gfx = new Gfx();
             _gfx.Attach(_overlay.Handle, _overlay.Area.Width, _overlay.Area.Height);
             _overlay.MouseMove += OnMouseMove;
-            _overlay.LeftClick += OnLeftClick;
-            _overlay.RightClick += OnRightClick;
+            _overlay.LeftDown += OnLeftDown;
+            _overlay.LeftUp += OnLeftUp;
+            _overlay.MiddleUp += OnMiddleUp;
             _touchpad = new Touchpad(OnFrame);
             _touchpad.Register(_msg.Handle);
             if (Desktops.Load())
@@ -146,7 +147,7 @@ sealed partial class Engine : IGestureSink
         _overlay.Hide();
     }
 
-    bool Animating => _switch != null || (_overview != null && (_overview.Tracking || _overview.Spring != null || _overview.Zoom != null)) || _redraw;
+    bool Animating => _switch != null || _overview is { } o && (o.Tracking || o.Spring != null || o.Zoom != null || o.Swipe != null || o.Moving) || _redraw;
     bool _redraw;
 
     void Tick()
@@ -377,6 +378,8 @@ sealed partial class Engine : IGestureSink
         _ignoring = false;
         if (kind == GestureKind.Switch)
         {
+            // Four fingers in the open overview move between desktops without leaving it.
+            if (_overview is { Open: true, Drag: null }) { BeginInnerSwipe(axis); return; }
             if (_overview != null || _switch is { Spring: null }) { _ignoring = true; return; }
             BeginSwitch(axis);
         }
@@ -387,6 +390,7 @@ sealed partial class Engine : IGestureSink
     {
         if (_ignoring) return;
         if (_switch != null) MoveSwitch(dx, dy);
+        else if (_overview?.Swipe != null) MoveInnerSwipe(dx, dy);
         else if (_overview != null) MoveOverview(dy);
     }
 
@@ -402,6 +406,7 @@ sealed partial class Engine : IGestureSink
     {
         if (_ignoring) { _ignoring = false; return; }
         if (_switch != null) EndSwitch(vx, vy);
+        else if (_overview?.Swipe is { Spring: null }) EndInnerSwipe(vx, vy);
         else if (_overview != null) EndOverview(vy);
     }
 
@@ -480,6 +485,10 @@ sealed partial class Engine : IGestureSink
         Settings.SaveLanes(_lanes);
         return LaneMap.Load(_lanes.Save());
     }
+
+    // For the demo run's log; call on the engine thread (through Ask).
+    public int LaneOf(Guid desktop) => _lanes.Locate(desktop)?.Lane ?? -1;
+    public string LanesText() => string.Join(" | ", _lanes.Lanes.Select(l => l.Desktops.Count)) + " desktops";
 
     sealed class MessageWindow : NativeWindow
     {

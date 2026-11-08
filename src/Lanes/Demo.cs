@@ -71,12 +71,79 @@ static class Demo
             await Task.Delay(1500);
             await Swipe(engine, 4, 1, 0, 0.42 * 0.5, hold: async () => { engine.Screenshot(Path.Combine(dir, "2b-end-of-lane.png")); await Task.Delay(300); });
             await Task.Delay(1500);
+
             // Three fingers up: the overview, held at 45%, then opened fully.
+            rec = new Recorder();
+            rec.Start();
             await Swipe(engine, 3, 0, -1, 0.28 * 0.45, earlyShot: Path.Combine(dir, "8-overview-early.png"), hold: async () => { engine.Screenshot(Path.Combine(dir, "3-overview-opening.png")); await Task.Delay(600); }, release: false);
             await Swipe(engine, 3, 0, -1, 0.28 * 0.7, continueFrom: 0.28 * 0.45);
             await Task.Delay(1200);
             engine.Screenshot(Path.Combine(dir, "4-overview-open.png"));
-            await Task.Delay(800);
+            await Task.Delay(600);
+
+            // Four fingers inside the overview: to Research and held halfway, then up to the
+            // top lane and back down, without leaving it.
+            await Swipe(engine, 4, -1, 0, 0.42 * 0.5, hold: async () => { engine.Screenshot(Path.Combine(dir, "9-overview-swipe.png")); await Task.Delay(500); }, release: false);
+            await Swipe(engine, 4, -1, 0, 0.42 * 0.8, continueFrom: 0.42 * 0.5);
+            await Task.Delay(1200);
+            await Swipe(engine, 4, 0, 1, 0.42 * 0.8);
+            await Task.Delay(1200);
+            await Swipe(engine, 4, 0, -1, 0.42 * 0.8);
+            await Task.Delay(1200);
+            rec.Stop(dir, "frames-overview");
+            engine.Screenshot(Path.Combine(dir, "10-overview-after-swipes.png"));
+            Log.Write($"after the swipes in the overview: on {(Desktops.Current == research ? "Research" : "another desktop")}");
+
+            // Drag the Agent desktop into the middle lane, between Editor and Research.
+            var (tiles, _) = await engine.OverviewLayout();
+            var agentTile = tiles.First(t => t.Desktop == agent).Rect;
+            await PressAndPull(agentTile, 30);
+            (tiles, _) = await engine.OverviewLayout();
+            var ed = tiles.First(t => t.Desktop == editor).Rect;
+            var re = tiles.First(t => t.Desktop == research).Rect;
+            await Glide(new Point((ed.Right + re.Left) / 2, ed.Top + ed.Height / 2));
+            engine.Screenshot(Path.Combine(dir, "11-drag-desktop.png"));
+            await Task.Delay(400);
+            Release();
+            await Task.Delay(900);
+            engine.Screenshot(Path.Combine(dir, "12-after-drag-desktop.png"));
+            Log.Write("lanes now: " + await LanesNow(engine));
+
+            // And back into a lane of its own, through "New lane".
+            (tiles, _) = await engine.OverviewLayout();
+            await PressAndPull(tiles.First(t => t.Desktop == agent).Rect, 30);
+            (tiles, _) = await engine.OverviewLayout();
+            var newLane = tiles.Last(t => t.Kind == TileKind.NewLane).Rect;
+            await Glide(new Point(newLane.Left + newLane.Width / 2, newLane.Top + newLane.Height / 2));
+            await Task.Delay(300);
+            Release();
+            await Task.Delay(900);
+            Log.Write("lanes now: " + await LanesNow(engine));
+
+            // Drag the Research window onto the "+" at the end of the top lane: a new desktop there.
+            var (tiles2, windows) = await engine.OverviewLayout();
+            var researchWindow = windows.First(w => w.Title == "Research").Rect;
+            var researchHandle = Application.OpenForms.Cast<Form>().First(f => f.Text == "Research").Handle;
+            await PressAndPull(researchWindow, 40);
+            (tiles2, _) = await engine.OverviewLayout();
+            var plus = tiles2.First(t => t.Kind == TileKind.Plus && t.Lane == 0).Rect;
+            await Glide(new Point(plus.Left + plus.Width / 2, plus.Top + plus.Height / 2));
+            await Task.Delay(300);
+            engine.Screenshot(Path.Combine(dir, "13-drag-window.png"));
+            Release();
+            await Task.Delay(900);
+            var landed = Desktops.WindowDesktop(researchHandle);
+            Log.Write($"the Research window is now on a desktop in lane {(await engine.Ask(() => engine.LaneOf(landed)))}; lanes now: {await LanesNow(engine)}");
+            engine.Screenshot(Path.Combine(dir, "14-after-drag-window.png"));
+
+            // A middle click closes the Research desktop, which the window just left.
+            int before = Desktops.Count;
+            (tiles2, _) = await engine.OverviewLayout();
+            var r2 = tiles2.First(t => t.Desktop == research).Rect;
+            MiddleClick(r2.Left + r2.Width / 2, r2.Top + r2.Height / 2);
+            await Task.Delay(900);
+            Log.Write($"middle click on a desktop: {before} desktops before, {Desktops.Count} after");
+            engine.Screenshot(Path.Combine(dir, "15-after-middle-click.png"));
             await Swipe(engine, 3, 0, 1, 0.28 * 0.8);
             await Task.Delay(1500);
             engine.Screenshot(Path.Combine(dir, "5-after.png"));
@@ -143,6 +210,44 @@ static class Demo
         SetCursorPos(x, y);
         mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
         mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
+    }
+
+    static async Task<string> LanesNow(Engine engine) =>
+        await engine.Ask(() => engine.LanesText());
+
+    // Presses on a box and pulls far enough for a drag to start.
+    static async Task PressAndPull(Rectangle box, int pull)
+    {
+        var at = new Point(box.Left + box.Width / 2, box.Top + box.Height / 2);
+        SetCursorPos(at.X, at.Y);
+        await Task.Delay(100);
+        mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
+        await Task.Delay(100);
+        for (int i = 1; i <= 6; i++) { SetCursorPos(at.X, at.Y - pull * i / 6); await Task.Delay(16); }
+        _pointer = new Point(at.X, at.Y - pull);
+        await Task.Delay(300);
+    }
+
+    static Point _pointer;
+
+    static async Task Glide(Point to)
+    {
+        var from = _pointer;
+        for (int i = 1; i <= 30; i++)
+        {
+            SetCursorPos(from.X + (to.X - from.X) * i / 30, from.Y + (to.Y - from.Y) * i / 30);
+            await Task.Delay(16);
+        }
+        _pointer = to;
+    }
+
+    static void Release() => mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
+
+    static void MiddleClick(int x, int y)
+    {
+        SetCursorPos(x, y);
+        mouse_event(0x20, 0, 0, 0, IntPtr.Zero);
+        mouse_event(0x40, 0, 0, 0, IntPtr.Zero);
     }
 
     // Finds Windows' "Desktop N" pill (or Lanes' copy) in a screenshot and logs where it is and
