@@ -31,7 +31,7 @@ public sealed class GestureRecognizer
     // Velocity is measured over this much of the end of the swipe.
     public const long VelocityWindowMs = 80;
     // With no report for this long the fingers are taken as lifted (some drivers send no last report).
-    public const long SilenceMs = 150;
+    public const long SilenceMs = 400;
 
     enum State { Idle, Pending, Tracking, Ignored }
 

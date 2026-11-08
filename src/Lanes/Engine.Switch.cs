@@ -24,6 +24,7 @@ sealed partial class Engine
     {
         _current = Desktops.Current;
         var snap = TakeTouchCapture();
+        RefreshTitles();
         if (snap.Width != _gfx.Width || snap.Height != _gfx.Height) _gfx.Attach(_overlay.Handle, snap.Width, snap.Height);
         Remember(_current, snap);
         var s = new SwitchState

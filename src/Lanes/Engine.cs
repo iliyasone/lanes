@@ -36,7 +36,10 @@ sealed partial class Engine : IGestureSink
     readonly Dictionary<Guid, (ID2D1Bitmap1 Sharp, ID2D1Bitmap1 Blurred)> _wallpapers = new();
     Task<Pixels>? _touchCapture;
     Guid _touchCaptureOf;
-    int _lastFingers;
+    // Fingers on each touchpad in its last report (a laptop's own pad keeps reporting none).
+    readonly Dictionary<IntPtr, int> _fingersOn = new();
+    bool Touching => _fingersOn.Values.Any(n => n > 0);
+    readonly Dictionary<Guid, string> _titles = new();
     long _lastSnapshot;
 
     SwitchState? _switch;
@@ -205,16 +208,24 @@ sealed partial class Engine : IGestureSink
         _lanes.Reconcile(Desktops.All(), _current);
         Settings.SaveLanes(_lanes);
         _lastSnapshot = Environment.TickCount64 - 4500; // a fresh picture shortly, once the desktop has drawn
+        PrepareWallpapers();
     }
 
-    string Title(Guid desktop)
+    // Names for the pill and the overview, worked out once per swipe: a name you gave the
+    // desktop, else the app in front on it when it was last seen, else "Desktop N".
+    void RefreshTitles()
     {
-        string name = Desktops.Name(desktop);
-        if (name.Length > 0) return name;
-        if (_appOf.TryGetValue(desktop, out var app) && app.Length > 0) return app;
-        int i = Desktops.IndexOf(desktop);
-        return $"Desktop {i + 1}";
+        _titles.Clear();
+        var all = Desktops.All();
+        for (int i = 0; i < all.Count; i++)
+        {
+            string name = Desktops.Name(all[i]);
+            if (name.Length == 0 && _appOf.TryGetValue(all[i], out var app)) name = app;
+            _titles[all[i]] = name.Length > 0 ? name : $"Desktop {i + 1}";
+        }
     }
+
+    string Title(Guid desktop) => _titles.TryGetValue(desktop, out var t) ? t : "Desktop";
 
     // ---------- pictures ----------
 
@@ -222,7 +233,7 @@ sealed partial class Engine : IGestureSink
     {
         if (!Ready || _overlay.Shown || _switch != null || _overview != null) return;
         long now = Environment.TickCount64;
-        if (now - _lastSnapshot < 5000 || _lastFingers > 0) return;
+        if (now - _lastSnapshot < 5000 || Touching) return;
         _lastSnapshot = now;
         Remember(_current, Capture.Screen(_overlay.PickArea()));
     }
@@ -247,7 +258,10 @@ sealed partial class Engine : IGestureSink
     (ID2D1Bitmap1 Sharp, ID2D1Bitmap1 Blurred)? Wallpaper(Guid desktop)
     {
         if (_wallpapers.TryGetValue(desktop, out var w)) return w;
-        if (!_wallpaperPixels.TryGetValue(desktop, out var px)) px = MakeWallpaper(desktop);
+        (Pixels Sharp, Pixels Blurred) px;
+        bool ready;
+        lock (_wallpaperPixels) ready = _wallpaperPixels.TryGetValue(desktop, out px);
+        if (!ready) px = MakeWallpaper(desktop);
         return _wallpapers[desktop] = (_gfx.Bitmap(px.Sharp), _gfx.Bitmap(px.Blurred));
     }
 
@@ -269,7 +283,12 @@ sealed partial class Engine : IGestureSink
         Task.Run(() =>
         {
             foreach (var d in all)
-                try { if (!_wallpaperPixels.ContainsKey(d)) MakeWallpaper(d); }
+                try
+                {
+                    bool have;
+                    lock (_wallpaperPixels) have = _wallpaperPixels.ContainsKey(d);
+                    if (!have) MakeWallpaper(d);
+                }
                 catch (Exception e) { Log.Write($"wallpaper: {e.Message}"); }
         });
     }
@@ -280,15 +299,16 @@ sealed partial class Engine : IGestureSink
     {
         if (!Ready || !_settings.Gestures) return;
         int fingers = frame.Fingers.Length;
+        _fingersOn.TryGetValue(device, out int before);
+        _fingersOn[device] = fingers;
         // Three or more fingers just landed: take a picture of the screen now, while they
         // travel far enough for the swipe to be recognised.
-        if (fingers >= 3 && _lastFingers < 3 && !_overlay.Shown && _switch == null)
+        if (fingers >= 3 && before < 3 && !_overlay.Shown && _switch == null)
         {
             var area = _overlay.PickArea();
             _touchCaptureOf = _current;
             _touchCapture = Task.Run(() => Capture.Screen(area));
         }
-        _lastFingers = fingers;
         if (!_recognizers.TryGetValue(device, out var r)) _recognizers[device] = r = new GestureRecognizer(this);
         if (_activeDevice != IntPtr.Zero && _activeDevice != device && !r.Tracking) return;
         _activeDevice = device;

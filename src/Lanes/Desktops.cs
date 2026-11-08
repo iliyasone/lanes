@@ -111,10 +111,15 @@ static class Desktops
         if (i >= 0 && f >= 0 && i != f) RemoveDesktop(i, f);
     }
 
+    static bool _canMove = true;
+
+    // Reorders Windows' own list; the 2024-12 build of the DLL has no MoveDesktop, so this is best effort.
     public static void Move(Guid desktop, int index)
     {
+        if (!_canMove) return;
         int i = IndexOf(desktop);
-        if (i >= 0 && i != index) MoveDesktop(i, index);
+        try { if (i >= 0 && i != index) MoveDesktop(i, index); }
+        catch (EntryPointNotFoundException) { _canMove = false; }
     }
 
     public static string Name(Guid desktop)
