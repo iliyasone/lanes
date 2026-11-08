@@ -48,6 +48,9 @@ sealed partial class Engine : IGestureSink
     bool _ignoring; // a swipe that Lanes leaves alone until the fingers lift
 
     public bool Ready { get; private set; }
+    // When the engine thread last went round its loop; the tray's watchdog reads it.
+    public long Heartbeat;
+    public IntPtr OverlayHandle => _overlay?.Handle ?? IntPtr.Zero;
     public event Action<string>? Status;
 
     public Engine(Settings settings, bool demo)
@@ -110,6 +113,7 @@ sealed partial class Engine : IGestureSink
 
         while (_running)
         {
+            Interlocked.Exchange(ref Heartbeat, Environment.TickCount64);
             try
             {
                 if (Animating)

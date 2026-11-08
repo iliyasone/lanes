@@ -32,7 +32,32 @@ sealed class Tray : IDisposable
         engine.Status += text => _icon.ShowBalloonTip(5000, "Lanes", text, ToolTipIcon.Warning);
         _icon.Icon = MakeIcon();
         _icon.Visible = true;
+        _watchdog.Tick += (_, _) => Watch();
+        _watchdog.Start();
     }
+
+    // If the engine thread stops going round (stuck in a Windows call), its picture must not
+    // stay over the screen: hide it from here and give the swipes back to Windows.
+    readonly System.Windows.Forms.Timer _watchdog = new() { Interval = 1000 };
+    bool _stuck;
+
+    void Watch()
+    {
+        long beat = Interlocked.Read(ref _engine.Heartbeat);
+        if (beat == 0 || Environment.TickCount64 - beat < 3000)
+        {
+            if (_stuck) { _stuck = false; Log.Write("engine running again"); if (_settings.Gestures) WindowsGestures.TakeOver(); }
+            return;
+        }
+        if (_stuck) return;
+        _stuck = true;
+        Log.Write("engine stuck: overlay hidden, swipes given back to Windows");
+        if (_engine.OverlayHandle != IntPtr.Zero) ShowWindowAsync(_engine.OverlayHandle, SW_HIDE);
+        WindowsGestures.GiveBack();
+        _icon.ShowBalloonTip(5000, "Lanes", "Lanes got stuck; Windows' own swipes are back. Restart it from this menu.", ToolTipIcon.Warning);
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr hwnd, int cmd);
 
     public bool Gestures
     {
@@ -102,6 +127,7 @@ sealed class Tray : IDisposable
 
     public void Dispose()
     {
+        _watchdog.Dispose();
         _icon.Visible = false;
         _icon.Dispose();
         _flyout.Dispose();
