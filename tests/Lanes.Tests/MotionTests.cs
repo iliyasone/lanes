@@ -50,12 +50,12 @@ public class MotionTests
     [Fact]
     public void OverviewOpensUpAndClosesDown()
     {
-        var open = new OverviewTrack(true, _t);
+        var open = new OverviewTrack(0, _t);
         Assert.Equal(0.5, open.ProgressFor(-_t.FullOverview / 2), 6);
         Assert.InRange(open.ProgressFor(-_t.FullOverview * 3), 1, 1.06);
         Assert.True(open.Release(0.6, 0));
         Assert.True(open.Release(0.2, open.SpeedFor(-1)));
-        var close = new OverviewTrack(false, _t);
+        var close = new OverviewTrack(1, _t);
         Assert.Equal(0.5, close.ProgressFor(_t.FullOverview / 2), 6);
         Assert.False(close.Release(0.45, 0));
     }

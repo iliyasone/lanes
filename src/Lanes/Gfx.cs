@@ -122,14 +122,14 @@ sealed class Gfx : IDisposable
 
     // A smaller copy made once with high-quality filtering, so small pictures cost nothing per frame.
     // Call between frames only.
-    public ID2D1Bitmap1 Scaled(ID2D1Bitmap1 src, int w, int h)
+    public ID2D1Bitmap1 Scaled(ID2D1Bitmap1 src, int w, int h, float radius = 0)
     {
         var bmp = Dc.CreateBitmap(new SizeI(Math.Max(1, w), Math.Max(1, h)), IntPtr.Zero, 0,
             new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, D2DAlpha.Premultiplied), 96, 96, BitmapOptions.Target));
         Dc.Target = bmp;
         Dc.BeginDraw();
-        Dc.Clear(new Color4(0, 0, 0, 1));
-        Dc.DrawBitmap(src, new Vortice.RawRectF(0, 0, w, h), 1, Vortice.Direct2D1.InterpolationMode.HighQualityCubic, null, null);
+        Dc.Clear(new Color4(0, 0, 0, 0));
+        RoundImage(src, 0, 0, w, h, radius, 1);
         Dc.EndDraw();
         Dc.Target = _target;
         return bmp;
@@ -160,10 +160,14 @@ sealed class Gfx : IDisposable
         return _formats[(size, weight, centred)] = f;
     }
 
+    readonly Dictionary<(string, IDWriteTextFormat), float> _widths = new();
+
     public float TextWidth(string text, IDWriteTextFormat format)
     {
+        if (_widths.TryGetValue((text, format), out float w)) return w;
+        if (_widths.Count > 2000) _widths.Clear();
         using var layout = Write.CreateTextLayout(text, format, 4000, 200);
-        return layout.Metrics.WidthIncludingTrailingWhitespace;
+        return _widths[(text, format)] = layout.Metrics.WidthIncludingTrailingWhitespace;
     }
 
     public void Text(string text, IDWriteTextFormat format, float x, float y, float w, float h, uint argb) =>

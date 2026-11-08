@@ -13,6 +13,11 @@ static class Program
     {
         if (args.Contains("--install")) return Install.Run();
         if (args.Contains("--uninstall")) return Install.Remove();
+        if (args.Contains("--notify-touchpad"))
+        {
+            Log.Write(TouchpadNotify.Notify(out var why) ? "helper: Explorer told to reload touchpad settings" : $"helper: failed ({why})");
+            return 0;
+        }
         bool demo = args.Contains("--demo");
 
         _single = new Mutex(true, @"Local\Lanes", out bool owned);
@@ -35,6 +40,7 @@ static class Program
         // Whatever ends Lanes, Windows gets its gestures back.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => { if (!demo) WindowsGestures.GiveBack(); };
 
+        SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
         var updater = new Updater();
         using var tray = new Tray(engine, settings, updater);
         if (!demo) updater.Start();

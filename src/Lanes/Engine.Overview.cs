@@ -49,7 +49,7 @@ sealed partial class Engine
             open.Tracking = true;
             open.Spring = null;
             _gfx.Frames.Clear();
-            open.Track = new OverviewTrack(false, _tuning);
+            open.Track = new OverviewTrack(open.P, _tuning);
             return;
         }
         if (_switch != null) { _ignoring = true; return; }
@@ -60,7 +60,7 @@ sealed partial class Engine
         Remember(_current, snap);
         var area = _overlay.Area;
         float s = _overlay.Scale;
-        var o = new OverviewState { Tracking = true, Track = new OverviewTrack(true, _tuning) };
+        var o = new OverviewState { Tracking = true, Track = new OverviewTrack(0, _tuning) };
         o.Windows = AppWindows.OnScreen(area, _overlay.Handle);
         o.From = o.Windows.Select(w => new Box(w.Frame.Left - area.Left, w.Frame.Top - area.Top, w.Frame.Width, w.Frame.Height)).ToArray();
         float spreadTop = LayoutTiles(o);
@@ -386,7 +386,8 @@ sealed partial class Engine
                     continue;
                 }
                 g.Shadow(x, y, w, h, 8 * s, 18 * s, 6 * s, 0.4f * a);
-                if ((_tilePictures.TryGetValue(t.Desktop, out var small) ? small : Picture(t.Desktop)) is { } pic) g.RoundImage(pic, x, y, w, h, 8 * s, a);
+                if (_tilePictures.TryGetValue(t.Desktop, out var small)) g.Image(small, x, y, w, h, a);
+                else if (Picture(t.Desktop) is { } pic) g.RoundImage(pic, x, y, w, h, 8 * s, a);
                 g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, 8 * s, A(0x1FFFFFFF, a), 1);
                 if (t.Desktop == _current) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xFF4CC2FF, a), 2 * s);
                 else if (hover) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xD9FFFFFF, a), 2 * s);

@@ -8,7 +8,7 @@ namespace Lanes;
 // prompt. "--uninstall" stops it, gives the gestures back to Windows and removes it.
 static class Install
 {
-    public const string TaskName = "Lanes";
+    public const string TaskName = "Lanes", NotifyTask = "Lanes notify";
     static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Lanes");
     public static string Exe => Path.Combine(Dir, "Lanes.exe");
 
@@ -51,6 +51,16 @@ static class Install
             </Task>
             """, System.Text.Encoding.Unicode);
         Schtasks($"/Create /TN {TaskName} /XML \"{xml}\" /F");
+        // The same program without elevation, run on demand to tell Explorer about changed touchpad settings.
+        File.WriteAllText(xml, $"""
+            <?xml version="1.0" encoding="UTF-16"?>
+            <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+              <Principals><Principal id="Author"><UserId>{user}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+              <Settings><MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><ExecutionTimeLimit>PT1M</ExecutionTimeLimit></Settings>
+              <Actions Context="Author"><Exec><Command>{Exe}</Command><Arguments>--notify-touchpad</Arguments></Exec></Actions>
+            </Task>
+            """, System.Text.Encoding.Unicode);
+        Schtasks($"/Create /TN \"{NotifyTask}\" /XML \"{xml}\" /F");
         File.Delete(xml);
         Schtasks($"/Run /TN {TaskName}");
         Log.Write($"installed {Program.Version} to {Dir}");
@@ -61,12 +71,24 @@ static class Install
     {
         if (Relaunched("--uninstall")) return 0;
         StopRunning();
-        WindowsGestures.GiveBack();
+        WindowsGestures.GiveBack(force: true);
         Schtasks($"/Delete /TN {TaskName} /F");
+        Schtasks($"/Delete /TN \"{NotifyTask}\" /F");
         // The folder may hold this very program; remove it once it has exited.
         Process.Start(new ProcessStartInfo("cmd.exe", $"/c timeout /t 2 /nobreak >nul & rmdir /s /q \"{Dir}\"") { CreateNoWindow = true, UseShellExecute = false });
         Log.Write("uninstalled");
         return 0;
+    }
+
+    public static bool RunNotifyTask()
+    {
+        try
+        {
+            using var p = Process.Start(new ProcessStartInfo("schtasks.exe", $"/Run /TN \"{NotifyTask}\"") { CreateNoWindow = true, UseShellExecute = false })!;
+            p.WaitForExit(5000);
+            return p.ExitCode == 0;
+        }
+        catch { return false; }
     }
 
     static void StopRunning()

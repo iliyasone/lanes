@@ -22,11 +22,23 @@ sealed partial class Engine
 
     void BeginSwitch(Axis axis)
     {
-        _current = Desktops.Current;
-        var snap = TakeTouchCapture();
+        ID2D1Bitmap1? from = null;
+        if (_switch is { } pending)
+        {
+            // A new swipe while the last one is still settling: finish that one now, under the
+            // picture, and start from where it was going.
+            from = pending.Outcome switch { Outcome.Next => pending.NextPicture, Outcome.Previous => pending.PreviousPicture, _ => pending.FromPicture };
+            FinishSwitch(keepOverlay: true);
+            DiscardTouchCapture();
+        }
+        else
+        {
+            _current = Desktops.Current;
+            var snap = TakeTouchCapture();
+            if (snap.Width != _gfx.Width || snap.Height != _gfx.Height) _gfx.Attach(_overlay.Handle, snap.Width, snap.Height);
+            Remember(_current, snap);
+        }
         RefreshTitles();
-        if (snap.Width != _gfx.Width || snap.Height != _gfx.Height) _gfx.Attach(_overlay.Handle, snap.Width, snap.Height);
-        Remember(_current, snap);
         var s = new SwitchState
         {
             Axis = axis,
@@ -34,16 +46,20 @@ sealed partial class Engine
             Previous = _lanes.Neighbor(_current, axis == Axis.Horizontal ? Direction.Left : Direction.Up),
             Next = _lanes.Neighbor(_current, axis == Axis.Horizontal ? Direction.Right : Direction.Down),
         };
-        double page = axis == Axis.Horizontal ? _gfx.Width : _gfx.Height;
+        // A whole step is a screen plus the gap between screens, so a finished swipe ends exactly in place.
+        double page = (axis == Axis.Horizontal ? _gfx.Width : _gfx.Height) + GapDip * _overlay.Scale;
         s.Track = new SwipeTrack(page, s.Previous != null, s.Next != null, _tuning);
-        s.FromPicture = Picture(_current)!;
+        s.FromPicture = from ?? Picture(_current)!;
         s.PreviousPicture = s.Previous is Guid p ? Picture(p) : null;
         s.NextPicture = s.Next is Guid n ? Picture(n) : null;
         _switch = s;
         _gfx.Frames.Clear();
-        _overlay.Place();
-        RenderSwitch();
-        _overlay.Show();
+        if (!_overlay.Shown)
+        {
+            _overlay.Place();
+            RenderSwitch();
+            _overlay.Show();
+        }
         Log.Write($"switch {axis} from {Title(_current)}; previous {(s.Previous is Guid a ? Title(a) : "-")}, next {(s.Next is Guid b ? Title(b) : "-")}");
     }
 
@@ -83,7 +99,7 @@ sealed partial class Engine
         FinishSwitch();
     }
 
-    void FinishSwitch()
+    void FinishSwitch(bool keepOverlay = false)
     {
         var s = _switch!;
         _switch = null;
@@ -95,9 +111,13 @@ sealed partial class Engine
             _lanes.Visited(target);
             Settings.SaveLanes(_lanes);
             // Let Windows draw the new desktop underneath before the picture of it goes away.
-            DwmFlush();
-            DwmFlush();
+            if (!keepOverlay)
+            {
+                DwmFlush();
+                DwmFlush();
+            }
         }
+        if (keepOverlay) return;
         _overlay.Hide();
         Log.Write($"switch drawn: {_gfx.FrameStats()}");
     }
@@ -109,7 +129,7 @@ sealed partial class Engine
         float scale = _overlay.Scale, gap = GapDip * scale;
         float w = g.Width, h = g.Height, o = (float)s.Offset;
         bool horizontal = s.Axis == Axis.Horizontal;
-        float page = horizontal ? w : h;
+        float page = horizontal ? w : h; // one screen; the step between screens is page + gap
         g.Begin(Gfx.Color(0xFF0A0C10));
         Draw(s.FromPicture, o);
         ID2D1Bitmap1? other = o < 0 ? s.NextPicture : o > 0 ? s.PreviousPicture : null;

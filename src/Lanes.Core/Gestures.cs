@@ -91,7 +91,8 @@ public sealed class GestureRecognizer
     public void OnTick(long now)
     {
         if (_state == State.Idle || now - _lastTime < SilenceMs) return;
-        if (_state == State.Tracking) Finish();
+        // The fingers stopped reporting a while ago: whatever speed they had is long gone.
+        if (_state == State.Tracking) { _samples.Clear(); Finish(); }
         _state = State.Idle;
         _last.Clear();
     }

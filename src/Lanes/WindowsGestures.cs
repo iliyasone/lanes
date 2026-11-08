@@ -11,10 +11,14 @@ static class WindowsGestures
     static readonly string[] Values = { "FourFingerLeft", "FourFingerRight", "FourFingerUp", "FourFingerDown", "ThreeFingerUp", "ThreeFingerDown" };
     static readonly string Saved = Path.Combine(Log.Dir, "windows-gestures.txt");
 
+    // Whether this process holds the swipes now; only then does quitting give them back.
+    public static bool Held { get; private set; }
+
     public static void TakeOver()
     {
         try
         {
+            Held = true;
             using var key = Registry.CurrentUser.CreateSubKey(Key);
             // Keep the first copy: after a crash the values in the registry are already Lanes' own.
             if (!File.Exists(Saved))
@@ -34,8 +38,10 @@ static class WindowsGestures
         catch (Exception e) { Log.Write($"take over gestures: {e.Message}"); }
     }
 
-    public static void GiveBack()
+    public static void GiveBack(bool force = false)
     {
+        if (!Held && !force) return;
+        Held = false;
         try
         {
             if (!File.Exists(Saved)) return;

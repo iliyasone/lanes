@@ -52,7 +52,11 @@ sealed class Tray : IDisposable
         if (_stuck) return;
         _stuck = true;
         Log.Write("engine stuck: overlay hidden, swipes given back to Windows");
-        if (_engine.OverlayHandle != IntPtr.Zero) ShowWindowAsync(_engine.OverlayHandle, SW_HIDE);
+        if (_engine.OverlayHandle != IntPtr.Zero)
+        {
+            int cloak = 1;
+            DwmSetWindowAttribute(_engine.OverlayHandle, 13 /* DWMWA_CLOAK */, ref cloak, 4);
+        }
         WindowsGestures.GiveBack();
         _icon.ShowBalloonTip(5000, "Lanes", "Lanes got stuck; Windows' own swipes are back. Restart it from this menu.", ToolTipIcon.Warning);
     }

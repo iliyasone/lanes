@@ -40,6 +40,7 @@ sealed partial class Engine : IGestureSink
     // Fingers on each touchpad in its last report (a laptop's own pad keeps reporting none).
     readonly Dictionary<IntPtr, int> _fingersOn = new();
     bool Touching => _fingersOn.Values.Any(n => n > 0);
+    readonly Dictionary<IntPtr, long> _lastReport = new();
     readonly Dictionary<Guid, string> _titles = new();
     long _lastSnapshot;
 
@@ -148,6 +149,14 @@ sealed partial class Engine : IGestureSink
     {
         long ms = Environment.TickCount64;
         foreach (var r in _recognizers.Values) r.OnTick(ms);
+        // A touchpad that went quiet (lifted fingers without a last report, or disconnected)
+        // no longer holds the swipe or counts as touched.
+        foreach (var (device, last) in _lastReport)
+            if (ms - last > GestureRecognizer.SilenceMs && _fingersOn.GetValueOrDefault(device) > 0)
+            {
+                _fingersOn[device] = 0;
+                if (_activeDevice == device) _activeDevice = IntPtr.Zero;
+            }
         double now = Now;
         if (_switch != null) StepSwitch(now);
         if (_overview != null) StepOverview(now);
@@ -268,7 +277,7 @@ sealed partial class Engine : IGestureSink
         t?.Dispose();
         var full = Picture(desktop);
         if (full == null) return null;
-        return _tilePictures[desktop] = _gfx.Scaled(full, (int)w, (int)h);
+        return _tilePictures[desktop] = _gfx.Scaled(full, (int)w, (int)h, 8 * _overlay.Scale);
     }
 
     (ID2D1Bitmap1 Sharp, ID2D1Bitmap1 Blurred)? Wallpaper(Guid desktop)
@@ -315,12 +324,14 @@ sealed partial class Engine : IGestureSink
     {
         if (!Ready || !_settings.Gestures) return;
         int fingers = frame.Fingers.Length;
+        _lastReport[device] = Environment.TickCount64;
         _fingersOn.TryGetValue(device, out int before);
         _fingersOn[device] = fingers;
         // Three or more fingers just landed: take a picture of the screen now, while they
         // travel far enough for the swipe to be recognised.
         if (fingers >= 3 && before < 3 && !_overlay.Shown && _switch == null)
         {
+            DiscardTouchCapture();
             var area = _overlay.PickArea();
             _touchCaptureOf = _current;
             _touchCapture = Task.Run(() => Capture.Screen(area));
@@ -340,7 +351,7 @@ sealed partial class Engine : IGestureSink
         _ignoring = false;
         if (kind == GestureKind.Switch)
         {
-            if (_overview != null) { _ignoring = true; return; }
+            if (_overview != null || _switch is { Spring: null }) { _ignoring = true; return; }
             BeginSwitch(axis);
         }
         else BeginOverview();
@@ -360,15 +371,27 @@ sealed partial class Engine : IGestureSink
         else if (_overview != null) EndOverview(vy);
     }
 
+    // A picture taken at touch time that no swipe used: free it once it is done.
+    void DiscardTouchCapture()
+    {
+        var t = _touchCapture;
+        _touchCapture = null;
+        t?.ContinueWith(x => { if (x.Status == TaskStatus.RanToCompletion) x.Result.Dispose(); });
+    }
+
     Pixels TakeTouchCapture()
     {
         Pixels? snap = null;
         try
         {
-            if (_touchCapture != null && _touchCaptureOf == _current && _touchCapture.Wait(150)) snap = _touchCapture.Result;
+            if (_touchCapture != null && _touchCaptureOf == _current && _touchCapture.Wait(150))
+            {
+                snap = _touchCapture.Result;
+                _touchCapture = null;
+            }
         }
         catch { }
-        _touchCapture = null;
+        DiscardTouchCapture();
         return snap ?? Capture.Screen(_overlay.PickArea());
     }
 

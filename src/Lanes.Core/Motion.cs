@@ -104,19 +104,20 @@ public sealed class SwipeTrack
 // The three-finger overview swipe. Progress 0 is the desktop as it is, 1 the overview open.
 public sealed class OverviewTrack
 {
-    readonly bool _opening;
+    readonly double _from;
     readonly Tuning _t;
 
-    public OverviewTrack(bool opening, Tuning tuning)
+    // `from` is the progress the overview is at when the fingers start: 0 closed, 1 open.
+    public OverviewTrack(double from, Tuning tuning)
     {
-        _opening = opening;
+        _from = from;
         _t = tuning;
     }
 
     // Fingers moving up (negative travel) open it; moving down close it.
     public double ProgressFor(double travelY)
     {
-        double p = (_opening ? 0 : 1) - travelY / _t.FullOverview;
+        double p = _from - travelY / _t.FullOverview;
         if (p > 1) return 1 + 0.06 * (1 - 1 / (1 + (p - 1) / 0.06));
         if (p < 0) return -0.04 * (1 - 1 / (1 + -p / 0.04));
         return p;
