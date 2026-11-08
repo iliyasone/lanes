@@ -1,0 +1,39 @@
+# Every push and PR: unit tests, the Windows build, and a demo run on a Windows runner that
+# performs the swipes with made-up touchpad reports and saves screenshots plus the log
+# (with frame timings) as the "demo" artifact. The runner has no GPU and no touchpad, so the
+# feel of a real swipe still has to be tried on a real machine.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet test tests/Lanes.Tests -c Release
+      - name: Build
+        run: dotnet publish src/Lanes -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o out
+      - name: Demo run
+        run: |
+          $p = Start-Process ./out/Lanes.exe -ArgumentList '--demo', "$pwd\demo" -PassThru
+          if (-not $p.WaitForExit(240000)) { $p.Kill(); "demo timed out" }
+          Copy-Item "$env:LOCALAPPDATA\Lanes\log.txt" demo/ -ErrorAction SilentlyContinue
+          Get-Content demo/log.txt -ErrorAction SilentlyContinue
+          if (-not (Test-Path demo/4-overview-open.png)) { "screenshots missing"; exit 1 }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: demo
+          path: demo/
