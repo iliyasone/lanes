@@ -45,6 +45,25 @@ jobs:
           Copy-Item "$env:LOCALAPPDATA\Lanes\log.txt" demo/ -ErrorAction SilentlyContinue
           Get-Content demo/log.txt -ErrorAction SilentlyContinue
           if (-not (Test-Path demo/4-overview-open.png)) { "screenshots missing"; exit 1 }
+      - name: Install and uninstall
+        run: |
+          $k = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PrecisionTouchPad'
+          New-Item $k -Force | Out-Null
+          Set-ItemProperty $k FourFingerLeft 4 -Type DWord; Set-ItemProperty $k ThreeFingerUp 2 -Type DWord
+          Remove-Item "$env:LOCALAPPDATA\Lanes\settings.json" -ErrorAction SilentlyContinue
+          Start-Process ./out/Lanes.exe -ArgumentList '--install' -Wait
+          Start-Sleep 6
+          $running = Get-Process Lanes -ErrorAction SilentlyContinue
+          "running: $($running.Path)"
+          schtasks /Query /TN Lanes /FO LIST | Select-String 'TaskName|Status|Logon Mode'
+          $during = (Get-ItemProperty $k).FourFingerLeft
+          "FourFingerLeft while Lanes runs: $during"
+          Start-Process 'C:\Program Files\Lanes\Lanes.exe' -ArgumentList '--uninstall' -Wait
+          Start-Sleep 4
+          $after = Get-ItemProperty $k
+          "after uninstall: FourFingerLeft $($after.FourFingerLeft), ThreeFingerUp $($after.ThreeFingerUp), running $([bool](Get-Process Lanes -ErrorAction SilentlyContinue)), folder $(Test-Path 'C:\Program Files\Lanes')"
+          Copy-Item "$env:LOCALAPPDATA\Lanes\log.txt" demo/install-log.txt -ErrorAction SilentlyContinue
+          if (-not $running -or $during -ne 0 -or $after.FourFingerLeft -ne 4 -or $after.ThreeFingerUp -ne 2) { "install check failed"; exit 1 }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
