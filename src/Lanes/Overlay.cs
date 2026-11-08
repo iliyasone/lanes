@@ -4,8 +4,9 @@ using static Lanes.Native;
 namespace Lanes;
 
 // The full-screen window Lanes draws its animations in. Topmost, never takes focus, shown on
-// every virtual desktop (so a switch underneath does not hide it) and left out of screen
-// captures (so the pictures Lanes takes of the screen are always of the desktop beneath it).
+// every virtual desktop (so a switch underneath does not hide it). Lanes only takes pictures of
+// the screen while it is cloaked, so they are always of the desktop beneath it; screenshots you
+// take while it is up show it.
 sealed class Overlay : NativeWindow
 {
     public event Action<int, int>? MouseMove;
@@ -15,7 +16,7 @@ sealed class Overlay : NativeWindow
     public RECT Area { get; private set; }
     public bool Shown { get; private set; }
 
-    public Overlay(bool excludeFromCapture)
+    public Overlay()
     {
         CreateHandle(new CreateParams
         {
@@ -25,7 +26,6 @@ sealed class Overlay : NativeWindow
             Width = 1,
             Height = 1,
         });
-        if (excludeFromCapture) SetWindowDisplayAffinity(Handle, WDA_EXCLUDEFROMCAPTURE);
         int round = 1; // DWMWCP_DONOTROUND: square corners on a full-screen window
         DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, ref round, 4);
         // The window stays shown and is cloaked when not in use: a cloaked window takes no

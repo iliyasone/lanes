@@ -13,11 +13,7 @@ static class Program
     {
         if (args.Contains("--install")) return Install.Run();
         if (args.Contains("--uninstall")) return Install.Remove();
-        if (args.Contains("--notify-touchpad"))
-        {
-            Log.Write(TouchpadNotify.Notify(out var why) ? "helper: Explorer told to reload touchpad settings" : $"helper: failed ({why})");
-            return 0;
-        }
+        if (args.Contains("--session")) return SessionHelper.Run();
         bool demo = args.Contains("--demo");
 
         _single = new Mutex(true, @"Local\Lanes", out bool owned);

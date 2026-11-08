@@ -6,12 +6,13 @@ public class LaneMapTests
     static readonly Guid A = G(1), B = G(2), C = G(3), Msg = G(4), Agent = G(5), Video = G(6);
     static Guid G(int n) => new($"00000000-0000-0000-0000-{n:D12}");
 
+    const int Top = 0, Main = 1, Bottom = 2;
+
     static LaneMap Sample()
     {
-        var m = new LaneMap();
-        m.Add(Msg, LaneMap.Top);
-        m.Add(A, LaneMap.Main); m.Add(B, LaneMap.Main); m.Add(C, LaneMap.Main);
-        m.Add(Agent, LaneMap.Bottom); m.Add(Video, LaneMap.Bottom);
+        var m = LaneMap.Fresh(new[] { A, B, C }, B);
+        m.Add(Msg, Top);
+        m.Add(Agent, Bottom); m.Add(Video, Bottom);
         m.Reconcile(new[] { Msg, A, B, C, Agent, Video }, B);
         return m;
     }
@@ -54,13 +55,27 @@ public class LaneMapTests
     {
         var m = Sample();
         var made = G(7);
-        m.Reconcile(new[] { Msg, A, C, Agent, Video, made }, made);
-        Assert.Equal(new[] { A, C, made }, m.Lanes[LaneMap.Main].Desktops);
-        Assert.Equal(made, m.Lanes[LaneMap.Main].Current);
+        // Made elsewhere while you are on C: it joins C's lane.
+        m.Reconcile(new[] { Msg, A, C, Agent, Video, made }, C);
+        Assert.Equal(new[] { A, C, made }, m.Lanes[Main].Desktops);
+        Assert.Equal(C, m.Lanes[Main].Current);
+        // The top lane's only desktop is closed: the lane goes, Main is now the top one.
         m.Reconcile(new[] { A, C, Agent, Video, made }, A);
-        Assert.Empty(m.Lanes[LaneMap.Top].Desktops);
+        Assert.Equal(2, m.Lanes.Count);
         Assert.Null(m.Neighbor(A, Direction.Up));
-        Assert.Equal(new[] { LaneMap.Top }, m.EmptyLanes());
+        Assert.Equal(Agent, m.Neighbor(A, Direction.Down));
+    }
+
+    [Fact]
+    public void LanesCanBeAdded()
+    {
+        var m = Sample();
+        var made = G(8);
+        m.InsertLane(3);
+        m.Add(made, 3);
+        m.Reconcile(new[] { Msg, A, B, C, Agent, Video, made }, B);
+        Assert.Equal(4, m.Lanes.Count);
+        Assert.Equal(made, m.Neighbor(Agent, Direction.Down));
     }
 
     [Fact]

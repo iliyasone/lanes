@@ -8,7 +8,7 @@ namespace Lanes;
 // prompt. "--uninstall" stops it, gives the gestures back to Windows and removes it.
 static class Install
 {
-    public const string TaskName = "Lanes", NotifyTask = "Lanes notify";
+    public const string TaskName = "Lanes", SessionTask = "Lanes session";
     static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Lanes");
     public static string Exe => Path.Combine(Dir, "Lanes.exe");
 
@@ -57,10 +57,10 @@ static class Install
             <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
               <Principals><Principal id="Author"><UserId>{user}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
               <Settings><MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><ExecutionTimeLimit>PT1M</ExecutionTimeLimit></Settings>
-              <Actions Context="Author"><Exec><Command>{Exe}</Command><Arguments>--notify-touchpad</Arguments></Exec></Actions>
+              <Actions Context="Author"><Exec><Command>{Exe}</Command><Arguments>--session</Arguments></Exec></Actions>
             </Task>
             """, System.Text.Encoding.Unicode);
-        Schtasks($"/Create /TN \"{NotifyTask}\" /XML \"{xml}\" /F");
+        Schtasks($"/Create /TN \"{SessionTask}\" /XML \"{xml}\" /F");
         File.Delete(xml);
         Schtasks($"/Run /TN {TaskName}");
         Log.Write($"installed {Program.Version} to {Dir}");
@@ -71,20 +71,29 @@ static class Install
     {
         if (Relaunched("--uninstall")) return 0;
         StopRunning();
-        WindowsGestures.GiveBack(force: true);
+        // Your gesture settings back in the registry; then, in your own session, Explorer is told
+        // to reload them and the desktops Lanes made are removed. Run from that session itself,
+        // this happens right here.
+        WindowsGestures.GiveBack(force: true, notify: false);
+        if (!SessionHelper.Ask("restore", 20000))
+        {
+            Log.Write("session helper unavailable; restoring from this process");
+            SessionHelper.RemoveMadeDesktops();
+            TouchpadNotify.Changed();
+        }
         Schtasks($"/Delete /TN {TaskName} /F");
-        Schtasks($"/Delete /TN \"{NotifyTask}\" /F");
+        Schtasks($"/Delete /TN \"{SessionTask}\" /F");
         // The folder may hold this very program; remove it once it has exited.
         Process.Start(new ProcessStartInfo("cmd.exe", $"/c timeout /t 2 /nobreak >nul & rmdir /s /q \"{Dir}\"") { CreateNoWindow = true, UseShellExecute = false });
         Log.Write("uninstalled");
         return 0;
     }
 
-    public static bool RunNotifyTask()
+    public static bool RunSessionTask()
     {
         try
         {
-            using var p = Process.Start(new ProcessStartInfo("schtasks.exe", $"/Run /TN \"{NotifyTask}\"") { CreateNoWindow = true, UseShellExecute = false })!;
+            using var p = Process.Start(new ProcessStartInfo("schtasks.exe", $"/Run /TN \"{SessionTask}\"") { CreateNoWindow = true, UseShellExecute = false })!;
             p.WaitForExit(5000);
             return p.ExitCode == 0;
         }

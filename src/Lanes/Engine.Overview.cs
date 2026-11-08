@@ -29,7 +29,7 @@ sealed partial class Engine
         public List<ID2D1Bitmap1?> Icons = new();
         public Box[] From = Array.Empty<Box>(), To = Array.Empty<Box>();
         public List<Tile> Tiles = new();
-        public float LabelX, LabelW, StripBottom;
+        public float StripBottom;
         public double P;
         public bool Tracking;
         public OverviewTrack Track = null!;
@@ -83,26 +83,34 @@ sealed partial class Engine
     }
 
     // Places the lane rows at the top; returns where the window spread may start.
+    // The lanes, one row each, top to bottom. Each row is shifted so that its current desktop
+    // (where a swipe up or down lands) sits in one column with the desktop you are on, in the
+    // middle: what is above and below you reads at a glance. Rows run off the screen's sides
+    // when long. A "+" ends each lane; "New lane" sits under the last one.
     float LayoutTiles(OverviewState o)
     {
         float s = _overlay.Scale;
-        float tw = 184 * s, th = tw * _gfx.Height / _gfx.Width, gap = 16 * s, plusW = 56 * s;
-        float rowH = th + 6 * s + 18 * s, rowGap = 16 * s, top = 18 * s, labelW = 56 * s, colGap = 18 * s;
-        float widest = _lanes.Lanes.Max(l => l.Desktops.Count * (tw + gap) + plusW);
-        float total = labelW + colGap + widest + colGap + labelW;
-        float x0 = (_gfx.Width - total) / 2 + labelW + colGap;
+        int n = _lanes.Lanes.Count;
+        float gap = 16 * s, plusW = 56 * s, rowGap = 14 * s, top = 18 * s, newLaneH = 32 * s;
+        float tw = 184 * s;
+        float Height(float w) => n * (w * _gfx.Height / _gfx.Width + 24 * s) + (n - 1) * rowGap + rowGap + newLaneH;
+        while (tw > 110 * s && top + Height(tw) > _gfx.Height * 0.45f) tw -= 4 * s;
+        float th = tw * _gfx.Height / _gfx.Width, rowH = th + 24 * s;
+        float column = (_gfx.Width - tw) / 2;
         o.Tiles.Clear();
-        for (int l = 0; l < _lanes.Lanes.Count; l++)
+        for (int l = 0; l < n; l++)
         {
-            float y = top + l * (rowH + rowGap), x = x0;
             var lane = _lanes.Lanes[l];
+            Guid anchor = lane.Desktops.Contains(_current) ? _current : _lanes.CurrentOf(l) ?? Guid.Empty;
+            int c = Math.Max(0, lane.Desktops.IndexOf(anchor));
+            float y = top + l * (rowH + rowGap), x = column - c * (tw + gap);
             for (int i = 0; i < lane.Desktops.Count; i++, x += tw + gap)
                 o.Tiles.Add(new Tile(l, i, lane.Desktops[i], new Box(x, y, tw, th), false));
             o.Tiles.Add(new Tile(l, lane.Desktops.Count, Guid.Empty, new Box(x, y, plusW, th), true));
         }
-        o.LabelX = x0 - colGap - labelW;
-        o.LabelW = labelW;
-        o.StripBottom = top + 3 * rowH + 2 * rowGap + 8 * s;
+        float ny = top + n * (rowH + rowGap);
+        o.Tiles.Add(new Tile(n, 0, Guid.Empty, new Box(column, ny, tw, newLaneH), true));
+        o.StripBottom = ny + newLaneH + 8 * s;
         return o.StripBottom + 20 * s + 28 * s;
     }
 
@@ -125,6 +133,7 @@ sealed partial class Engine
         if (!o.Tracking) return;
         double speed = o.Track.SpeedFor(vy);
         bool open = o.Track.Release(o.P, speed);
+        Log.Write($"overview release at {o.P:0.00}, {speed:0.0}/s: {(open ? "open" : "closed")}{Reported()}");
         SettleOverview(open ? 1 : 0, speed);
     }
 
@@ -241,7 +250,9 @@ sealed partial class Engine
             {
                 var made = Desktops.Create();
                 if (made == Guid.Empty) return;
+                if (tile.Lane >= _lanes.Lanes.Count) _lanes.InsertLane(tile.Lane);
                 _lanes.Add(made, tile.Lane);
+                _lanes.Made.Add(made);
                 SyncOrder();
                 _lanes.Reconcile(Desktops.All(), _current);
                 Settings.SaveLanes(_lanes);
@@ -260,8 +271,12 @@ sealed partial class Engine
         if (o is not { Open: true } || HitTile(o, x, y) is not { Plus: false } tile) return;
         var lane = _lanes.Lanes[tile.Lane];
         IntPtr menu = CreatePopupMenu();
-        for (int l = 0; l < 3; l++)
-            if (l != tile.Lane) AppendMenu(menu, 0, (UIntPtr)(1 + l), $"Move to {LaneMap.Names[l]} lane");
+        int n = _lanes.Lanes.Count;
+        AppendMenu(menu, tile.Lane > 0 ? 0u : 1u, (UIntPtr)1, "Move to the lane above");
+        AppendMenu(menu, tile.Lane < n - 1 ? 0u : 1u, (UIntPtr)2, "Move to the lane below");
+        AppendMenu(menu, 0, (UIntPtr)3, "Move to a new lane above");
+        AppendMenu(menu, 0, (UIntPtr)4, "Move to a new lane below");
+        AppendMenu(menu, 0x800, UIntPtr.Zero, null);
         AppendMenu(menu, tile.Index > 0 ? 0u : 1u, (UIntPtr)10, "Move left");
         AppendMenu(menu, tile.Index < lane.Desktops.Count - 1 ? 0u : 1u, (UIntPtr)11, "Move right");
         AppendMenu(menu, 0x800, UIntPtr.Zero, null);
@@ -272,7 +287,10 @@ sealed partial class Engine
         DestroyMenu(menu);
         switch (cmd)
         {
-            case 1 or 2 or 3: _lanes.Add(tile.Desktop, cmd - 1); break;
+            case 1: _lanes.Add(tile.Desktop, tile.Lane - 1); break;
+            case 2: _lanes.Add(tile.Desktop, tile.Lane + 1); break;
+            case 3: _lanes.InsertLane(tile.Lane); _lanes.Add(tile.Desktop, tile.Lane); break;
+            case 4: _lanes.InsertLane(tile.Lane + 1); _lanes.Add(tile.Desktop, tile.Lane + 1); break;
             case 10: _lanes.Add(tile.Desktop, tile.Lane, tile.Index - 1); break;
             case 11: _lanes.Add(tile.Desktop, tile.Lane, tile.Index + 1); break;
             case 20:
@@ -364,14 +382,8 @@ sealed partial class Engine
         if (boxes.Length > 0) dy = Math.Min(dy, Math.Min(0, (float)highest - 30 * s - o.StripBottom));
         if (a > 0.002f)
         {
-            var labelFont = g.Font(11 * s, FontWeight.SemiBold);
             var capFont = g.Font(14 * s, FontWeight.Normal, centred: true);
-            for (int l = 0; l < _lanes.Lanes.Count; l++)
-            {
-                var first = o.Tiles.First(t => t.Lane == l);
-                g.Dc.DrawText(LaneMap.Names[l].ToUpperInvariant(), labelFont,
-                    new Vortice.Mathematics.Rect(o.LabelX, (float)first.Rect.Y + dy, o.LabelW, (float)first.Rect.H), g.Brush(A(0xB8FFFFFF, a)), DrawTextOptions.Clip);
-            }
+            var newLaneFont = g.Font(13 * s);
             foreach (var t in o.Tiles)
             {
                 float x = (float)t.Rect.X, y = (float)t.Rect.Y + dy, w = (float)t.Rect.W, h = (float)t.Rect.H;
@@ -380,9 +392,12 @@ sealed partial class Engine
                 {
                     g.RoundRect(x, y, w, h, 8 * s, A(hover ? 0x14FFFFFFu : 0x0AFFFFFFu, a));
                     g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, 8 * s, A(0x47FFFFFF, a), 1);
-                    float cx = x + w / 2, cy = y + h / 2, arm = 7 * s;
+                    bool newLane = t.Lane >= _lanes.Lanes.Count;
+                    float label = newLane ? g.TextWidth("New lane", newLaneFont) + 10 * s : 0;
+                    float cx = x + (w - label) / 2, cy = y + h / 2, arm = (newLane ? 5 : 7) * s;
                     g.Rect(cx - arm, cy - 0.8f * s, 2 * arm, 1.6f * s, A(0x99FFFFFF, a));
                     g.Rect(cx - 0.8f * s, cy - arm, 1.6f * s, 2 * arm, A(0x99FFFFFF, a));
+                    if (newLane) g.Text("New lane", newLaneFont, cx + arm + 10 * s, y, label, h, A(0xB3FFFFFF, a));
                     continue;
                 }
                 g.Shadow(x, y, w, h, 8 * s, 18 * s, 6 * s, 0.4f * a);

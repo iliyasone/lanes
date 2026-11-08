@@ -14,9 +14,9 @@ static class TouchpadNotify
     {
         if (Notify(out string why)) { Log.Write("Explorer told to reload touchpad settings"); return; }
         Log.Write($"telling Explorer directly failed ({why})");
-        // An elevated process may not reach Explorer's COM objects; a copy of Lanes started
-        // without elevation by the "Lanes notify" task can.
-        if (Install.RunNotifyTask()) Log.Write("asked the unelevated helper to tell Explorer");
+        // An elevated or remote process may not reach Explorer's COM objects; a copy of Lanes
+        // started in the user's session without elevation can.
+        if (SessionHelper.Ask("notify", 5000)) Log.Write("the session helper told Explorer");
     }
 
     public static bool Notify(out string why)

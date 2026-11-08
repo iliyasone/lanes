@@ -26,6 +26,9 @@ sealed class Touchpad
 
     public Touchpad(Action<IntPtr, TouchFrame> onFrame) => _onFrame = onFrame;
 
+    // Reports that carried a contact count but no readable finger, for the log.
+    public int Dropped;
+
     public void Register(IntPtr hwnd)
     {
         var dev = new[] { new RAWINPUTDEVICE { UsagePage = 0x0D, Usage = 0x05, Flags = RIDEV_INPUTSINK, Target = hwnd } };
@@ -68,7 +71,7 @@ sealed class Touchpad
             return false;
         }
         _fingers.Clear();
-        int slots = Math.Min((int)contacts, pad.LinkCollections - 1);
+        int slots = Math.Min((int)contacts, pad.LinkCollections - 1), readable = 0;
         double w = Math.Max(1, pad.XMax - pad.XMin), h = Math.Max(1, pad.YMax - pad.YMin);
         for (ushort link = 1; link <= slots; link++)
         {
@@ -77,6 +80,7 @@ sealed class Touchpad
                 || HidP_GetUsageValue(HidP_Input, 0x01, link, 0x30, out uint x, pad.Preparsed, report, length) != HIDP_STATUS_SUCCESS
                 || x < pad.XMin || x > pad.XMax)
                 continue;
+            readable++;
             uint n = (uint)_usages.Length;
             if (HidP_GetUsages(HidP_Input, 0x0D, link, _usages, ref n, pad.Preparsed, report, length) != HIDP_STATUS_SUCCESS
                 || !_usages.AsSpan(0, (int)n).Contains((ushort)0x42))
@@ -84,8 +88,10 @@ sealed class Touchpad
             HidP_GetUsageValue(HidP_Input, 0x0D, link, 0x51, out uint id, pad.Preparsed, report, length);
             _fingers.Add(new Finger(id, (x - pad.XMin) / w, (y - pad.YMin) / h * pad.Aspect));
         }
-        // A report that counts contacts but carries none of them says nothing new.
-        if (contacts > 0 && _fingers.Count == 0) return false;
+        // Fingers whose tip switch is off are lifting: a report of only those is the lift itself
+        // (the Magic Trackpad driver sends it with the contact count still set). A report that
+        // counts contacts but carries none readable says nothing new.
+        if (contacts > 0 && readable == 0) { Dropped++; return false; }
         frame = new TouchFrame(0, _fingers.ToArray());
         return true;
     }

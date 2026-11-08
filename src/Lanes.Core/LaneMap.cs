@@ -6,21 +6,32 @@ public enum Direction { Left, Right, Up, Down }
 
 public sealed class Lane
 {
-    public string Name { get; set; } = "";
     public List<Guid> Desktops { get; set; } = new();
     // The desktop of this lane you were on last: where a swipe from another lane lands.
     public Guid? Current { get; set; }
 }
 
-// Which Windows desktop sits in which lane. Windows keeps desktops in one row; Lanes keeps
-// its own three rows on top of it, by desktop ID, and follows whatever Windows does: a
-// desktop made or removed elsewhere is added to or dropped from the map on the next look.
+// Which Windows desktop sits in which lane. Windows keeps desktops in one row; Lanes keeps its
+// own rows on top of it, by desktop ID, and follows whatever Windows does: a desktop made or
+// removed elsewhere is added to or dropped from the map on the next look. Lanes are listed top
+// to bottom; a lane that loses its last desktop disappears.
 public sealed class LaneMap
 {
-    public const int Top = 0, Main = 1, Bottom = 2;
-    public static readonly string[] Names = { "Top", "Main", "Bottom" };
+    public List<Lane> Lanes { get; set; } = new();
 
-    public List<Lane> Lanes { get; set; } = Names.Select(n => new Lane { Name = n }).ToList();
+    // Desktops Lanes made itself; uninstalling removes them (their windows move to one you had).
+    public List<Guid> Made { get; set; } = new();
+
+    // A new map: the desktops you have in one lane, with an empty lane above and below for
+    // Lanes to fill with a new desktop each.
+    public static LaneMap Fresh(IReadOnlyList<Guid> desktops, Guid current)
+    {
+        var map = new LaneMap();
+        map.Lanes.Add(new Lane());
+        map.Lanes.Add(new Lane { Desktops = desktops.ToList(), Current = current });
+        map.Lanes.Add(new Lane());
+        return map;
+    }
 
     public (int Lane, int Index)? Locate(Guid desktop)
     {
@@ -60,24 +71,24 @@ public sealed class LaneMap
         if (Locate(desktop) is var (l, _)) Lanes[l].Current = desktop;
     }
 
+    // Puts a desktop into a lane (taking it out of wherever it was), at an index or at the end.
     public void Add(Guid desktop, int lane, int? index = null)
     {
-        Remove(desktop);
-        var list = Lanes[lane].Desktops;
+        var target = Lanes[lane];
+        foreach (var l in Lanes)
+        {
+            l.Desktops.Remove(desktop);
+            if (l.Current == desktop && l != target) l.Current = null;
+        }
+        var list = target.Desktops;
         list.Insert(Math.Clamp(index ?? list.Count, 0, list.Count), desktop);
     }
 
-    public void Remove(Guid desktop)
-    {
-        foreach (var lane in Lanes)
-        {
-            lane.Desktops.Remove(desktop);
-            if (lane.Current == desktop) lane.Current = null;
-        }
-    }
+    // A new, empty lane at this position (0 = above all others).
+    public void InsertLane(int at) => Lanes.Insert(Math.Clamp(at, 0, Lanes.Count), new Lane());
 
-    // Brings the map in line with the desktops Windows has now, in Windows' order: desktops
-    // that are gone are dropped, new ones join the Main lane after the ones it has.
+    // Brings the map in line with the desktops Windows has now: desktops that are gone are
+    // dropped, new ones join the lane of the desktop you are on, and lanes left empty go away.
     public void Reconcile(IReadOnlyList<Guid> system, Guid current)
     {
         var present = system.ToHashSet();
@@ -86,8 +97,12 @@ public sealed class LaneMap
             lane.Desktops.RemoveAll(d => !present.Contains(d));
             if (lane.Current is Guid c && !present.Contains(c)) lane.Current = null;
         }
+        Made.RemoveAll(d => !present.Contains(d));
+        Lanes.RemoveAll(l => l.Desktops.Count == 0);
+        if (Lanes.Count == 0) Lanes.Add(new Lane());
+        int home = Locate(current)?.Lane ?? 0;
         foreach (var d in system)
-            if (Locate(d) == null) Lanes[Main].Desktops.Add(d);
+            if (Locate(d) == null) Lanes[home].Desktops.Add(d);
         Visited(current);
         foreach (var lane in Lanes)
             lane.Current ??= lane.Desktops.Count > 0 ? lane.Desktops[0] : null;
@@ -99,11 +114,5 @@ public sealed class LaneMap
 
     public string Save() => JsonSerializer.Serialize(this, Json);
 
-    public static LaneMap Load(string json)
-    {
-        var map = JsonSerializer.Deserialize<LaneMap>(json) ?? new LaneMap();
-        while (map.Lanes.Count < Names.Length) map.Lanes.Add(new Lane { Name = Names[map.Lanes.Count] });
-        if (map.Lanes.Count > Names.Length) map.Lanes.RemoveRange(Names.Length, map.Lanes.Count - Names.Length);
-        return map;
-    }
+    public static LaneMap Load(string json) => JsonSerializer.Deserialize<LaneMap>(json) ?? new LaneMap();
 }

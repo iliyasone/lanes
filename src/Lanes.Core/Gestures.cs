@@ -31,7 +31,7 @@ public sealed class GestureRecognizer
     // Velocity is measured over this much of the end of the swipe.
     public const long VelocityWindowMs = 80;
     // With no report for this long the fingers are taken as lifted (some drivers send no last report).
-    public const long SilenceMs = 400;
+    public const long SilenceMs = 250;
 
     enum State { Idle, Pending, Tracking, Ignored }
 
@@ -46,6 +46,13 @@ public sealed class GestureRecognizer
     public GestureRecognizer(IGestureSink sink) => _sink = sink;
 
     public bool Tracking => _state == State.Tracking;
+
+    // About the last swipe, for the log: reports while tracking, and whether the fingers were
+    // seen lifting or the reports just stopped.
+    public int Reports { get; private set; }
+    public long TrackedMs { get; private set; }
+    public bool EndedBySilence { get; private set; }
+    long _lockTime;
     public GestureKind Kind { get; private set; }
     public Axis Axis { get; private set; }
 
@@ -76,6 +83,8 @@ public sealed class GestureRecognizer
                     _state = count == 0 ? State.Idle : State.Ignored;
                     break;
                 }
+                Reports++;
+                TrackedMs = frame.Time - _lockTime;
                 _samples.Add((frame.Time, _tx, _ty));
                 Trim(frame.Time);
                 _sink.Move(_tx - _ox, _ty - _oy);
@@ -92,7 +101,7 @@ public sealed class GestureRecognizer
     {
         if (_state == State.Idle || now - _lastTime < SilenceMs) return;
         // The fingers stopped reporting a while ago: whatever speed they had is long gone.
-        if (_state == State.Tracking) { _samples.Clear(); Finish(); }
+        if (_state == State.Tracking) { _samples.Clear(); EndedBySilence = true; Finish(); }
         _state = State.Idle;
         _last.Clear();
     }
@@ -114,6 +123,10 @@ public sealed class GestureRecognizer
         _state = State.Tracking;
         _ox = _tx;
         _oy = _ty;
+        Reports = 0;
+        TrackedMs = 0;
+        EndedBySilence = false;
+        _lockTime = time;
         _samples.Clear();
         _samples.Add((time, _tx, _ty));
         _sink.Begin(Kind, Axis);

@@ -84,7 +84,7 @@ sealed partial class Engine
         s.Outcome = outcome;
         s.Spring = new Spring(s.Offset, speed, target, _tuning.SwitchResponse);
         s.SpringStart = Now;
-        Log.Write($"release at {s.Offset / s.Track.Page:0.00} screen, {speed / s.Track.Page:0.00} screens/s: {outcome}");
+        Log.Write($"release at {s.Offset / s.Track.Page:0.00} screen, {speed / s.Track.Page:0.00} screens/s: {outcome}{Reported()}");
     }
 
     void StepSwitch(double now)
@@ -174,15 +174,20 @@ sealed partial class Engine
         var loc = _lanes.Locate(target);
         var from = _lanes.Locate(_current);
         string name = Title(target);
-        string lane = loc is var (l, _) ? $"{LaneMap.Names[l]} lane" : "";
+        string lane = "";
         var nameFont = g.Font(15 * s, Vortice.DirectWrite.FontWeight.SemiBold);
         var laneFont = g.Font(13 * s);
         float nameW = g.TextWidth(name, nameFont), laneW = g.TextWidth(lane, laneFont);
         float cell = 14 * s, cellH = 9 * s, cg = 3 * s;
-        int widest = Math.Max(1, _lanes.Lanes.Max(x => x.Desktops.Count));
-        float mapW = widest * cell + (widest - 1) * cg, mapH = 3 * cellH + 2 * cg;
-        float pillH = 56 * s, padL = 16 * s, padR = 20 * s, between = 16 * s;
-        float pillW = padL + mapW + between + nameW + 6 * s + laneW + padR;
+        // Rows shifted so each lane's current desktop is in one column, as in the overview.
+        int n = _lanes.Lanes.Count;
+        var anchor = Enumerable.Range(0, n).Select(l => Math.Max(0, _lanes.Lanes[l].Desktops.IndexOf(
+            from is var (fl0, fi0) && fl0 == l ? _lanes.Lanes[l].Desktops[fi0] : _lanes.CurrentOf(l) ?? Guid.Empty))).ToArray();
+        int lead = anchor.DefaultIfEmpty(0).Max();
+        int widest = Math.Max(1, Enumerable.Range(0, n).Max(l => lead - anchor[l] + _lanes.Lanes[l].Desktops.Count));
+        float mapW = widest * cell + (widest - 1) * cg, mapH = n * cellH + (n - 1) * cg;
+        float pillH = Math.Max(56 * s, mapH + 20 * s), padL = 16 * s, padR = 20 * s, between = 16 * s;
+        float pillW = padL + mapW + between + nameW + padR;
         float x = (g.Width - pillW) / 2, y = g.Height - 77 * s - pillH;
 
         g.Shadow(x, y, pillW, pillH, 20 * s, 24 * s, 8 * s, 0.35f * alpha);
@@ -192,7 +197,7 @@ sealed partial class Engine
         for (int li = 0; li < _lanes.Lanes.Count; li++)
             for (int di = 0; di < _lanes.Lanes[li].Desktops.Count; di++)
             {
-                float cx = x + padL + di * (cell + cg), cy = my + li * (cellH + cg);
+                float cx = x + padL + (lead - anchor[li] + di) * (cell + cg), cy = my + li * (cellH + cg);
                 bool isFrom = from is var (fl, fi) && fl == li && fi == di;
                 bool isTarget = !staying && loc is var (tl, ti) && tl == li && ti == di;
                 if (isTarget)
@@ -205,7 +210,6 @@ sealed partial class Engine
             }
         float tx = x + padL + mapW + between;
         g.Text(name, nameFont, tx, y, nameW + 2, pillH, A(0xFFFFFFFF, alpha));
-        g.Text(lane, laneFont, tx + nameW + 6 * s, y + 1 * s, laneW + 2, pillH, A(0xFFA0A4AB, alpha));
     }
 
     static uint A(uint argb, float alpha) => ((uint)Math.Clamp((argb >> 24) * alpha, 0, 255) << 24) | (argb & 0xFFFFFF);

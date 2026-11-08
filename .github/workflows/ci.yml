@@ -83,9 +83,11 @@ jobs:
           Start-Process 'C:\Program Files\Lanes\Lanes.exe' -ArgumentList '--uninstall' -Wait
           Start-Sleep 4
           $after = Get-ItemProperty $k
-          "after uninstall: FourFingerLeft $($after.FourFingerLeft), ThreeFingerUp $($after.ThreeFingerUp), running $([bool](Get-Process Lanes -ErrorAction SilentlyContinue)), folder $(Test-Path 'C:\Program Files\Lanes')"
+          $ids = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops' -ErrorAction SilentlyContinue).VirtualDesktopIDs
+          $desktops = if ($ids) { $ids.Length / 16 } else { 1 }
+          "after uninstall: FourFingerLeft $($after.FourFingerLeft), ThreeFingerUp $($after.ThreeFingerUp), running $([bool](Get-Process Lanes -ErrorAction SilentlyContinue)), folder $(Test-Path 'C:\Program Files\Lanes'), tasks $((schtasks /Query /FO CSV | Select-String 'Lanes').Count), desktops $desktops"
           Copy-Item "$env:LOCALAPPDATA\Lanes\log.txt" demo/install-log.txt -ErrorAction SilentlyContinue
-          if (-not $running -or $during -ne 0 -or $after.FourFingerLeft -ne 4 -or $after.ThreeFingerUp -ne 2) { "install check failed"; exit 1 }
+          if (-not $running -or $during -ne 0 -or $after.FourFingerLeft -ne 4 -or $after.ThreeFingerUp -ne 2 -or $desktops -ne 1) { "install check failed"; exit 1 }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

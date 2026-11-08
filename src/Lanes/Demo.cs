@@ -22,9 +22,9 @@ static class Demo
             await Task.Delay(1500);
 
             // Main gets a second desktop; then each desktop gets a window to recognise it by.
-            var lanes = await engine.Ask(() => engine.AddDesktop(LaneMap.Main));
-            Guid top = lanes.Lanes[LaneMap.Top].Desktops[0], editor = lanes.Lanes[LaneMap.Main].Desktops[0],
-                research = lanes.Lanes[LaneMap.Main].Desktops[1], agent = lanes.Lanes[LaneMap.Bottom].Desktops[0];
+            var lanes = await engine.Ask(() => engine.AddDesktop(1));
+            Guid top = lanes.Lanes[0].Desktops[0], editor = lanes.Lanes[1].Desktops[0],
+                research = lanes.Lanes[1].Desktops[1], agent = lanes.Lanes[2].Desktops[0];
             Open("Messages", Color.FromArgb(0x17, 0x21, 0x2B), Color.FromArgb(0x2A, 0xAB, 0xEE), new Rectangle(150, 60, 1200, 700), top);
             Open("Editor", Color.FromArgb(0x1E, 0x1E, 0x1E), Color.FromArgb(0x56, 0x9C, 0xD6), new Rectangle(60, 40, 1000, 640), editor);
             Open("Notes", Color.FromArgb(0x1F, 0x1F, 0x1F), Color.FromArgb(0xF2, 0xC9, 0x4C), new Rectangle(1100, 80, 380, 320), editor);

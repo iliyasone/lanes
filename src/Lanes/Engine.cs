@@ -86,7 +86,7 @@ sealed partial class Engine : IGestureSink
         try
         {
             _msg = new MessageWindow(this);
-            _overlay = new Overlay(excludeFromCapture: !_demo);
+            _overlay = new Overlay();
             _overlay.PickArea();
             _gfx = new Gfx();
             _gfx.Attach(_overlay.Handle, _overlay.Area.Width, _overlay.Area.Height);
@@ -187,23 +187,23 @@ sealed partial class Engine : IGestureSink
     void SetUpLanes()
     {
         var saved = Settings.LoadLanes();
-        _lanes = saved ?? new LaneMap();
         _current = Desktops.Current;
-        _lanes.Reconcile(Desktops.All(), _current);
-        if (saved == null)
+        _lanes = saved ?? LaneMap.Fresh(Desktops.All(), _current);
+        if (saved != null) _lanes.Reconcile(Desktops.All(), _current);
+        else
         {
             // First start: everything you had becomes the Main lane, with a new desktop above and below.
             foreach (int lane in _lanes.EmptyLanes().ToList())
             {
                 var made = Desktops.Create();
-                if (made != Guid.Empty) _lanes.Add(made, lane);
+                if (made != Guid.Empty) { _lanes.Add(made, lane); _lanes.Made.Add(made); }
             }
             SyncOrder();
             _lanes.Reconcile(Desktops.All(), Desktops.Current);
             Log.Write("first start: lanes made");
         }
         Settings.SaveLanes(_lanes);
-        Log.Write("lanes: " + string.Join(" | ", _lanes.Lanes.Select(l => $"{l.Name} {l.Desktops.Count}")));
+        Log.Write("lanes: " + string.Join(" | ", _lanes.Lanes.Select(l => l.Desktops.Count)) + " desktops");
     }
 
     // Keeps Windows' own order of desktops (Task View, Ctrl+Win+arrows) the same as the lanes read left to right, top to bottom.
@@ -364,6 +364,14 @@ sealed partial class Engine : IGestureSink
         else if (_overview != null) MoveOverview(dy);
     }
 
+    // How the swipe that just ended was reported, for the log.
+    string Reported()
+    {
+        var r = _recognizers.Values.FirstOrDefault(x => x.Reports > 0);
+        if (r == null) return "";
+        return $" ({r.Reports} reports in {r.TrackedMs} ms, {(r.EndedBySilence ? "reports stopped" : "lift seen")}, {_touchpad.Dropped} empty reports so far)";
+    }
+
     public void End(double vx, double vy)
     {
         if (_ignoring) { _ignoring = false; return; }
@@ -432,7 +440,7 @@ sealed partial class Engine : IGestureSink
     public LaneMap AddDesktop(int lane)
     {
         var made = Desktops.Create();
-        if (made != Guid.Empty) _lanes.Add(made, lane);
+        if (made != Guid.Empty) { _lanes.Add(made, lane); _lanes.Made.Add(made); }
         SyncOrder();
         _lanes.Reconcile(Desktops.All(), Desktops.Current);
         Settings.SaveLanes(_lanes);

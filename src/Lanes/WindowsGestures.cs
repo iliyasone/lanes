@@ -38,7 +38,7 @@ static class WindowsGestures
         catch (Exception e) { Log.Write($"take over gestures: {e.Message}"); }
     }
 
-    public static void GiveBack(bool force = false)
+    public static void GiveBack(bool force = false, bool notify = true)
     {
         if (!Held && !force) return;
         Held = false;
@@ -52,7 +52,7 @@ static class WindowsGestures
                 if (value.Length == 0) key.DeleteValue(name, false);
                 else key.SetValue(name, int.Parse(value), RegistryValueKind.DWord);
             }
-            Apply();
+            if (notify) Apply();
             File.Delete(Saved);
             Log.Write("Windows gestures given back");
         }
