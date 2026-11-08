@@ -35,11 +35,8 @@ static class Demo
             foreach (var d in new[] { top, research, agent, editor })
             {
                 Desktops.Switch(d);
-                await Task.Delay(500);
-                if (d == top) engine.Post(() => SwitchIndicator.Describe("500 ms after a switch"));
                 // Windows' own "Desktop N" pill stays a while; the picture is taken after it.
-                await Task.Delay(2500);
-                if (d == top) engine.Post(() => SwitchIndicator.Describe("3 s after a switch"));
+                await Task.Delay(3000);
                 engine.Snapshot();
                 await Task.Delay(400);
             }
@@ -69,6 +66,10 @@ static class Demo
             await Task.Delay(1500);
             engine.Screenshot(Path.Combine(dir, "5-after.png"));
             await Task.Delay(1000);
+            Tray.Instance?.ShowMenu(new Point(1800, 1000));
+            await Task.Delay(800);
+            engine.Screenshot(Path.Combine(dir, "6-tray-menu.png"));
+            await Task.Delay(500);
             Log.Write("demo done");
         }
         catch (Exception e) { Log.Write($"demo: {e}"); }

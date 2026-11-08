@@ -106,6 +106,9 @@ click it.
   and at the start of each swipe), so a desktop you have not visited since Lanes started
   shows its wallpaper until you have been there once.
 - Windows' own Task View and Ctrl+Win+arrows still see one row of desktops.
+- After a switch Windows shows its own "Desktop N" label at the bottom for about two
+  seconds, as after its own swipe. It is not a window Lanes can hide; naming desktops in
+  Task View makes it say something useful.
 
 ## How it works
 

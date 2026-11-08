@@ -153,6 +153,9 @@ sealed class Gfx : IDisposable
         catch { f = Write.CreateTextFormat("Segoe UI", null, weight, Vortice.DirectWrite.FontStyle.Normal, FontStretch.Normal, size, "en-us"); }
         f.WordWrapping = WordWrapping.NoWrap;
         f.ParagraphAlignment = ParagraphAlignment.Center;
+        // Text too long for its place ends in "…".
+        using (var sign = Write.CreateEllipsisTrimmingSign(f))
+            f.SetTrimming(new Trimming { Granularity = TrimmingGranularity.Character }, sign);
         if (centred) f.TextAlignment = TextAlignment.Center;
         return _formats[(size, weight, centred)] = f;
     }

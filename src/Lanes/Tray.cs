@@ -15,8 +15,13 @@ sealed class Tray : IDisposable
     readonly Settings _settings;
     readonly Updater _updater;
 
+    public static Tray? Instance;
+
+    public void ShowMenu(Point near) => _flyout.ShowNear(near);
+
     public Tray(Engine engine, Settings settings, Updater updater)
     {
+        Instance = this;
         _engine = engine;
         _settings = settings;
         _updater = updater;
@@ -162,12 +167,13 @@ sealed class Tray : IDisposable
         float RowH => 36 * S;
         float SepH => 9 * S;
 
-        public void ShowNearCursor()
+        public void ShowNearCursor() => ShowNear(Cursor.Position);
+
+        public void ShowNear(Point cur)
         {
             Build();
             float h = 4 * S + Header + 9 * S + _items.Sum(i => i == null ? SepH : RowH) + 4 * S;
             Size = new Size((int)(300 * S), (int)h);
-            var cur = Cursor.Position;
             var wa = Screen.FromPoint(cur).WorkingArea;
             Location = new Point(Math.Clamp(cur.X - Width / 2, wa.Left + 8, wa.Right - Width - 8), wa.Bottom - Height - (int)(12 * S));
             _hover = -1;
