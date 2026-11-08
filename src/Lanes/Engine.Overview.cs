@@ -29,7 +29,7 @@ sealed partial class Engine
         public List<ID2D1Bitmap1?> Icons = new();
         public Box[] From = Array.Empty<Box>(), To = Array.Empty<Box>();
         public List<Tile> Tiles = new();
-        public float LabelX, LabelW;
+        public float LabelX, LabelW, StripBottom;
         public double P;
         public bool Tracking;
         public OverviewTrack Track = null!;
@@ -64,7 +64,7 @@ sealed partial class Engine
         o.Windows = AppWindows.OnScreen(area, _overlay.Handle);
         o.From = o.Windows.Select(w => new Box(w.Frame.Left - area.Left, w.Frame.Top - area.Top, w.Frame.Width, w.Frame.Height)).ToArray();
         float spreadTop = LayoutTiles(o);
-        var spread = new Box(72 * s, spreadTop, _gfx.Width - 144 * s, _gfx.Height - spreadTop - 32 * s);
+        var spread = new Box(72 * s, spreadTop, _gfx.Width - 144 * s, _gfx.Height - spreadTop - 20 * s);
         o.To = Spread.Layout(o.From, spread, 32 * s, 52 * s, 200 * s);
         foreach (var w in o.Windows)
         {
@@ -101,7 +101,8 @@ sealed partial class Engine
         }
         o.LabelX = x0 - colGap - labelW;
         o.LabelW = labelW;
-        return top + 3 * rowH + 2 * rowGap + 40 * s + 28 * s;
+        o.StripBottom = top + 3 * rowH + 2 * rowGap + 8 * s;
+        return o.StripBottom + 20 * s + 28 * s;
     }
 
     void PrepareTiles(OverviewState o)
@@ -344,7 +345,7 @@ sealed partial class Engine
             g.Image(sharp, 0, 0, g.Width, g.Height);
             g.Image(blurred, 0, 0, g.Width, g.Height, pc);
         }
-        g.Rect(0, 0, g.Width, g.Height, A(0xFF000000, 0.4f * pc));
+        g.Rect(0, 0, g.Width, g.Height, A(0xFF000000, 0.55f * pc));
 
         // Lane rows.
         float sp = Math.Clamp(p / 0.6f, 0, 1), sq = 1 - MathF.Pow(1 - sp, 3);
@@ -357,7 +358,7 @@ sealed partial class Engine
             {
                 var first = o.Tiles.First(t => t.Lane == l);
                 g.Dc.DrawText(LaneMap.Names[l].ToUpperInvariant(), labelFont,
-                    new Vortice.Mathematics.Rect(o.LabelX, (float)first.Rect.Y + dy, o.LabelW, (float)first.Rect.H), g.Brush(A(0xFF8A8F98, a)), DrawTextOptions.Clip);
+                    new Vortice.Mathematics.Rect(o.LabelX, (float)first.Rect.Y + dy, o.LabelW, (float)first.Rect.H), g.Brush(A(0xB8FFFFFF, a)), DrawTextOptions.Clip);
             }
             foreach (var t in o.Tiles)
             {
@@ -366,10 +367,10 @@ sealed partial class Engine
                 if (t.Plus)
                 {
                     g.RoundRect(x, y, w, h, 8 * s, A(hover ? 0x14FFFFFFu : 0x0AFFFFFFu, a));
-                    g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, 8 * s, A(0x1FFFFFFF, a), 1);
+                    g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, 8 * s, A(0x47FFFFFF, a), 1);
                     float cx = x + w / 2, cy = y + h / 2, arm = 7 * s;
-                    g.Rect(cx - arm, cy - 0.8f * s, 2 * arm, 1.6f * s, A(0xFF9AA0A6, a));
-                    g.Rect(cx - 0.8f * s, cy - arm, 1.6f * s, 2 * arm, A(0xFF9AA0A6, a));
+                    g.Rect(cx - arm, cy - 0.8f * s, 2 * arm, 1.6f * s, A(0x99FFFFFF, a));
+                    g.Rect(cx - 0.8f * s, cy - arm, 1.6f * s, 2 * arm, A(0x99FFFFFF, a));
                     continue;
                 }
                 g.Shadow(x, y, w, h, 8 * s, 18 * s, 6 * s, 0.4f * a);
@@ -392,12 +393,14 @@ sealed partial class Engine
         for (int i = 0; i < o.Thumbs.Count; i++)
         {
             var b = o.From[i].Lerp(o.To[i], Math.Clamp(p, -0.05, 1.08));
-            o.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep);
+            o.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep, (o.StripBottom + dy) * sq);
             if (la > 0.002f)
             {
+                float icon = 16 * s, gap = 8 * s, room = (float)b.W - 16 * s - icon - gap;
                 string title = o.Windows[i].Title;
-                float icon = 16 * s, gap = 8 * s;
-                float tw = Math.Min(g.TextWidth(title, nameFont), (float)b.W - icon - gap);
+                // A title too long for the window's width gives way to the program's name.
+                if (g.TextWidth(title, nameFont) > room && o.Windows[i].App.Length > 0) title = o.Windows[i].App;
+                float tw = Math.Min(g.TextWidth(title, nameFont), room);
                 float x = (float)(b.X + (b.W - (icon + gap + tw)) / 2), y = (float)b.Y - 28 * s;
                 if (o.Icons[i] is { } ic) g.Image(ic, x, y, icon, icon, la);
                 g.Text(title, nameFont, x + icon + gap, y - 2 * s, tw, 20 * s, A(0xFFFFFFFF, la));

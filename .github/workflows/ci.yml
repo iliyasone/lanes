@@ -38,6 +38,27 @@ jobs:
           }
           '@
           "ChangeDisplaySettings: $([Display]::Set(1920, 1080))"
+      - name: Dark theme and a dark wallpaper, like the laptop it is made for
+        run: |
+          $p = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+          New-Item $p -Force | Out-Null
+          Set-ItemProperty $p AppsUseLightTheme 0 -Type DWord; Set-ItemProperty $p SystemUsesLightTheme 0 -Type DWord; Set-ItemProperty $p EnableTransparency 0 -Type DWord
+          Add-Type -AssemblyName System.Drawing
+          $bmp = New-Object System.Drawing.Bitmap 1920, 1080
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.Clear([System.Drawing.Color]::FromArgb(8, 12, 24))
+          foreach ($c in @(@(1350, 380, 900, 40, 90, 170), @(380, 820, 800, 20, 50, 120), @(1500, 900, 600, 90, 50, 130))) {
+            $path = New-Object System.Drawing.Drawing2D.GraphicsPath
+            $path.AddEllipse($c[0] - $c[2] / 2, $c[1] - $c[2] / 2, $c[2], $c[2])
+            $br = New-Object System.Drawing.Drawing2D.PathGradientBrush $path
+            $br.CenterColor = [System.Drawing.Color]::FromArgb(200, $c[3], $c[4], $c[5]); $br.SurroundColors = @([System.Drawing.Color]::FromArgb(0, $c[3], $c[4], $c[5]))
+            $g.FillPath($br, $path)
+          }
+          $bmp.Save("$env:RUNNER_TEMP\dark.jpg", [System.Drawing.Imaging.ImageFormat]::Jpeg)
+          Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class Wp { [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int SystemParametersInfo(int a, int b, string c, int d); }'
+          [Wp]::SystemParametersInfo(20, 0, "$env:RUNNER_TEMP\dark.jpg", 3) | Out-Null
+          Stop-Process -Name explorer -Force; Start-Sleep 4
+          if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Process explorer; Start-Sleep 4 }
       - name: Demo run
         run: |
           $p = Start-Process ./out/Lanes.exe -ArgumentList '--demo', "$pwd\demo" -PassThru

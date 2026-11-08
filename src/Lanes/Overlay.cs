@@ -98,14 +98,25 @@ sealed class Thumbnail : IDisposable
         _source = new RECT(fr.Left - wr.Left, fr.Top - wr.Top, fr.Right - wr.Left, fr.Bottom - wr.Top);
     }
 
-    public void Place(float x, float y, float w, float h, float opacity = 1)
+    // Draws the window into this box; the part above `clipTop` is left out, so whatever Lanes
+    // draws there (the lane rows) looks as if it lies over the window.
+    public void Place(float x, float y, float w, float h, float opacity = 1, float clipTop = float.NegativeInfinity)
     {
         if (!Valid) return;
+        var src = _source;
+        if (clipTop > y)
+        {
+            float cut = Math.Min(1, (clipTop - y) / Math.Max(1, h));
+            src.Top += (int)MathF.Round(cut * _source.Height);
+            h -= clipTop - y;
+            y = clipTop;
+            if (h <= 1 || src.Top >= src.Bottom) opacity = 0;
+        }
         var p = new DWM_THUMBNAIL_PROPERTIES
         {
             Flags = DWM_TNP_RECTDESTINATION | DWM_TNP_RECTSOURCE | DWM_TNP_VISIBLE | DWM_TNP_OPACITY,
-            Destination = new RECT((int)MathF.Round(x), (int)MathF.Round(y), (int)MathF.Round(x + w), (int)MathF.Round(y + h)),
-            Source = _source,
+            Destination = new RECT((int)MathF.Round(x), (int)MathF.Round(y), (int)MathF.Round(x + w), (int)MathF.Round(y + Math.Max(0, h))),
+            Source = src,
             Opacity = (byte)Math.Clamp(opacity * 255, 0, 255),
             Visible = opacity > 0.003 ? 1 : 0,
         };

@@ -115,16 +115,17 @@ sealed partial class Engine
         float otherAt = o < 0 ? o + page + gap : o - page - gap;
         if (other != null) Draw(other, otherAt);
 
-        // Shadows thrown into the gap by both edges.
+        // Each desktop darkens toward the edge that faces the gap, so the two read as separate sheets.
         float sh = 24 * scale;
-        if (o < 0) { EdgeShadow(o + page, true); if (other != null) EdgeShadow(otherAt - sh, false); }
-        if (o > 0) { EdgeShadow(o - sh, false); if (other != null) EdgeShadow(otherAt + page, true); }
+        if (o < 0) { EdgeShadow(o + page - sh, false); if (other != null) EdgeShadow(otherAt, true); }
+        if (o > 0) { EdgeShadow(o, true); if (other != null) EdgeShadow(otherAt + page - sh, false); }
 
         Guid? target = o < 0 ? s.Next : o > 0 ? s.Previous : null;
-        if (target is Guid t && Math.Abs(o) > 1)
+        if (Math.Abs(o) > 1)
         {
             float alpha = s.Spring == null ? 1 : (float)Math.Clamp(1 - (Now - s.SpringStart) / 0.18, 0, 1);
-            Hud(t, (float)Math.Min(1, Math.Abs(s.Offset) / page), alpha);
+            // Pulling where there is no desktop: the pill names where you stay.
+            Hud(target ?? s.From, target == null ? 0 : (float)Math.Min(1, Math.Abs(s.Offset) / page), alpha, target == null);
         }
         g.End();
 
@@ -134,16 +135,17 @@ sealed partial class Engine
             else g.Image(bmp, 0, at, w, h);
         }
 
-        void EdgeShadow(float at, bool fadesAway)
+        // A strip `sh` wide starting at `at`; dark at its start when `darkFirst`, else at its end.
+        void EdgeShadow(float at, bool darkFirst)
         {
-            if (horizontal) g.Fade(at, 0, sh, h, true, fadesAway, 0.45f);
-            else g.Fade(0, at, w, sh, false, fadesAway, 0.45f);
+            if (horizontal) g.Fade(at, 0, sh, h, true, darkFirst, 0.35f);
+            else g.Fade(0, at, w, sh, false, darkFirst, 0.35f);
         }
     }
 
     // The pill near the bottom during a swipe: the lane map with where you are and where you are
     // going, and the name of the desktop you are going to.
-    void Hud(Guid target, float progress, float alpha)
+    void Hud(Guid target, float progress, float alpha, bool staying = false)
     {
         if (alpha <= 0) return;
         var g = _gfx;
@@ -171,7 +173,7 @@ sealed partial class Engine
             {
                 float cx = x + padL + di * (cell + cg), cy = my + li * (cellH + cg);
                 bool isFrom = from is var (fl, fi) && fl == li && fi == di;
-                bool isTarget = loc is var (tl, ti) && tl == li && ti == di;
+                bool isTarget = !staying && loc is var (tl, ti) && tl == li && ti == di;
                 if (isTarget)
                 {
                     g.RoundRect(cx, cy, cell, cellH, 2.5f * s, A(0x384CC2FF, alpha));

@@ -189,6 +189,40 @@ sealed class Tray : IDisposable
             _items.Add(new("Quit", null, null, () => { Hide(); _tray.Quit(); }));
         }
 
+        // 16 px line icons for the rows, drawn with the pen of the text.
+        static void Glyph(Graphics g, string row, float x, float y, float size, bool accent)
+        {
+            float k = size / 16;
+            using var pen = new Pen(accent ? Color.FromArgb(0x4C, 0xC2, 0xFF) : Color.FromArgb(0xE6, 0xE6, 0xE6), 1.2f * k) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+            PointF P(float a, float b) => new(x + a * k, y + b * k);
+            switch (row.Split(' ')[0])
+            {
+                case "Gestures":
+                    using (var r = Rounded(x + 1.5f * k, y + 3 * k, 13 * k, 10 * k, 2 * k)) g.DrawPath(pen, r);
+                    foreach (var cx in new[] { 5.5f, 8f, 10.5f }) g.FillEllipse(new SolidBrush(pen.Color), x + (cx - 0.9f) * k, y + (cx == 8f ? 5.9f : 6.6f) * k, 1.8f * k, 1.8f * k);
+                    break;
+                case "Content":
+                    g.DrawLine(pen, P(8, 2), P(8, 14)); g.DrawLines(pen, new[] { P(4.5f, 5.5f), P(8, 2), P(11.5f, 5.5f) }); g.DrawLines(pen, new[] { P(4.5f, 10.5f), P(8, 14), P(11.5f, 10.5f) });
+                    break;
+                case "Show":
+                    using (var r = Rounded(x + 2 * k, y + 2.5f * k, 12 * k, 11 * k, 2 * k)) g.DrawPath(pen, r);
+                    g.DrawLine(pen, P(2, 6.5f), P(14, 6.5f)); g.DrawLine(pen, P(2, 9.5f), P(14, 9.5f));
+                    break;
+                case "Open":
+                    g.DrawRectangle(pen, x + 4 * k, y + 3 * k, 8 * k, 10 * k); g.DrawLine(pen, P(6, 6), P(10, 6)); g.DrawLine(pen, P(6, 8.5f), P(10, 8.5f)); g.DrawLine(pen, P(6, 11), P(8, 11));
+                    break;
+                case "Update":
+                    g.DrawLine(pen, P(8, 2.5f), P(8, 10.5f)); g.DrawLines(pen, new[] { P(4.5f, 7), P(8, 10.5f), P(11.5f, 7) }); g.DrawLine(pen, P(3, 13.5f), P(13, 13.5f));
+                    break;
+                case "Restart":
+                    g.DrawArc(pen, x + 3 * k, y + 3 * k, 10 * k, 10 * k, -60, 300); g.DrawLines(pen, new[] { P(13, 2.5f), P(13, 5), P(10.5f, 5) });
+                    break;
+                case "Quit":
+                    g.DrawLine(pen, P(4, 4), P(12, 12)); g.DrawLine(pen, P(12, 4), P(4, 12));
+                    break;
+            }
+        }
+
         float Header => 48 * S;
         float RowH => 36 * S;
         float SepH => 9 * S;
@@ -250,7 +284,7 @@ sealed class Tray : IDisposable
             using var white = new SolidBrush(Color.FromArgb(0xF0, 0xF0, 0xF0));
             using var grey = new SolidBrush(Color.FromArgb(0x8A, 0x8F, 0x98));
             using var accent = new SolidBrush(Color.FromArgb(0x4C, 0xC2, 0xFF));
-            using var line = new SolidBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
+            using var line = new SolidBrush(Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF));
             using var hot = new SolidBrush(Color.FromArgb(0x0F, 0xFF, 0xFF, 0xFF));
 
             // Header: the app's mark and name.
@@ -270,8 +304,8 @@ sealed class Tray : IDisposable
                 if (item == null) { g.FillRectangle(line, r.X + 2 * s, r.Y + r.Height / 2, r.Width - 4 * s, 1); continue; }
                 if (i == _hover) using (var p = Rounded(r.X, r.Y, r.Width, r.Height, 4 * s)) g.FillPath(hot, p);
                 float ty = r.Y + (r.Height - text.Height) / 2f;
-                if (item.Accent) g.FillEllipse(accent, r.X + 12 * s, r.Y + r.Height / 2 - 3 * s, 6 * s, 6 * s);
-                g.DrawString(item.Text, text, white, r.X + 28 * s, ty);
+                Glyph(g, item.Text, r.X + 12 * s, r.Y + r.Height / 2 - 8 * s, 16 * s, item.Accent);
+                g.DrawString(item.Text, text, white, r.X + 40 * s, ty);
                 if (item.Toggle is { } on)
                 {
                     float tw = 40 * s, th = 20 * s, tx = r.Right - 12 * s - tw, tyy = r.Y + (r.Height - th) / 2;
