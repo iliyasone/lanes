@@ -76,15 +76,18 @@ static class Demo
             await Task.Delay(500);
             Log.Write(clicked ? "click reached the window under the overlay" : "CLICK BLOCKED by the overlay");
             // With Windows' setting that Lanes turns on, the taskbar keeps the apps of other desktops.
-            using (var np = System.Diagnostics.Process.Start("notepad.exe")!)
             {
-                IntPtr npw = IntPtr.Zero;
-                for (int i = 0; i < 50 && npw == IntPtr.Zero; i++) { await Task.Delay(100); np.Refresh(); npw = np.MainWindowHandle; }
-                Desktops.MoveWindow(npw, agent);
-                await Task.Delay(1000);
+                // A File Explorer window (another program than these test windows) moved to the
+                // desktop below: its taskbar button shows only with the setting on.
+                System.Diagnostics.Process.Start("explorer.exe", @"/n,C:\Windows");
+                IntPtr fx = IntPtr.Zero;
+                for (int i = 0; i < 60 && fx == IntPtr.Zero; i++) { await Task.Delay(100); fx = FindWindow("CabinetWClass", null); }
+                Desktops.MoveWindow(fx, agent);
+                await Task.Delay(1500);
+                Log.Write($"File Explorer window {(fx == IntPtr.Zero ? "not found" : "moved to the desktop below")}");
                 using var before = TaskbarShot(Path.Combine(dir, "16-taskbar-this-desktop.png"));
                 TaskbarSetting.ShowAllDesktops();
-                await Task.Delay(1500);
+                await Task.Delay(2000);
                 using var after = TaskbarShot(Path.Combine(dir, "17-taskbar-all-desktops.png"));
                 int changed = 0;
                 for (int y = 0; y < before.Height; y++)
@@ -92,7 +95,7 @@ static class Demo
                         if (before.GetPixel(x, y) != after.GetPixel(x, y)) changed++;
                 Log.Write($"taskbar: {changed} pixels in the middle changed when windows of all desktops were turned on");
                 TaskbarSetting.Restore();
-                try { np.Kill(); } catch { }
+                if (fx != IntPtr.Zero) PostMessage(fx, 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero);
             }
             Tray.Instance?.ShowMenu(new Point(1800, 1000));
             await Task.Delay(800);
@@ -140,6 +143,8 @@ static class Demo
     }
 
     [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string? title);
+    [DllImport("user32.dll")] static extern bool PostMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] static extern void mouse_event(uint flags, int dx, int dy, uint data, IntPtr extra);
 
     static void Click(int x, int y)
