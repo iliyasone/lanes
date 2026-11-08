@@ -35,10 +35,13 @@ static class Demo
             foreach (var d in new[] { top, research, agent, editor })
             {
                 Desktops.Switch(d);
-                await Task.Delay(300);
-                engine.Post(() => SwitchIndicator.Describe("300 ms after a switch"));
-                // Windows' own "Desktop N" pill stays about a second; the picture is taken after it.
-                await Task.Delay(2500);
+                foreach (int ms in new[] { 150, 400, 800, 1600 })
+                {
+                    await Task.Delay(ms == 150 ? 150 : ms / 2);
+                    engine.Post(() => SwitchIndicator.Describe($"{ms} ms after a switch"));
+                }
+                // Windows' own "Desktop N" pill stays a while; the picture is taken after it.
+                await Task.Delay(1500);
                 engine.Snapshot();
                 await Task.Delay(400);
             }
@@ -109,6 +112,10 @@ static class Demo
 
     static void Open(string title, Color back, Color accent, Rectangle at, Guid desktop)
     {
+        // Laid out for 1536x864 (1920x1080 at 125%); scaled to the real screen.
+        var wa = Screen.PrimaryScreen!.WorkingArea;
+        double k = Math.Min(wa.Width / 1536.0, (wa.Height + 48) / 864.0);
+        at = new Rectangle((int)(at.X * k), (int)(at.Y * k), (int)(at.Width * k), (int)(at.Height * k));
         var f = new Form
         {
             Text = title,

@@ -120,6 +120,21 @@ sealed class Gfx : IDisposable
         Dc.CreateBitmap(new SizeI(p.Width, p.Height), p.Data, (uint)(p.Width * 4),
             new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, p.Opaque ? D2DAlpha.Ignore : D2DAlpha.Premultiplied), 96, 96, BitmapOptions.None));
 
+    // A smaller copy made once with high-quality filtering, so small pictures cost nothing per frame.
+    // Call between frames only.
+    public ID2D1Bitmap1 Scaled(ID2D1Bitmap1 src, int w, int h)
+    {
+        var bmp = Dc.CreateBitmap(new SizeI(Math.Max(1, w), Math.Max(1, h)), IntPtr.Zero, 0,
+            new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, D2DAlpha.Premultiplied), 96, 96, BitmapOptions.Target));
+        Dc.Target = bmp;
+        Dc.BeginDraw();
+        Dc.Clear(new Color4(0, 0, 0, 1));
+        Dc.DrawBitmap(src, new Vortice.RawRectF(0, 0, w, h), 1, Vortice.Direct2D1.InterpolationMode.HighQualityCubic, null, null);
+        Dc.EndDraw();
+        Dc.Target = _target;
+        return bmp;
+    }
+
     public ID2D1SolidColorBrush Brush(uint argb)
     {
         if (!_brushes.TryGetValue(argb, out var b))

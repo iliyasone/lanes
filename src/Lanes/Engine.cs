@@ -31,6 +31,7 @@ sealed partial class Engine : IGestureSink
     // Pictures of each desktop as it looked when last seen, on the CPU and on the GPU.
     readonly Dictionary<Guid, Pixels> _snapshots = new();
     readonly Dictionary<Guid, ID2D1Bitmap1> _bitmaps = new();
+    readonly Dictionary<Guid, ID2D1Bitmap1> _tilePictures = new();
     readonly Dictionary<Guid, string> _appOf = new();
     readonly Dictionary<Guid, (Pixels Sharp, Pixels Blurred)> _wallpaperPixels = new();
     readonly Dictionary<Guid, (ID2D1Bitmap1 Sharp, ID2D1Bitmap1 Blurred)> _wallpapers = new();
@@ -244,6 +245,7 @@ sealed partial class Engine : IGestureSink
         if (_snapshots.TryGetValue(desktop, out var old) && old != pixels) old.Dispose();
         _snapshots[desktop] = pixels;
         if (_bitmaps.Remove(desktop, out var bmp)) bmp.Dispose();
+        if (_tilePictures.Remove(desktop, out var tile)) tile.Dispose();
         var fg = GetForegroundWindow();
         if (fg != IntPtr.Zero && Desktops.OnCurrent(fg)) _appOf[desktop] = AppWindows.AppName(fg);
     }
@@ -254,6 +256,15 @@ sealed partial class Engine : IGestureSink
         if (_snapshots.TryGetValue(desktop, out var p) && p.Width == _gfx.Width && p.Height == _gfx.Height)
             return _bitmaps[desktop] = _gfx.Bitmap(p);
         return Wallpaper(desktop)?.Sharp;
+    }
+
+    ID2D1Bitmap1? TilePicture(Guid desktop, float w, float h)
+    {
+        if (_tilePictures.TryGetValue(desktop, out var t) && Math.Abs(t.PixelSize.Width - (int)w) <= 1) return t;
+        t?.Dispose();
+        var full = Picture(desktop);
+        if (full == null) return null;
+        return _tilePictures[desktop] = _gfx.Scaled(full, (int)w, (int)h);
     }
 
     (ID2D1Bitmap1 Sharp, ID2D1Bitmap1 Blurred)? Wallpaper(Guid desktop)

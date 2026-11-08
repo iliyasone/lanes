@@ -74,6 +74,7 @@ sealed partial class Engine
             icon?.Dispose();
         }
         _overview = o;
+        PrepareTiles(o);
         _gfx.Frames.Clear();
         RenderOverview();
         _overlay.Show();
@@ -101,6 +102,12 @@ sealed partial class Engine
         o.LabelX = x0 - colGap - labelW;
         o.LabelW = labelW;
         return top + 3 * rowH + 2 * rowGap + 40 * s + 28 * s;
+    }
+
+    void PrepareTiles(OverviewState o)
+    {
+        foreach (var t in o.Tiles)
+            if (!t.Plus) TilePicture(t.Desktop, (float)t.Rect.W, (float)t.Rect.H);
     }
 
     void MoveOverview(double dy)
@@ -276,6 +283,7 @@ sealed partial class Engine
         _lanes.Reconcile(Desktops.All(), _current);
         Settings.SaveLanes(_lanes);
         LayoutTiles(o);
+        PrepareTiles(o);
         o.HoverTile = null;
         _redraw = true;
     }
@@ -365,7 +373,7 @@ sealed partial class Engine
                     continue;
                 }
                 g.Shadow(x, y, w, h, 8 * s, 18 * s, 6 * s, 0.4f * a);
-                if (Picture(t.Desktop) is { } pic) g.RoundImage(pic, x, y, w, h, 8 * s, a);
+                if ((_tilePictures.TryGetValue(t.Desktop, out var small) ? small : Picture(t.Desktop)) is { } pic) g.RoundImage(pic, x, y, w, h, 8 * s, a);
                 g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, 8 * s, A(0x1FFFFFFF, a), 1);
                 if (t.Desktop == _current) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xFF4CC2FF, a), 2 * s);
                 else if (hover) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xD9FFFFFF, a), 2 * s);
