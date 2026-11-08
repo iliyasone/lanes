@@ -157,6 +157,35 @@ static class Demo
             Click(c.Left + c.Width / 2, c.Top + c.Height / 2);
             await Task.Delay(500);
             Log.Write(clicked ? "click reached the window under the overlay" : "CLICK BLOCKED by the overlay");
+            // With Windows' setting that Lanes turns on, the taskbar keeps the apps of other desktops.
+            {
+                // A File Explorer window (another program than these test windows) moved to the
+                // desktop below: its taskbar button shows only with the setting on.
+                System.Diagnostics.Process.Start("explorer.exe", @"/n,C:\Windows");
+                IntPtr fx = IntPtr.Zero;
+                for (int i = 0; i < 60 && fx == IntPtr.Zero; i++) { await Task.Delay(100); fx = FindWindow("CabinetWClass", null); }
+                Desktops.MoveWindow(fx, agent);
+                await Task.Delay(1000);
+                Log.Write($"File Explorer window {(fx == IntPtr.Zero ? "not found" : Desktops.WindowDesktop(fx) == agent ? "on the desktop below" : "still here")}");
+                // First the taskbar as Windows ships it on a PC: this desktop's windows only.
+                using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"))
+                    k.SetValue("VirtualDesktopTaskbarFilter", 1, Microsoft.Win32.RegistryValueKind.DWord);
+                SendMessageTimeout((IntPtr)0xFFFF, 0x001A, IntPtr.Zero, "TraySettings", 2, 3000, out _);
+                await Task.Delay(2000);
+                using var shotBefore = TaskbarShot(Path.Combine(dir, "16-taskbar-this-desktop.png"));
+                TaskbarSetting.ShowAllDesktops();
+                await Task.Delay(2000);
+                using var shotAfter = TaskbarShot(Path.Combine(dir, "17-taskbar-all-desktops.png"));
+                int changed = 0;
+                for (int y = 0; y < shotBefore.Height; y++)
+                    for (int x = shotBefore.Width / 4; x < shotBefore.Width * 3 / 4; x++)
+                        if (shotBefore.GetPixel(x, y) != shotAfter.GetPixel(x, y)) changed++;
+                Log.Write($"taskbar: {changed} pixels in the middle changed when windows of all desktops were turned on");
+                TaskbarSetting.Restore();
+                using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"))
+                    k.DeleteValue("VirtualDesktopTaskbarFilter", false);
+                if (fx != IntPtr.Zero) PostMessage(fx, 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero);
+            }
             Tray.Instance?.ShowMenu(new Point(1800, 1000));
             await Task.Delay(800);
             engine.Screenshot(Path.Combine(dir, "6-tray-menu.png"));
@@ -203,6 +232,9 @@ static class Demo
     }
 
     [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string? title);
+    [DllImport("user32.dll")] static extern bool PostMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessageTimeout(IntPtr hwnd, int msg, IntPtr wParam, string lParam, int flags, int timeout, out IntPtr result);
     [DllImport("user32.dll")] static extern void mouse_event(uint flags, int dx, int dy, uint data, IntPtr extra);
 
     static void Click(int x, int y)
@@ -329,6 +361,17 @@ static class Demo
             File.WriteAllLines(Path.Combine(folder, "times.txt"), times);
             Log.Write($"recorded {name}: {_frames.Count} frames");
         }
+    }
+
+    static Bitmap TaskbarShot(string path)
+    {
+        var screen = Screen.PrimaryScreen!;
+        var b = screen.Bounds; var w = screen.WorkingArea;
+        var r = w.Bottom < b.Bottom ? Rectangle.FromLTRB(b.Left, w.Bottom, b.Right, b.Bottom) : Rectangle.FromLTRB(b.Left, b.Top, b.Right, w.Top);
+        var bmp = new Bitmap(r.Width, Math.Max(1, r.Height));
+        using (var g = Graphics.FromImage(bmp)) g.CopyFromScreen(r.Location, Point.Empty, bmp.Size);
+        bmp.Save(path);
+        return bmp;
     }
 
     static void Open(string title, Color back, Color accent, Rectangle at, Guid desktop)

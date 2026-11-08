@@ -45,7 +45,10 @@ the new desktop is drawn, wallpaper included.
 fingers down pull the lane above into view. Turn it off to swap up and down.
 
 On first start Lanes puts all your desktops in one lane and makes one new desktop above and
-one below.
+one below. It also turns on Windows' "Show all open windows on the taskbar: on all desktops"
+(Settings → System → Multitasking), so the taskbar keeps every app whatever desktop you are
+on, as the Dock does on a Mac; clicking an app that is on another desktop takes you there.
+If you change that setting later, Lanes leaves it as you set it.
 
 ### The overview
 
@@ -82,6 +85,8 @@ desktop a swipe up or down lands on.
 
 ![Tray menu](docs/screenshots/6-tray-menu.png)
 
+It opens against the taskbar, wherever the taskbar is.
+
 - **Gestures** — off gives the swipes back to Windows until you turn it on again.
 - **Content follows fingers** — see above.
 - **Show all lanes** — the overview, without a swipe.
@@ -107,8 +112,8 @@ It sets Windows' own four-finger swipes and three-finger up/down to
 react to the same swipe, and puts back what you had when it quits. Three-finger
 left/right and taps stay with Windows.
 
-`Lanes.exe --uninstall` stops it, gives the gestures back (and tells Windows to use them
-again at once), removes the desktops Lanes made — their windows move to one of yours — and
+`Lanes.exe --uninstall` stops it, gives the gestures and the taskbar setting back (and
+tells Windows to use them again at once), removes the desktops Lanes made — their windows move to one of yours — and
 removes Lanes. The log and settings stay in `%LOCALAPPDATA%\Lanes`.
 
 ## Updates
@@ -127,7 +132,8 @@ click it.
 - `lanes.json` — which desktop is in which lane (by Windows' desktop ID), where each lane
   was last, and which desktops Lanes made;
 - `settings.json` — the tray menu switches;
-- `windows-gestures.txt` — your Windows gesture settings while Lanes holds them.
+- `windows-gestures.txt` — your Windows gesture settings while Lanes holds them;
+- `taskbar.txt` — the taskbar setting you had before Lanes turned it on.
 
 ## Limits
 
