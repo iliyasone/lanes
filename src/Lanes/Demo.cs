@@ -83,8 +83,13 @@ static class Demo
                 IntPtr fx = IntPtr.Zero;
                 for (int i = 0; i < 60 && fx == IntPtr.Zero; i++) { await Task.Delay(100); fx = FindWindow("CabinetWClass", null); }
                 Desktops.MoveWindow(fx, agent);
-                await Task.Delay(1500);
-                Log.Write($"File Explorer window {(fx == IntPtr.Zero ? "not found" : "moved to the desktop below")}");
+                await Task.Delay(1000);
+                Log.Write($"File Explorer window {(fx == IntPtr.Zero ? "not found" : Desktops.WindowDesktop(fx) == agent ? "on the desktop below" : "still here")}");
+                // First the taskbar as Windows ships it on a PC: this desktop's windows only.
+                using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"))
+                    k.SetValue("VirtualDesktopTaskbarFilter", 1, Microsoft.Win32.RegistryValueKind.DWord);
+                SendMessageTimeout((IntPtr)0xFFFF, 0x001A, IntPtr.Zero, "TraySettings", 2, 3000, out _);
+                await Task.Delay(2000);
                 using var before = TaskbarShot(Path.Combine(dir, "16-taskbar-this-desktop.png"));
                 TaskbarSetting.ShowAllDesktops();
                 await Task.Delay(2000);
@@ -95,6 +100,8 @@ static class Demo
                         if (before.GetPixel(x, y) != after.GetPixel(x, y)) changed++;
                 Log.Write($"taskbar: {changed} pixels in the middle changed when windows of all desktops were turned on");
                 TaskbarSetting.Restore();
+                using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"))
+                    k.DeleteValue("VirtualDesktopTaskbarFilter", false);
                 if (fx != IntPtr.Zero) PostMessage(fx, 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero);
             }
             Tray.Instance?.ShowMenu(new Point(1800, 1000));
@@ -145,6 +152,7 @@ static class Demo
     [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string? title);
     [DllImport("user32.dll")] static extern bool PostMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessageTimeout(IntPtr hwnd, int msg, IntPtr wParam, string lParam, int flags, int timeout, out IntPtr result);
     [DllImport("user32.dll")] static extern void mouse_event(uint flags, int dx, int dy, uint data, IntPtr extra);
 
     static void Click(int x, int y)
