@@ -1,5 +1,6 @@
 using Lanes.Core;
 using Vortice.Direct2D1;
+using Vortice.DirectWrite;
 using static Lanes.Native;
 
 namespace Lanes;
@@ -18,7 +19,16 @@ sealed partial class Engine
         public Spring? Spring;
         public double SpringStart;
         public Outcome Outcome;
+        public double Start;
+        // Windows switched when the fingers let go, toward where the picture is landing.
+        public bool Switched;
+        public double SwitchedAt;
+        // Windows' own "Desktop N" pill was still on screen when this swipe began.
+        public bool PillWasUp;
     }
+
+    // When Windows last switched desktops; its "Desktop N" pill stays about two seconds.
+    double _lastSwitchAt = -10;
 
     void BeginSwitch(Axis axis)
     {
@@ -42,6 +52,8 @@ sealed partial class Engine
         var s = new SwitchState
         {
             Axis = axis,
+            Start = Now,
+            PillWasUp = Now - _lastSwitchAt < 1.2,
             From = _current,
             Previous = _lanes.Neighbor(_current, axis == Axis.Horizontal ? Direction.Left : Direction.Up),
             Next = _lanes.Neighbor(_current, axis == Axis.Horizontal ? Direction.Right : Direction.Down),
@@ -85,6 +97,19 @@ sealed partial class Engine
         s.Spring = new Spring(s.Offset, speed, target, _tuning.SwitchResponse);
         s.SpringStart = Now;
         Log.Write($"release at {s.Offset / s.Track.Page:0.00} screen, {speed / s.Track.Page:0.00} screens/s: {outcome}{Reported()}");
+        if ((outcome == Outcome.Next ? s.Next : outcome == Outcome.Previous ? s.Previous : null) is Guid to)
+        {
+            // Windows switches now, under the picture: while it lands, Windows draws the new
+            // desktop (a wallpaper of its own takes it a tenth of a second or more), and its
+            // "Desktop N" pill comes up over Lanes' copy of it.
+            if (!Desktops.Switch(to)) Log.Write("switch failed");
+            _overlay.Place();
+            s.Switched = true;
+            s.SwitchedAt = _lastSwitchAt = Now;
+            _current = to;
+            _lanes.Visited(to);
+            Settings.SaveLanes(_lanes);
+        }
     }
 
     void StepSwitch(double now)
@@ -95,6 +120,8 @@ sealed partial class Engine
         s.Offset = s.Spring.At(t);
         if (!s.Spring.Done(t)) return;
         s.Offset = s.Spring.Target;
+        // A quick landing waits a moment for Windows to finish drawing the new desktop.
+        if (s.Switched && now - s.SwitchedAt < 0.2) return;
         RenderSwitch();
         FinishSwitch();
     }
@@ -103,23 +130,9 @@ sealed partial class Engine
     {
         var s = _switch!;
         _switch = null;
-        Guid? to = s.Outcome switch { Outcome.Next => s.Next, Outcome.Previous => s.Previous, _ => null };
-        if (to is Guid target)
-        {
-            if (!Desktops.Switch(target)) Log.Write("switch failed");
-            _current = target;
-            _lanes.Visited(target);
-            Settings.SaveLanes(_lanes);
-            // Let Windows draw the new desktop underneath before the picture of it goes away.
-            if (!keepOverlay)
-            {
-                DwmFlush();
-                DwmFlush();
-            }
-        }
         if (keepOverlay) return;
         _overlay.Hide();
-        Log.Write($"switch drawn: {_gfx.FrameStats()}");
+        Log.Write($"switch drawn: {_gfx.FrameStats()}{(s.Switched ? $"; Windows switched {(Now - s.SwitchedAt) * 1000:0} ms before the picture went" : "")}");
     }
 
     void RenderSwitch()
@@ -141,12 +154,11 @@ sealed partial class Engine
         if (o < 0) { EdgeShadow(o + page - sh, false); if (other != null) EdgeShadow(otherAt, true); }
         if (o > 0) { EdgeShadow(o, true); if (other != null) EdgeShadow(otherAt + page - sh, false); }
 
-        Guid? target = o < 0 ? s.Next : o > 0 ? s.Previous : null;
-        if (Math.Abs(o) > 1)
+        float hud = HudAlpha(s);
+        if (hud > 0.002f)
         {
-            float alpha = s.Spring == null ? 1 : (float)Math.Clamp(1 - (Now - s.SpringStart) / 0.18, 0, 1);
-            // Pulling where there is no desktop: the pill names where you stay.
-            Hud(target ?? s.From, target == null ? 0 : (float)Math.Min(1, Math.Abs(s.Offset) / page), alpha, target == null);
+            float pillTop = DesktopPill(s.Switched ? _current : s.From, s.PillWasUp || s.Switched ? 1 : hud);
+            LaneMapHud(s, hud, pillTop);
         }
         g.End();
 
@@ -164,52 +176,72 @@ sealed partial class Engine
         }
     }
 
-    // The pill near the bottom during a swipe: the lane map with where you are and where you are
-    // going, and the name of the desktop you are going to.
-    void Hud(Guid target, float progress, float alpha, bool staying = false)
+    // Lanes' own pieces over a swipe come in quickly as it starts, and go as it lands.
+    float HudAlpha(SwitchState s)
     {
-        if (alpha <= 0) return;
+        float a = (float)Math.Clamp((Now - s.Start) / 0.12, 0, 1);
+        if (s.Spring == null) return a;
+        if (s.Outcome == Outcome.Stay) return a * (float)Math.Clamp(1 - (Now - s.SpringStart) / 0.25, 0, 1);
+        return a * (float)Math.Clamp(Math.Abs(s.Offset - s.Spring.Target) / s.Track.Page / 0.2, 0, 1);
+    }
+
+    // A copy of the pill Windows shows after a switch, in the same place and the same look, so
+    // that it is there for the whole swipe; when Windows switches, its own pill comes up over
+    // this one and stays after the picture goes. Returns the pill's top edge.
+    float DesktopPill(Guid desktop, float alpha)
+    {
         var g = _gfx;
         float s = _overlay.Scale;
-        var loc = _lanes.Locate(target);
-        var from = _lanes.Locate(_current);
-        string name = Title(target);
-        string lane = "";
-        var nameFont = g.Font(15 * s, Vortice.DirectWrite.FontWeight.SemiBold);
-        var laneFont = g.Font(13 * s);
-        float nameW = g.TextWidth(name, nameFont), laneW = g.TextWidth(lane, laneFont);
-        float cell = 14 * s, cellH = 9 * s, cg = 3 * s;
-        // Rows shifted so each lane's current desktop is in one column, as in the overview.
-        int n = _lanes.Lanes.Count;
-        var anchor = Enumerable.Range(0, n).Select(l => Math.Max(0, _lanes.Lanes[l].Desktops.IndexOf(
-            from is var (fl0, fi0) && fl0 == l ? _lanes.Lanes[l].Desktops[fi0] : _lanes.CurrentOf(l) ?? Guid.Empty))).ToArray();
-        int lead = anchor.DefaultIfEmpty(0).Max();
-        int widest = Math.Max(1, Enumerable.Range(0, n).Max(l => lead - anchor[l] + _lanes.Lanes[l].Desktops.Count));
-        float mapW = widest * cell + (widest - 1) * cg, mapH = n * cellH + (n - 1) * cg;
-        float pillH = Math.Max(56 * s, mapH + 20 * s), padL = 16 * s, padR = 20 * s, between = 16 * s;
-        float pillW = padL + mapW + between + nameW + padR;
-        float x = (g.Width - pillW) / 2, y = g.Height - 77 * s - pillH;
+        var font = g.Font(14 * s, FontWeight.Normal, centred: true, family: "Segoe UI Variable Text");
+        string name = WindowsName(desktop);
+        float w = MathF.Round(g.TextWidth(name, font) + 69 * s), h = MathF.Round(48 * s);
+        float x = MathF.Round((g.Width - w) / 2), y = MathF.Round(g.Height - 13 * s - h);
+        if (alpha > 0.002f)
+        {
+            g.RoundRect(x, y, w, h, 8 * s, A(0x332C2C2C, alpha));
+            g.RoundRect(x + 1, y + 1, w - 2, h - 2, 7 * s, A(0xFF2C2C2C, alpha));
+            g.Text(name, font, x, y, w, h, A(0xFFFFFFFF, alpha));
+        }
+        return y;
+    }
 
-        g.Shadow(x, y, pillW, pillH, 20 * s, 24 * s, 8 * s, 0.35f * alpha);
-        g.RoundRect(x, y, pillW, pillH, 20 * s, A(0xEB1C1C1E, alpha));
-        g.RoundRectOutline(x + 0.5f, y + 0.5f, pillW - 1, pillH - 1, 20 * s, A(0x14FFFFFF, alpha), 1);
-        float my = y + (pillH - mapH) / 2;
-        for (int li = 0; li < _lanes.Lanes.Count; li++)
-            for (int di = 0; di < _lanes.Lanes[li].Desktops.Count; di++)
+    // The lanes in miniature above the pill: a blue cell is where you are, your lane in light
+    // grey, the others darker. It moves with the fingers: a sideways swipe slides your lane under
+    // the blue cell, one up or down carries the blue cell to the next lane.
+    void LaneMapHud(SwitchState sw, float alpha, float pillTop)
+    {
+        var g = _gfx;
+        float s = _overlay.Scale;
+        if (_lanes.Locate(sw.From) is not var (fromLane, fromIndex)) return;
+        int n = _lanes.Lanes.Count;
+        var anchor = new int[n];
+        for (int l = 0; l < n; l++)
+            anchor[l] = l == fromLane ? fromIndex : Math.Max(0, _lanes.Lanes[l].Desktops.IndexOf(_lanes.CurrentOf(l) ?? Guid.Empty));
+        int lead = anchor.Max();
+        int widest = Enumerable.Range(0, n).Max(l => lead - anchor[l] + _lanes.Lanes[l].Desktops.Count);
+        float cell = 40 * s, cellH = MathF.Round(cell * g.Height / g.Width), cg = 6 * s, pad = 12 * s;
+        float mapW = widest * cell + (widest - 1) * cg, mapH = n * cellH + (n - 1) * cg;
+        float pw = mapW + 2 * pad, ph = mapH + 2 * pad;
+        float px = MathF.Round((g.Width - pw) / 2), py = MathF.Round(pillTop - 10 * s - ph);
+        g.RoundRect(px, py, pw, ph, 8 * s, A(0x332C2C2C, alpha));
+        g.RoundRect(px + 1, py + 1, pw - 2, ph - 2, 7 * s, A(0xF22C2C2C, alpha));
+
+        float f = (float)Math.Clamp(sw.Offset / sw.Track.Page, -1, 1);
+        float slide = sw.Axis == Axis.Horizontal ? f * (cell + cg) : 0;
+        float x0 = px + pad, y0 = py + pad;
+        g.Clip(px + pad / 2, py, pw - pad, ph);
+        for (int l = 0; l < n; l++)
+            for (int i = 0; i < _lanes.Lanes[l].Desktops.Count; i++)
             {
-                float cx = x + padL + (lead - anchor[li] + di) * (cell + cg), cy = my + li * (cellH + cg);
-                bool isFrom = from is var (fl, fi) && fl == li && fi == di;
-                bool isTarget = !staying && loc is var (tl, ti) && tl == li && ti == di;
-                if (isTarget)
-                {
-                    g.RoundRect(cx, cy, cell, cellH, 2.5f * s, A(0x384CC2FF, alpha));
-                    g.RoundRect(cx, cy, cell, cellH, 2.5f * s, A(0xFF4CC2FF, alpha * progress));
-                    g.RoundRectOutline(cx + 0.5f, cy + 0.5f, cell - 1, cellH - 1, 2.5f * s, A(0xFF4CC2FF, alpha), 1);
-                }
-                else g.RoundRect(cx, cy, cell, cellH, 2.5f * s, A(isFrom ? 0xF2FFFFFFu : 0x2EFFFFFFu, alpha));
+                float cx = x0 + (lead - anchor[l] + i) * (cell + cg) + (l == fromLane ? slide : 0), cy = y0 + l * (cellH + cg);
+                g.RoundRect(cx, cy, cell, cellH, 3 * s, A(l == fromLane ? 0x59FFFFFFu : 0x24FFFFFFu, alpha));
             }
-        float tx = x + padL + mapW + between;
-        g.Text(name, nameFont, tx, y, nameW + 2, pillH, A(0xFFFFFFFF, alpha));
+        g.Unclip();
+        float mx = x0 + lead * (cell + cg), my = y0 + fromLane * (cellH + cg);
+        Guid? toward = f < 0 ? sw.Next : f > 0 ? sw.Previous : null;
+        if (sw.Axis == Axis.Vertical && toward is Guid t && _lanes.Locate(t) is var (tl, _))
+            my += (tl - fromLane) * (cellH + cg) * Math.Abs(f);
+        g.RoundRect(mx, my, cell, cellH, 3 * s, A(0xFF4CC2FF, alpha));
     }
 
     static uint A(uint argb, float alpha) => ((uint)Math.Clamp((argb >> 24) * alpha, 0, 255) << 24) | (argb & 0xFFFFFF);

@@ -26,7 +26,7 @@ sealed class Gfx : IDisposable
     public int Width { get; private set; }
     public int Height { get; private set; }
     public readonly bool Software;
-    readonly Dictionary<(float, FontWeight, bool), IDWriteTextFormat> _formats = new();
+    readonly Dictionary<(float, FontWeight, bool, string?), IDWriteTextFormat> _formats = new();
     readonly Dictionary<uint, ID2D1SolidColorBrush> _brushes = new();
 
     public Gfx()
@@ -145,11 +145,11 @@ sealed class Gfx : IDisposable
     public static Color4 Color(uint argb) =>
         new(((argb >> 16) & 0xFF) / 255f, ((argb >> 8) & 0xFF) / 255f, (argb & 0xFF) / 255f, ((argb >> 24) & 0xFF) / 255f);
 
-    public IDWriteTextFormat Font(float size, FontWeight weight = FontWeight.Normal, bool centred = false)
+    public IDWriteTextFormat Font(float size, FontWeight weight = FontWeight.Normal, bool centred = false, string? family = null)
     {
-        if (_formats.TryGetValue((size, weight, centred), out var f)) return f;
-        string family = size >= 14 ? "Segoe UI Variable Display" : "Segoe UI Variable Text";
-        try { f = Write.CreateTextFormat(family, null, weight, Vortice.DirectWrite.FontStyle.Normal, FontStretch.Normal, size, "en-us"); }
+        if (_formats.TryGetValue((size, weight, centred, family), out var f)) return f;
+        string name = family ?? (size >= 14 ? "Segoe UI Variable Display" : "Segoe UI Variable Text");
+        try { f = Write.CreateTextFormat(name, null, weight, Vortice.DirectWrite.FontStyle.Normal, FontStretch.Normal, size, "en-us"); }
         catch { f = Write.CreateTextFormat("Segoe UI", null, weight, Vortice.DirectWrite.FontStyle.Normal, FontStretch.Normal, size, "en-us"); }
         f.WordWrapping = WordWrapping.NoWrap;
         f.ParagraphAlignment = ParagraphAlignment.Center;
@@ -157,7 +157,7 @@ sealed class Gfx : IDisposable
         using (var sign = Write.CreateEllipsisTrimmingSign(f))
             f.SetTrimming(new Trimming { Granularity = TrimmingGranularity.Character }, sign);
         if (centred) f.TextAlignment = TextAlignment.Center;
-        return _formats[(size, weight, centred)] = f;
+        return _formats[(size, weight, centred, family)] = f;
     }
 
     readonly Dictionary<(string, IDWriteTextFormat), float> _widths = new();

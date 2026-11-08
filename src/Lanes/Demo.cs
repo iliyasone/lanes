@@ -41,7 +41,21 @@ static class Demo
                 await Task.Delay(400);
             }
 
+            // Windows' own pill right after a switch, then Lanes' copy of it during a swipe:
+            // both say the same, in the same place, and the log compares them.
+            Desktops.Switch(research);
+            await Task.Delay(2800);
+            Desktops.Switch(editor);
+            await Task.Delay(350);
+            engine.Screenshot(Path.Combine(dir, "pill-windows.png"));
+            await Task.Delay(3200);
+            await Swipe(engine, 4, -1, 0, 0.42 * 0.15, hold: async () => { engine.Screenshot(Path.Combine(dir, "pill-lanes.png")); await Task.Delay(400); });
+            await Task.Delay(1500);
+            ComparePills(dir);
+
             // Four fingers down, held at about 40%: the Top lane comes down; then on and let go.
+            var rec = new Recorder();
+            rec.Start();
             await Swipe(engine, 4, 0, 1, 0.42 * 0.42, hold: async () => { engine.Screenshot(Path.Combine(dir, "1-vertical-swipe.png")); await Task.Delay(600); }, release: false);
             await Swipe(engine, 4, 0, 1, 0.42 * 0.8, continueFrom: 0.42 * 0.42);
             await Task.Delay(1500);
@@ -51,6 +65,7 @@ static class Demo
             // Four fingers left in Main: Editor to Research, held at about 60%, then let go there.
             await Swipe(engine, 4, -1, 0, 0.42 * 0.58, hold: async () => { engine.Screenshot(Path.Combine(dir, "2-horizontal-swipe.png")); await Task.Delay(600); });
             await Task.Delay(1500);
+            rec.Stop(dir, "frames-switch");
             // Right, past the end of the lane... first back to Editor, then once more into the stretch.
             await Swipe(engine, 4, 1, 0, 0.42 * 0.8, earlyShot: Path.Combine(dir, "7-switch-early.png"));
             await Task.Delay(1500);
@@ -128,6 +143,87 @@ static class Demo
         SetCursorPos(x, y);
         mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
         mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
+    }
+
+    // Finds Windows' "Desktop N" pill (or Lanes' copy) in a screenshot and logs where it is and
+    // where its text is, for both, side by side.
+    static void ComparePills(string dir)
+    {
+        foreach (var name in new[] { "pill-windows", "pill-lanes" })
+        {
+            string path = Path.Combine(dir, name + ".png");
+            if (!File.Exists(path)) { Log.Write($"{name}: no screenshot"); continue; }
+            using var b = new Bitmap(path);
+            int minX = int.MaxValue, minY = int.MaxValue, maxX = -1, maxY = -1;
+            int bottom = Screen.PrimaryScreen!.WorkingArea.Bottom;
+            for (int y = bottom - 120; y < bottom; y++)
+                for (int x = b.Width / 2 - 300; x < b.Width / 2 + 300; x++)
+                {
+                    var c = b.GetPixel(x, y);
+                    if (Math.Abs(c.R - 44) <= 2 && Math.Abs(c.G - 44) <= 2 && Math.Abs(c.B - 44) <= 2)
+                    { minX = Math.Min(minX, x); maxX = Math.Max(maxX, x); minY = Math.Min(minY, y); maxY = Math.Max(maxY, y); }
+                }
+            if (maxX < 0) { Log.Write($"{name}: no pill found"); continue; }
+            int tx0 = int.MaxValue, ty0 = int.MaxValue, tx1 = -1, ty1 = -1;
+            for (int y = minY + 2; y < maxY - 1; y++)
+                for (int x = minX + 2; x < maxX - 1; x++)
+                    if (b.GetPixel(x, y).R > 90) { tx0 = Math.Min(tx0, x); tx1 = Math.Max(tx1, x); ty0 = Math.Min(ty0, y); ty1 = Math.Max(ty1, y); }
+            Log.Write($"{name}: pill {minX},{minY} {maxX - minX + 1}x{maxY - minY + 1}; text {tx0},{ty0} {tx1 - tx0 + 1}x{ty1 - ty0 + 1}");
+            var box = Rectangle.Intersect(new Rectangle(minX - 6, minY - 6, maxX - minX + 13, maxY - minY + 13), new Rectangle(0, 0, b.Width, b.Height));
+            using var crop = b.Clone(box, b.PixelFormat);
+            crop.Save(Path.Combine(dir, name + "-crop.png"));
+        }
+    }
+
+    // Takes pictures of the screen while a swipe plays, for the animations in the README.
+    sealed class Recorder
+    {
+        readonly List<(long Ms, Bitmap Frame)> _frames = new();
+        Thread? _thread;
+        volatile bool _on;
+
+        public void Start()
+        {
+            _on = true;
+            var screen = Native.PrimaryMonitor().Monitor;
+            _thread = new Thread(() =>
+            {
+                long t0 = Environment.TickCount64;
+                while (_on)
+                {
+                    long t = Environment.TickCount64;
+                    using var p = Capture.Screen(screen);
+                    var small = new Bitmap(960, 540);
+                    using (var src = new Bitmap(p.Width, p.Height, p.Width * 4, System.Drawing.Imaging.PixelFormat.Format32bppRgb, p.Data))
+                    using (var g = Graphics.FromImage(small))
+                    {
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
+                        g.DrawImage(src, 0, 0, 960, 540);
+                    }
+                    lock (_frames) _frames.Add((t - t0, small));
+                    int wait = (int)(40 - (Environment.TickCount64 - t));
+                    if (wait > 0) Thread.Sleep(wait);
+                }
+            }) { IsBackground = true };
+            _thread.Start();
+        }
+
+        public void Stop(string dir, string name)
+        {
+            _on = false;
+            _thread?.Join();
+            string folder = Path.Combine(dir, name);
+            Directory.CreateDirectory(folder);
+            var times = new List<string>();
+            for (int i = 0; i < _frames.Count; i++)
+            {
+                _frames[i].Frame.Save(Path.Combine(folder, $"{i:D4}.png"));
+                times.Add(_frames[i].Ms.ToString());
+                _frames[i].Frame.Dispose();
+            }
+            File.WriteAllLines(Path.Combine(folder, "times.txt"), times);
+            Log.Write($"recorded {name}: {_frames.Count} frames");
+        }
     }
 
     static void Open(string title, Color back, Color accent, Rectangle at, Guid desktop)

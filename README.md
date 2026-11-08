@@ -27,8 +27,16 @@ Messages is still above.
 The picture moves with the fingers the whole way: stop halfway and it stays, move back and
 it comes back, and the switch happens only when you let go past the middle or flick. Where
 there is no desktop (the end of a lane, above the top lane) the picture stretches a little
-and springs back. While you swipe, a small pill near the bottom shows the lanes and where
-you are going.
+and springs back.
+
+At the bottom, Windows' own "Desktop N" pill stays the whole way: Lanes draws an exact copy
+of it in the same place until Windows switches and puts its own over it, which then goes
+away as it always does. Above it, a small map of the lanes moves with the fingers: the blue
+cell is where you are and your lane is light grey; a sideways swipe slides your lane under
+the blue cell, one up or down carries it to the next lane.
+
+Windows switches the moment you let go, under the picture, so by the time the picture lands
+the new desktop is drawn, wallpaper included.
 
 ![Four fingers left in a lane](docs/screenshots/2-horizontal-swipe.png)
 
@@ -120,9 +128,7 @@ click it.
   the same undocumented interface the Settings app uses. If a future Windows breaks that,
   open Settings → Touchpad once and Windows reloads them.
 - Windows' own Task View and Ctrl+Win+arrows still see one row of desktops.
-- After a switch Windows shows its own "Desktop N" label at the bottom for about two
-  seconds, as after its own swipe. It is not a window Lanes can hide; naming desktops in
-  Task View makes it say something useful.
+- Lanes' copy of Windows' "Desktop N" pill is drawn for the dark theme.
 
 ## How it works
 
@@ -135,8 +141,8 @@ click it.
 - `src/Lanes`: `Touchpad.cs` reads raw HID reports; `Engine*.cs` runs everything a swipe
   needs on one thread: each frame is drawn right after the freshest report with Direct2D
   on a flip-model swap chain (`Gfx.cs`) in a topmost window shown on every desktop and
-  left out of screen captures (`Overlay.cs`). When the swipe ends on another desktop,
-  Lanes switches to it underneath the picture and then removes the picture. The overview's
+  shown in screenshots (`Overlay.cs`). When a swipe is let go toward another desktop, Lanes
+  switches to it at once underneath the picture, and removes the picture once it has landed. The overview's
   windows are live DWM thumbnails. Work that must happen in your own session without
   elevation (telling Explorer to reload gesture settings, removing desktops on uninstall)
   runs through a second task, `Lanes session` (`SessionHelper.cs`). `Desktops.cs` talks to Windows' virtual desktops through

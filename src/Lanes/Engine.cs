@@ -41,7 +41,7 @@ sealed partial class Engine : IGestureSink
     readonly Dictionary<IntPtr, int> _fingersOn = new();
     bool Touching => _fingersOn.Values.Any(n => n > 0);
     readonly Dictionary<IntPtr, long> _lastReport = new();
-    readonly Dictionary<Guid, string> _titles = new();
+    readonly Dictionary<Guid, string> _titles = new(), _names = new();
     long _lastSnapshot;
 
     SwitchState? _switch;
@@ -124,6 +124,10 @@ sealed partial class Engine : IGestureSink
                     if (!MessageLoop.Pump()) break;
                     Tick();
                     if (Animating || _overlay.Shown) Render();
+                    // On the CI runner, which draws in software, frames otherwise queue up ahead of
+                    // the screen while DWM moves the live window pictures at once, so recordings
+                    // show the two apart. Real graphics hardware keeps them in step.
+                    if (_demo) DwmFlush();
                 }
                 else
                 {
@@ -219,6 +223,7 @@ sealed partial class Engine : IGestureSink
     {
         if (!Ready) return;
         _current = Desktops.Current;
+        _lastSwitchAt = Now;
         _lanes.Reconcile(Desktops.All(), _current);
         Settings.SaveLanes(_lanes);
         // A fresh picture in a moment, once the desktop has drawn and Windows' "Desktop N" pill is gone.
@@ -231,16 +236,21 @@ sealed partial class Engine : IGestureSink
     void RefreshTitles()
     {
         _titles.Clear();
+        _names.Clear();
         var all = Desktops.All();
         for (int i = 0; i < all.Count; i++)
         {
             string name = Desktops.Name(all[i]);
+            _names[all[i]] = name.Length > 0 ? name : $"Desktop {i + 1}";
             if (name.Length == 0 && _appOf.TryGetValue(all[i], out var app)) name = app;
             _titles[all[i]] = name.Length > 0 ? name : $"Desktop {i + 1}";
         }
     }
 
     string Title(Guid desktop) => _titles.TryGetValue(desktop, out var t) ? t : "Desktop";
+
+    // The name Windows itself shows for a desktop: the one you gave it, or "Desktop N".
+    string WindowsName(Guid desktop) => _names.TryGetValue(desktop, out var t) ? t : $"Desktop {Desktops.IndexOf(desktop) + 1}";
 
     // ---------- pictures ----------
 

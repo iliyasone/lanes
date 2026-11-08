@@ -13,7 +13,7 @@ on:
 jobs:
   windows:
     runs-on: windows-2025
-    timeout-minutes: 20
+    timeout-minutes: 25
     defaults:
       run:
         shell: pwsh
@@ -62,7 +62,7 @@ jobs:
       - name: Demo run
         run: |
           $p = Start-Process ./out/Lanes.exe -ArgumentList '--demo', "$pwd\demo" -PassThru
-          if (-not $p.WaitForExit(240000)) { $p.Kill(); "demo timed out" }
+          if (-not $p.WaitForExit(420000)) { $p.Kill(); "demo timed out" }
           Copy-Item "$env:LOCALAPPDATA\Lanes\log.txt" demo/ -ErrorAction SilentlyContinue
           Get-Content demo/log.txt -ErrorAction SilentlyContinue
           if (-not (Test-Path demo/4-overview-open.png)) { "screenshots missing"; exit 1 }
