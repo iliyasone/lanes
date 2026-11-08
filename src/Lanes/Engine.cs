@@ -207,7 +207,8 @@ sealed partial class Engine : IGestureSink
         _current = Desktops.Current;
         _lanes.Reconcile(Desktops.All(), _current);
         Settings.SaveLanes(_lanes);
-        _lastSnapshot = Environment.TickCount64 - 4500; // a fresh picture shortly, once the desktop has drawn
+        // A fresh picture in a moment, once the desktop has drawn and Windows' "Desktop N" pill is gone.
+        _lastSnapshot = Environment.TickCount64 - 2500;
         PrepareWallpapers();
     }
 

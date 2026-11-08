@@ -13,6 +13,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     
     <Version>0.1.0</Version>
+    <ApplicationIcon>../../assets/icon.ico</ApplicationIcon>
     <NoWarn>CA1416</NoWarn>
   </PropertyGroup>
   <ItemGroup>

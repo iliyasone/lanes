@@ -48,6 +48,7 @@ sealed partial class Engine
             if (open.Zoom != null) { _ignoring = true; return; }
             open.Tracking = true;
             open.Spring = null;
+            _gfx.Frames.Clear();
             open.Track = new OverviewTrack(false, _tuning);
             return;
         }
@@ -73,6 +74,7 @@ sealed partial class Engine
             icon?.Dispose();
         }
         _overview = o;
+        _gfx.Frames.Clear();
         RenderOverview();
         _overlay.Show();
         Log.Write($"overview: {o.Windows.Count} windows");
@@ -120,6 +122,7 @@ sealed partial class Engine
     void SettleOverview(double target, double speed)
     {
         var o = _overview!;
+        if (o.Open) _gfx.Frames.Clear();
         o.Tracking = false;
         o.Spring = new Spring(o.P, speed, target, _tuning.OverviewResponse);
         o.SpringStart = Now;
@@ -151,6 +154,7 @@ sealed partial class Engine
         {
             Hook(true);
             _redraw = true;
+            Log.Write($"overview opened: {_gfx.FrameStats()}");
         }
     }
 
@@ -169,6 +173,7 @@ sealed partial class Engine
     void ZoomInto(Guid target, Box from)
     {
         var o = _overview!;
+        _gfx.Frames.Clear();
         Hook(false);
         o.Zoom = new Zoom { Target = target, From = from, Spring = new Spring(0, 0, 1, _tuning.OverviewResponse), Start = Now };
     }

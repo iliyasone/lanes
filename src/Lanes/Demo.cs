@@ -35,22 +35,29 @@ static class Demo
             foreach (var d in new[] { top, research, agent, editor })
             {
                 Desktops.Switch(d);
-                await Task.Delay(900);
+                await Task.Delay(300);
+                engine.Post(() => SwitchIndicator.Describe("300 ms after a switch"));
+                // Windows' own "Desktop N" pill stays about a second; the picture is taken after it.
+                await Task.Delay(2500);
                 engine.Snapshot();
                 await Task.Delay(400);
             }
 
-            // Four fingers down, held at about 40%: the Top lane comes down.
-            await Swipe(engine, 4, 0, 1, 0.42 * 0.42, hold: async () => { engine.Screenshot(Path.Combine(dir, "1-vertical-swipe.png")); await Task.Delay(600); });
-            await Task.Delay(1200);
-            // Back down to Main with four fingers up, all the way.
-            await Swipe(engine, 4, 0, -1, 0.42 * 0.8);
-            await Task.Delay(1200);
-            // Four fingers left in Main: Editor to Research, held at about 60%.
+            // Four fingers down, held at about 40%: the Top lane comes down; then on and let go.
+            await Swipe(engine, 4, 0, 1, 0.42 * 0.42, hold: async () => { engine.Screenshot(Path.Combine(dir, "1-vertical-swipe.png")); await Task.Delay(600); }, release: false);
+            await Swipe(engine, 4, 0, 1, 0.42 * 0.8, continueFrom: 0.42 * 0.42);
+            await Task.Delay(1500);
+            // Back down to Main with four fingers up, a short flick.
+            await Swipe(engine, 4, 0, -1, 0.42 * 0.3, speed: 1.6);
+            await Task.Delay(1500);
+            // Four fingers left in Main: Editor to Research, held at about 60%, then let go there.
             await Swipe(engine, 4, -1, 0, 0.42 * 0.58, hold: async () => { engine.Screenshot(Path.Combine(dir, "2-horizontal-swipe.png")); await Task.Delay(600); });
-            await Task.Delay(1200);
+            await Task.Delay(1500);
+            // Right, past the end of the lane... first back to Editor, then once more into the stretch.
             await Swipe(engine, 4, 1, 0, 0.42 * 0.8);
-            await Task.Delay(1200);
+            await Task.Delay(1500);
+            await Swipe(engine, 4, 1, 0, 0.42 * 0.5, hold: async () => { engine.Screenshot(Path.Combine(dir, "2b-end-of-lane.png")); await Task.Delay(300); });
+            await Task.Delay(1500);
             // Three fingers up: the overview, held at 45%, then opened fully.
             await Swipe(engine, 3, 0, -1, 0.28 * 0.45, hold: async () => { engine.Screenshot(Path.Combine(dir, "3-overview-opening.png")); await Task.Delay(600); }, release: false);
             await Swipe(engine, 3, 0, -1, 0.28 * 0.7, continueFrom: 0.28 * 0.45);
@@ -75,10 +82,9 @@ static class Demo
 
     // Fingers land, travel `distance` pad widths in the direction (dx, dy) at about 0.6 pad widths/s,
     // optionally stop and hold, then lift (unless `release` is false, to carry on in the next call).
-    static async Task Swipe(Engine engine, int fingers, int dx, int dy, double distance, Func<Task>? hold = null, bool release = true, double continueFrom = 0)
+    static async Task Swipe(Engine engine, int fingers, int dx, int dy, double distance, Func<Task>? hold = null, bool release = true, double continueFrom = 0, double speed = 0.6)
     {
         const int stepMs = 8;
-        const double speed = 0.6;
         int steps = (int)Math.Ceiling((distance - continueFrom) / (speed * stepMs / 1000.0));
         double Pos(int i) => continueFrom + (distance - continueFrom) * i / Math.Max(1, steps);
         Finger[] At(double t) => Enumerable.Range(0, fingers).Select(f => new Finger((uint)(f + 1), _x0 + 0.08 * f + dx * t, _y0 + 0.02 * (f % 2) + dy * t)).ToArray();
