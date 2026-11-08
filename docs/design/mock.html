@@ -1,0 +1,217 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Lanes mock</title>
+<style>
+:root{--w:1536px;--h:864px;--tb:48px;--accent:#4cc2ff;--font:"Inter","Segoe UI Variable","Segoe UI",sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:var(--w);height:var(--h);overflow:hidden;background:#000;font-family:var(--font);color:#fff;-webkit-font-smoothing:antialiased}
+#screen{position:absolute;inset:0;overflow:hidden}
+.work{position:absolute;left:0;top:0;width:var(--w);height:calc(var(--h) - var(--tb));overflow:hidden;background:#0a0a0c}
+.desk{position:absolute;left:0;top:0;width:var(--w);height:var(--h);overflow:hidden}
+.wall{position:absolute;inset:0}
+/* windows */
+.win{position:absolute;border-radius:8px;overflow:hidden;background:#202020;border:1px solid rgba(255,255,255,.09);
+  box-shadow:0 18px 48px rgba(0,0,0,.42),0 2px 8px rgba(0,0,0,.3)}
+.tbar{height:32px;display:flex;align-items:center;gap:8px;padding:0 0 0 12px;font-size:12px;color:#e8e8e8;background:#202020}
+.tbar .ic{width:16px;height:16px;border-radius:4px;flex:none}
+.tbar .t{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.9}
+.tbar .caps{display:flex;height:32px}
+.tbar .caps i{width:46px;height:32px;display:flex;align-items:center;justify-content:center;opacity:.75}
+.tbar .caps i svg{width:10px;height:10px}
+.body{position:absolute;left:0;right:0;top:32px;bottom:0}
+.ln{height:7px;border-radius:4px;background:rgba(255,255,255,.14);margin:0 0 9px}
+/* taskbar */
+.taskbar{position:absolute;left:0;right:0;bottom:0;height:var(--tb);background:#1c1c1c;border-top:1px solid #2b2b2b;display:flex;align-items:center;justify-content:center;gap:4px}
+.taskbar .app{width:40px;height:40px;border-radius:6px;display:flex;align-items:center;justify-content:center;position:relative}
+.taskbar .app.on{background:rgba(255,255,255,.06)}
+.taskbar .app.on:after{content:"";position:absolute;bottom:2px;width:16px;height:3px;border-radius:2px;background:var(--accent)}
+.taskbar .app.run:after{content:"";position:absolute;bottom:2px;width:6px;height:3px;border-radius:2px;background:#9a9a9a}
+.taskbar .app b{width:24px;height:24px;border-radius:6px;display:block}
+.tray{position:absolute;right:10px;top:0;height:var(--tb);display:flex;align-items:center;gap:6px;font-size:12px;color:#eee}
+.tray .clock{text-align:right;line-height:16px;padding:0 6px}
+.tray .ti{width:30px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:4px}
+.tray .ti.hot{background:rgba(255,255,255,.08)}
+.tray .ti{position:relative}.tray .ti .badge{position:absolute;right:5px;top:9px;width:6px;height:6px;border-radius:3px;background:var(--accent)}
+/* HUD */
+.hud{position:absolute;left:50%;bottom:125px;transform:translateX(-50%);height:56px;padding:0 20px 0 16px;border-radius:20px;
+  background:rgba(28,28,30,.92);border:1px solid rgba(255,255,255,.08);box-shadow:0 8px 24px rgba(0,0,0,.35);display:flex;align-items:center;gap:16px}
+.map{display:flex;flex-direction:column;gap:3px;align-items:flex-start}
+.map .row{display:flex;gap:3px}
+.map .c{width:14px;height:9px;border-radius:2.5px;background:rgba(255,255,255,.18);position:relative;overflow:hidden}
+.map .c.cur{background:rgba(255,255,255,.95)}
+.map .c.to{background:rgba(76,194,255,.22);box-shadow:inset 0 0 0 1px var(--accent)}
+.map .c.to i{position:absolute;inset:0;background:var(--accent)}
+.hud .nm{font-size:15px;font-weight:600;letter-spacing:.005em;white-space:nowrap}
+.hud .sub{font-size:13px;color:#a0a4ab;font-weight:400;margin-left:6px}
+/* overview */
+.ov{position:absolute;inset:0}
+.ov .bg{position:absolute;inset:-60px}
+.strip{position:absolute;left:0;right:0;top:0;display:flex;justify-content:center;padding:18px 0 0}
+.lanes{display:grid;grid-template-columns:56px auto 56px;column-gap:18px;row-gap:16px}
+.lane{display:contents}
+.lane .lbl{font-size:11px;color:#8a8f98;text-align:right;font-weight:600;letter-spacing:.08em;align-self:start;padding-top:45px;line-height:13px}
+.lane .ds{display:flex;gap:16px;justify-content:flex-start}
+.lane .pad{}
+.thumb{display:flex;flex-direction:column;align-items:center;gap:6px;height:128px}
+.thumb .pic{width:184px;height:103.5px;border-radius:8px;overflow:hidden;position:relative;box-shadow:0 6px 18px rgba(0,0,0,.4);outline:1px solid rgba(255,255,255,.12);outline-offset:-1px}
+.thumb .pic .desk{transform:scale(.119792);transform-origin:0 0}
+.thumb.now .pic{outline:2px solid var(--accent);outline-offset:3px}
+.thumb .cap{font-size:14px;color:#e6e6e6;white-space:nowrap;line-height:18px}
+.thumb .cap{display:flex;align-items:center;gap:6px}.thumb .dot{width:4px;height:4px;border-radius:2px;background:var(--accent);margin-top:1px}
+.thumb.add .pic{background:rgba(255,255,255,.04);outline:1px solid rgba(255,255,255,.12);box-shadow:none;display:flex;align-items:center;justify-content:center;width:56px}
+.xw{position:absolute}
+.xw .lab{position:absolute;left:0;right:0;top:-28px;height:16px;display:flex;align-items:center;justify-content:center;gap:7px;font-size:12px;color:rgba(255,255,255,.92);white-space:nowrap}
+.xw .lab{gap:8px;font-size:15px}.xw .lab .ic{width:16px;height:16px;border-radius:4px}
+.xw .win{position:absolute;left:0;top:0;transform-origin:0 0}
+.xw.hover:before{content:'';position:absolute;inset:-5px;border:2px solid rgba(255,255,255,.85);border-radius:11px}
+/* tray menu */
+.menu{position:absolute;right:58px;bottom:56px;width:300px;padding:4px;border-radius:8px;background:#2b2b2b;border:1px solid rgba(255,255,255,.08);box-shadow:0 16px 40px rgba(0,0,0,.5);font-size:13px}
+.menu .hd{padding:12px 12px 10px;display:flex;align-items:center;gap:10px}
+.menu .hd .n{font-weight:600}.menu .hd .v{font-size:11px;color:rgba(255,255,255,.55)}
+.menu .it{height:34px;border-radius:4px;display:flex;align-items:center;gap:12px;padding:0 12px;color:#f0f0f0}
+.menu .it.hot{background:rgba(255,255,255,.06)}
+.menu .it .k{margin-left:auto;font-size:12px;color:#8a8f98}
+.menu .sep{height:1px;background:rgba(255,255,255,.08);margin:4px 2px}
+.menu .it svg{width:16px;height:16px;flex:none}
+.sw{margin-left:auto;width:40px;height:20px;border-radius:10px;background:var(--accent);position:relative}
+.sw:after{content:"";position:absolute;right:4px;top:4px;width:12px;height:12px;border-radius:6px;background:#000}
+.sw.off{background:transparent;border:1px solid rgba(255,255,255,.6)}
+.sw.off:after{left:4px;right:auto;top:3px;background:rgba(255,255,255,.8)}
+.upd{color:var(--accent)!important}
+</style></head><body><div id="screen"></div>
+<script>
+const W=1536,H=864,TB=48,WH=H-TB;
+const caps='<div class="caps"><i><svg viewBox="0 0 10 10"><path d="M0 5h10" stroke="#fff"/></svg></i><i><svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="#fff"/></svg></i><i><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="#fff"/></svg></i></div>';
+const el=(h)=>{const t=document.createElement('template');t.innerHTML=h.trim();return t.content.firstChild};
+const lines=(n,w0=90,seed=1)=>{let s='';for(let i=0;i<n;i++){const w=w0-((i*37+seed*13)%45);s+=`<div class="ln" style="width:${w}%"></div>`}return s};
+
+// ---------- window contents ----------
+const C={
+chat:(w,h)=>`<div style="display:flex;height:100%"><div style="width:280px;background:#17212b;border-right:1px solid #0e1621;padding:12px 10px">
+ <div style="height:30px;border-radius:15px;background:#242f3d;margin-bottom:14px"></div>
+ ${['#e17076','#7bc862','#65aadd','#ee7aae','#6ec9cb','#faa774','#a695e7'].map((c,i)=>`<div style="display:flex;gap:10px;align-items:center;padding:8px 6px;border-radius:8px;${i==1?'background:#2b5278':''}"><div style="width:40px;height:40px;border-radius:20px;background:${c};flex:none"></div><div style="flex:1"><div class="ln" style="width:${60-i*4}%;height:8px;background:rgba(255,255,255,.55);margin-bottom:7px"></div><div class="ln" style="width:${85-i*6}%;margin:0"></div></div></div>`).join('')}
+ </div><div style="flex:1;background:#0e1621;position:relative;padding:20px 28px">
+ ${[[0,46,'#182533'],[1,58,'#2b5278'],[0,38,'#182533'],[0,62,'#182533'],[1,30,'#2b5278'],[1,48,'#2b5278'],[0,40,'#182533']].map(([me,wd,c],i)=>`<div style="display:flex;justify-content:${me?'flex-end':'flex-start'};margin-bottom:10px"><div style="width:${wd}%;border-radius:12px;background:${c};padding:10px 12px"><div class="ln" style="width:92%;background:rgba(255,255,255,.3)"></div><div class="ln" style="width:64%;margin:0;background:rgba(255,255,255,.3)"></div></div></div>`).join('')}
+ <div style="position:absolute;left:0;right:0;bottom:0;height:52px;background:#17212b;border-top:1px solid #0e1621"></div></div></div>`,
+code:(w,h)=>{const col=['#569cd6','#c586c0','#9cdcfe','#ce9178','#dcdcaa','#4ec9b0','#6a9955'];let r='';for(let i=0;i<34;i++){const ind=[0,1,1,2,2,2,1,0,0,1,2,3,3,2,1,0][i%16];let seg='';let n=2+(i*7)%4;for(let k=0;k<n;k++)seg+=`<span style="display:inline-block;height:7px;border-radius:3px;margin-right:7px;width:${22+((i*31+k*17)%70)}px;background:${col[(i+k*3)%7]};opacity:.85"></span>`;r+=`<div style="height:18px;display:flex;align-items:center"><span style="width:34px;color:#6e7681;font-size:10px;text-align:right;padding-right:14px;flex:none">${i+1}</span><span style="width:${ind*22}px;flex:none"></span>${i%9==4?'':seg}</div>`}
+ return `<div style="display:flex;height:100%;background:#1e1e1e"><div style="width:48px;background:#181818;border-right:1px solid #2b2b2b"></div><div style="width:230px;background:#181818;border-right:1px solid #2b2b2b;padding:14px 14px">${lines(14,80,3)}</div><div style="flex:1;overflow:hidden"><div style="height:34px;background:#181818;border-bottom:1px solid #2b2b2b;display:flex"><div style="width:150px;background:#1e1e1e;border-top:1px solid #0078d4"></div><div style="width:130px"></div></div><div style="padding-top:8px">${r}</div></div></div>`},
+term:(w,h)=>{let r='';for(let i=0;i<16;i++)r+=`<div style="height:16px;display:flex;align-items:center;gap:8px">${i%4==0?'<span style="width:60px;height:7px;border-radius:3px;background:#3fb950"></span>':''}<span style="width:${80+(i*53)%260}px;height:7px;border-radius:3px;background:rgba(255,255,255,.35)"></span></div>`;return `<div style="height:100%;background:#0c0c0c;padding:12px 14px">${r}</div>`},
+doc:(w,h)=>`<div style="height:100%;background:#fff;color:#000"><div style="height:40px;background:#f3f3f3;border-bottom:1px solid #ddd;display:flex;align-items:center;padding:0 14px;gap:10px"><div style="height:26px;flex:1;border-radius:13px;background:#e8e8e8"></div></div><div style="padding:34px 12%"><div style="height:22px;width:55%;border-radius:4px;background:#1a1a1a;margin-bottom:22px"></div>${Array.from({length:12},(_,i)=>`<div style="height:8px;border-radius:4px;background:#cfcfcf;margin-bottom:11px;width:${96-(i*29)%40}%"></div>`).join('')}<div style="height:150px;border-radius:10px;background:linear-gradient(135deg,#dbe9ff,#c7d7f5);margin:20px 0"></div>${Array.from({length:6},(_,i)=>`<div style="height:8px;border-radius:4px;background:#cfcfcf;margin-bottom:11px;width:${92-(i*23)%35}%"></div>`).join('')}</div></div>`,
+notes:(w,h)=>`<div style="height:100%;background:#1f1f1f;padding:22px 26px"><div style="height:16px;width:40%;border-radius:4px;background:rgba(255,255,255,.75);margin-bottom:18px"></div>${lines(10,92,5)}<div style="height:12px"></div>${lines(7,85,9)}</div>`,
+agent:(w,h)=>`<div style="display:flex;height:100%;background:#151515"><div style="width:240px;background:#111;border-right:1px solid #262626;padding:14px 12px">${Array.from({length:9},(_,i)=>`<div style="height:30px;border-radius:7px;${i==2?'background:#262626;':''}display:flex;align-items:center;padding:0 10px;margin-bottom:3px"><div class="ln" style="width:${80-(i*13)%40}%;margin:0"></div></div>`).join('')}</div><div style="flex:1;position:relative;padding:28px 12%">
+ <div style="margin-left:auto;width:52%;border-radius:14px;background:#2a2a2a;padding:12px 14px;margin-bottom:22px">${lines(2,95,2)}</div>
+ ${lines(4,96,4)}<div style="border-radius:10px;background:#0d0d0d;border:1px solid #2a2a2a;padding:14px;margin:14px 0 18px">${lines(5,70,7)}</div>${lines(3,90,8)}
+ <div style="position:absolute;left:12%;right:12%;bottom:22px;height:86px;border-radius:16px;background:#1f1f1f;border:1px solid #333"></div></div></div>`,
+video:(w,h)=>`<div style="height:100%;background:#0f0f0f;display:flex;flex-direction:column"><div style="height:52px;display:flex;align-items:center;padding:0 20px;gap:16px"><div style="width:90px;height:20px;border-radius:4px;background:#f1f1f1;opacity:.85"></div><div style="flex:1;max-width:520px;margin:0 auto;height:36px;border-radius:18px;border:1px solid #303030;background:#121212"></div></div><div style="display:flex;gap:22px;padding:6px 22px;flex:1"><div style="flex:1"><div style="aspect-ratio:16/9;border-radius:12px;background:radial-gradient(120% 90% at 30% 35%,#f6b26b 0%,#c35f3e 35%,#3b1f3f 70%,#120d1c 100%);position:relative;overflow:hidden"><div style="position:absolute;left:0;right:0;bottom:0;height:4px;background:rgba(255,255,255,.3)"><div style="width:38%;height:100%;background:#f00"></div></div></div><div style="height:16px;width:62%;border-radius:4px;background:rgba(255,255,255,.85);margin:16px 0 12px"></div>${lines(2,50,6)}</div><div style="width:330px">${Array.from({length:6},(_,i)=>`<div style="display:flex;gap:10px;margin-bottom:12px"><div style="width:150px;height:84px;border-radius:8px;flex:none;background:linear-gradient(${i*60}deg,#2e3b55,#6b4a7a)"></div><div style="flex:1;padding-top:4px">${lines(3,95,i)}</div></div>`).join('')}</div></div></div>`,
+files:(w,h)=>`<div style="height:100%;background:#191919;display:flex"><div style="width:190px;background:#202020;padding:14px">${lines(9,80,11)}</div><div style="flex:1;padding:16px;display:grid;grid-template-columns:repeat(5,1fr);gap:16px;align-content:start">${Array.from({length:15},(_,i)=>`<div style="display:flex;flex-direction:column;align-items:center;gap:6px"><div style="width:52px;height:42px;border-radius:5px;background:${i%3?'#e9b949':'#5aa0e6'}"></div><div class="ln" style="width:70%;margin:0"></div></div>`).join('')}</div></div>`,
+};
+const ICON={chat:'#2aabee',code:'#3b8eea',term:'#3a3a3a',doc:'#e8eaed',notes:'#f2c94c',agent:'#ffffff',video:'#ff3b30',files:'#e9b949'};
+
+// ---------- desktops ----------
+const WALL={
+ msg:'radial-gradient(70% 90% at 78% 30%,#2a6f97 0%,rgba(42,111,151,0) 60%),radial-gradient(60% 80% at 15% 85%,#1d3f6e 0%,rgba(29,63,110,0) 65%),linear-gradient(160deg,#0b1a2e,#08111f)',
+ web:'radial-gradient(60% 80% at 25% 30%,#5b3fa8 0%,rgba(91,63,168,0) 62%),radial-gradient(70% 70% at 85% 75%,#2c4fb5 0%,rgba(44,79,181,0) 60%),linear-gradient(140deg,#140f2b,#0b1230)',
+ code:'radial-gradient(55% 70% at 72% 72%,#c4622d 0%,rgba(196,98,45,0) 60%),radial-gradient(70% 80% at 20% 20%,#1f3b73 0%,rgba(31,59,115,0) 60%),linear-gradient(150deg,#0b1424,#140d10)',
+ notes:'radial-gradient(70% 80% at 30% 70%,#1f7a6b 0%,rgba(31,122,107,0) 60%),radial-gradient(60% 70% at 80% 25%,#2d6a4f 0%,rgba(45,106,79,0) 60%),linear-gradient(160deg,#07201c,#0a1513)',
+ agent:'radial-gradient(60% 80% at 75% 25%,#4b3b8f 0%,rgba(75,59,143,0) 60%),radial-gradient(60% 60% at 20% 80%,#2b2b3a 0%,rgba(43,43,58,0) 70%),linear-gradient(150deg,#121218,#0b0b10)',
+ video:'radial-gradient(60% 80% at 30% 40%,#b5523b 0%,rgba(181,82,59,0) 60%),radial-gradient(70% 80% at 85% 80%,#6b2f6f 0%,rgba(107,47,111,0) 62%),linear-gradient(150deg,#22100f,#170b19)',
+};
+const D={
+ msg:{name:'Messages',wall:WALL.msg,wins:[{k:'chat',t:'Messages',x:150,y:44,w:1236,h:720}]},
+ web:{name:'Research',wall:WALL.web,wins:[{k:'doc',t:'Design notes — Browser',x:120,y:36,w:900,h:740},{k:'files',t:'Downloads',x:930,y:300,w:520,h:380}]},
+ code:{name:'Editor',wall:WALL.code,wins:[{k:'code',t:'gestures.cs — Lanes — Editor',x:60,y:30,w:1010,h:640},{k:'term',t:'Terminal',x:900,y:430,w:560,h:320},{k:'notes',t:'Notes',x:1110,y:70,w:360,h:300}]},
+ notes:{name:'Writing',wall:WALL.notes,wins:[{k:'notes',t:'Draft',x:300,y:60,w:940,h:690}]},
+ agent:{name:'Agent',wall:WALL.agent,wins:[{k:'agent',t:'Code agent',x:90,y:34,w:1356,h:742}]},
+ video:{name:'Video',wall:WALL.video,wins:[{k:'video',t:'Video — Browser',x:110,y:40,w:1316,h:730}]},
+};
+const LANES=[{name:'Top',ds:['msg'],cur:0},{name:'Main',ds:['web','code','notes'],cur:1},{name:'Bottom',ds:['agent','video'],cur:0}];
+
+function winEl(w,opts={}){
+ const e=el(`<div class="win" style="left:${w.x}px;top:${w.y}px;width:${w.w}px;height:${w.h}px"><div class="tbar"><span class="ic" style="background:${ICON[w.k]}"></span><span class="t">${w.t}</span>${caps}</div><div class="body">${C[w.k](w.w,w.h)}</div></div>`);
+ return e;
+}
+function deskEl(id){
+ const d=D[id];const e=el(`<div class="desk"><div class="wall" style="background:${d.wall}"></div></div>`);
+ d.wins.forEach(w=>e.appendChild(winEl(w)));return e;
+}
+function taskbar(active,hot){
+ const apps=[['start'],['search'],['files','#e9b949'],['web','#e8eaed'],['code','#3b8eea'],['chat','#2aabee'],['agent','#fff'],['term','#3a3a3a']];
+ const run=new Set((D[active]?.wins||[]).map(w=>w.k));
+ const e=el(`<div class="taskbar"></div>`);
+ apps.forEach(([k,c])=>{let inner;
+  if(k=='start')inner='<svg width="22" height="22" viewBox="0 0 22 22"><rect x="1" y="1" width="9" height="9" rx="2" fill="#60b8f0"/><rect x="12" y="1" width="9" height="9" rx="2" fill="#4aa8e8"/><rect x="1" y="12" width="9" height="9" rx="2" fill="#3a98e0"/><rect x="12" y="12" width="9" height="9" rx="2" fill="#2a88d8"/></svg>';
+  else if(k=='search')inner='<svg width="20" height="20" viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="5.5" stroke="#ddd" stroke-width="1.6" fill="none"/><path d="M13 13l4.5 4.5" stroke="#ddd" stroke-width="1.6" stroke-linecap="round"/></svg>';
+  else inner=`<b style="background:${c}"></b>`;
+  const kk={web:'doc'}[k]||k;
+  e.appendChild(el(`<div class="app ${run.has(kk)?(D[active].wins[0].k==kk?'on':'run'):''}">${inner}</div>`));});
+ e.appendChild(el(`<div class="tray"><div class="ti ${hot?'hot':''}">${lanesIcon(18)}${hot?'<span class="badge"></span>':''}</div><div class="ti"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 6h2l4-3v10l-4-3H2z" fill="#eee"/><path d="M11 5.5q2 2.5 0 5" stroke="#eee" fill="none" stroke-width="1.3"/></svg></div><div class="ti"><svg width="22" height="12" viewBox="0 0 22 12"><rect x=".5" y=".5" width="18" height="11" rx="2.5" stroke="#eee" fill="none"/><rect x="2.5" y="2.5" width="11" height="7" rx="1" fill="#eee"/><rect x="19.5" y="4" width="2" height="4" rx="1" fill="#eee"/></svg></div><div class="clock">21:47<br>08.11.2026</div></div>`));
+ return e;
+}
+function lanesIcon(s,color='#eee'){return `<svg width="${s}" height="${s}" viewBox="0 0 18 18"><rect x="2" y="2.5" width="14" height="3" rx="1.5" fill="${color}" opacity=".55"/><rect x="2" y="7.5" width="14" height="3" rx="1.5" fill="${color}"/><rect x="2" y="12.5" width="14" height="3" rx="1.5" fill="${color}" opacity=".55"/></svg>`}
+function hud(fromL,fromI,toL,toI,p=1){
+ let rows='';LANES.forEach((l,li)=>{rows+='<div class="row">'+l.ds.map((_,di)=>{const to=li==toL&&di==toI;return `<div class="c ${li==fromL&&di==fromI?'cur':''} ${to?'to':''}">${to?`<i style="opacity:${p}"></i>`:''}</div>`}).join('')+'</div>'});
+ const t=D[LANES[toL].ds[toI]];
+ return el(`<div class="hud"><div class="map">${rows}</div><div class="nm">${t.name}<span class="sub">${LANES[toL].name} lane</span></div></div>`);
+}
+// ---------- screens ----------
+const S={};
+S.desktop=(id='code')=>{const s=document.getElementById('screen');const w=el('<div class="work"></div>');w.appendChild(deskEl(id));s.appendChild(w);s.appendChild(taskbar(id));};
+// vertical swipe: fingers move down, the top lane comes down into view
+S.swipeV=(p=.42)=>{const s=document.getElementById('screen');const w=el('<div class="work" style="background:#0a0c10"></div>');const gap=24;
+ const a=deskEl('code'),b=deskEl('msg');const off=p*(WH+gap);
+ a.style.transform=`translateY(${off}px)`;b.style.transform=`translateY(${off-WH-gap}px)`;
+ [a,b].forEach(x=>{x.style.height=WH+'px'});w.appendChild(b);w.appendChild(a);
+ a.style.boxShadow='0 -24px 24px -12px rgba(0,0,0,.45)';b.style.boxShadow='0 24px 24px -12px rgba(0,0,0,.45)';
+ s.appendChild(w);s.appendChild(taskbar('code'));s.appendChild(hud(1,1,0,0,p));};
+S.swipeH=(p=.58)=>{const s=document.getElementById('screen');const w=el('<div class="work" style="background:#0a0c10"></div>');const gap=24;
+ const a=deskEl('agent'),b=deskEl('video');const off=p*(W+gap);
+ a.style.transform=`translateX(${-off}px)`;b.style.transform=`translateX(${W+gap-off}px)`;[a,b].forEach(x=>x.style.height=WH+'px');
+ a.style.boxShadow='24px 0 24px -12px rgba(0,0,0,.45)';b.style.boxShadow='-24px 0 24px -12px rgba(0,0,0,.45)';
+ w.appendChild(a);w.appendChild(b);s.appendChild(w);s.appendChild(taskbar('agent'));s.appendChild(hud(2,0,2,1,p));};
+// one scale for every window; rows packed in the windows' own left-to-right order; the largest scale that fits
+function spread(wins,box,gx,gy){const order=wins.map((w,i)=>i).sort((a,b)=>(wins[a].y+wins[a].h/2)-(wins[b].y+wins[b].h/2));
+ let best=null;for(let s=1;s>0.05;s-=0.005){let rows=[[]],rw=0;const ws=i=>Math.max(wins[i].w*s,Math.min(200,wins[i].w));
+  for(const i of order){const w=ws(i);if(rows.at(-1).length&&rw+gx+w>box.w){rows.push([]);rw=0}rw+=(rows.at(-1).length?gx:0)+w;rows.at(-1).push(i)}
+  const rh=rows.map(r=>Math.max(...r.map(i=>wins[i].h*ws(i)/wins[i].w)));const th=rh.reduce((a,b)=>a+b,0)+gy*(rows.length-1);
+  if(th<=box.h){best={rows,rh,th,ws};break}}
+ const out=[];let y=box.y;best.rows.forEach((r,ri)=>{r.sort((a,b)=>wins[a].x-wins[b].x);const widths=r.map(best.ws);const tw=widths.reduce((a,b)=>a+b,0)+gx*(r.length-1);let x=box.x+(box.w-tw)/2;
+  r.forEach((i,k)=>{const sc=widths[k]/wins[i].w;out[i]={x,y,s:sc};x+=widths[k]+gx});y+=best.rh[ri]+gy});return out}
+function grid(n,box,ar){let best=null;for(let cols=1;cols<=n;cols++){const rows=Math.ceil(n/cols);const cw=(box.w-(cols-1)*box.gx)/cols,ch=(box.h-(rows-1)*box.gy)/rows;const sc=Math.min(cw/ar.w,ch/ar.h);if(!best||sc>best.sc)best={cols,rows,sc,cw,ch}}return best}
+S.overview=(p=1)=>{const s=document.getElementById('screen');const ease=x=>1-Math.pow(1-x,3);const q=ease(p);
+ const w=el('<div class="work"></div>');const ov=el('<div class="ov"></div>');
+ const bg=el(`<div class="bg"></div>`);const snap=deskEl('code');snap.querySelectorAll('.win').forEach(x=>x.remove());snap.style.inset='60px';bg.appendChild(snap);bg.style.filter=`blur(${q*24}px)`;ov.appendChild(bg);
+ ov.appendChild(el(`<div style="position:absolute;inset:0;background:rgba(0,0,0,${.4*q})"></div>`));
+ // lanes strip
+ const strip=el('<div class="strip"><div class="lanes"></div></div>');const lanesBox=strip.firstChild;const sp=Math.min(1,p/.6),sq=1-Math.pow(1-sp,3);strip.style.transform=`translateY(${(1-sq)*-40}px)`;strip.style.opacity=sq;
+ LANES.forEach((l,li)=>{const row=el(`<div class="lane"><div class="lbl">${l.name.toUpperCase()}</div><div class="ds"></div></div>`);const ds=row.querySelector('.ds');
+  l.ds.forEach((id,di)=>{const now=li==1&&di==1;const t=el(`<div class="thumb ${now?'now':''}"><div class="pic"></div><div class="cap">${D[id].name}${di==l.cur?'<span class="dot"></span>':''}</div></div>`);
+   const dk=deskEl(id);t.querySelector('.pic').appendChild(dk);ds.appendChild(t)});
+  ds.appendChild(el(`<div class="thumb add"><div class="pic"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M7 1v12M1 7h12" stroke="#9aa0a6" stroke-width="1.6" stroke-linecap="round"/></svg></div></div>`));
+  row.appendChild(el('<div class="pad"></div>'));lanesBox.appendChild(row)});
+ ov.appendChild(strip);
+ // expose windows of current desktop
+ const wins=D.code.wins;
+ const top=18+3*128+2*16+40+28+12,box={x:72,y:top,w:W-144,h:WH-top-32};const tgt=spread(wins,box,32,40);
+ wins.forEach((wn,i)=>{const t=tgt[i];const x=wn.x+(t.x-wn.x)*q,y=wn.y+(t.y-wn.y)*q,sc=1+(t.s-1)*q;
+  const xw=el(`<div class="xw ${p==1&&i==0?'hover':''}" style="left:${x}px;top:${y}px;width:${wn.w*sc}px;height:${wn.h*sc}px"></div>`);
+  const we=winEl({...wn,x:0,y:0});we.style.transform=`scale(${sc})`;xw.appendChild(we);
+  if(p>.7){const lab=el(`<div class="lab" style="opacity:${Math.min(1,(p-.7)/.3)}"><span class="ic" style="background:${ICON[wn.k]}"></span>${wn.t.split(' — ').pop()}</div>`);xw.appendChild(lab)}
+  ov.appendChild(xw)});
+ w.appendChild(ov);s.appendChild(w);s.appendChild(taskbar('code'));};
+S.tray=()=>{const s0=document.getElementById('screen');const w0=el('<div class="work"></div>');w0.appendChild(deskEl('code'));s0.appendChild(w0);s0.appendChild(taskbar('code',true));const s=document.getElementById('screen');
+ const chk='<svg viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-7" stroke="#fff" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+ const ic=(d)=>`<svg viewBox="0 0 16 16" fill="none" stroke="#e6e6e6" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+ s.appendChild(el(`<div class="menu">
+  <div class="hd">${lanesIcon(22,'#fff')}<div class="n">Lanes</div></div>
+  <div class="it">${ic('<rect x="1.5" y="3" width="13" height="10" rx="2"/><circle cx="5.5" cy="7.5" r=".9" fill="#e6e6e6"/><circle cx="8" cy="6.8" r=".9" fill="#e6e6e6"/><circle cx="10.5" cy="7.5" r=".9" fill="#e6e6e6"/>')}Gestures<div class="sw"></div></div>
+  <div class="sep"></div>
+  <div class="it">${ic('<rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M2 6.5h12M2 9.5h12"/>')}Show all lanes<span class="k">3 fingers up</span></div>
+  <div class="it hot">${ic('<path d="M8 2v12M4.5 5.5L8 2l3.5 3.5M4.5 10.5L8 14l3.5-3.5"/>')}Content follows fingers<div class="sw"></div></div>
+  <div class="it">${ic('<path d="M4 3h8v10H4z"/><path d="M6 6h4M6 8.5h4M6 11h2"/>')}Open log</div>
+  <div class="sep"></div>
+  <div class="it">${ic('<path d="M8 2.5v8M4.5 7L8 10.5 11.5 7M3 13.5h10" stroke="#4cc2ff"/>')}Update to 0.2.0<span class="k">Installed 0.1.0</span></div>
+  <div class="it">${ic('<path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5v2.5h-2.5"/>')}Restart</div>
+  <div class="it">${ic('<path d="M4 4l8 8M12 4l-8 8"/>')}Quit</div>
+ </div>`));
+ };
+const [name,arg]=(location.hash.slice(1)||'desktop').split(':');S[name](arg!==undefined?(isNaN(+arg)?arg:+arg):undefined);
+</script></body></html>
