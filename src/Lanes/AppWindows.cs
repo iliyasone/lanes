@@ -17,13 +17,15 @@ static class AppWindows
     static readonly HashSet<string> ShellClasses = new() { "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow" };
     static readonly Dictionary<uint, string> AppNames = new();
 
-    // The windows you see on the current desktop on this monitor area, back to front.
-    public static List<AppWindow> OnScreen(RECT area, IntPtr own)
+    // The windows you see on the current desktop on this monitor area, back to front; or, with
+    // `desktop`, the windows that are on that other desktop (Windows keeps them cloaked).
+    public static List<AppWindow> OnScreen(RECT area, IntPtr own, Guid? desktop = null)
     {
         var list = new List<AppWindow>();
         EnumWindows((h, _) =>
         {
-            if (h == own || !IsWindowVisible(h) || IsIconic(h) || Cloaked(h)) return true;
+            if (h == own || !IsWindowVisible(h) || IsIconic(h)) return true;
+            if (desktop == null ? Cloaked(h) : !CloakedByShell(h) || Desktops.WindowDesktop(h) != desktop) return true;
             long ex = GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64();
             if ((ex & WS_EX_TOOLWINDOW) != 0 && (ex & WS_EX_APPWINDOW) == 0) return true;
             if (GetWindow(h, GW_OWNER) != IntPtr.Zero && (ex & WS_EX_APPWINDOW) == 0) return true;

@@ -10,8 +10,9 @@ namespace Lanes;
 sealed class Overlay : NativeWindow
 {
     public event Action<int, int>? MouseMove;
-    public event Action<int, int>? LeftClick;
-    public event Action<int, int>? RightClick;
+    public event Action<int, int>? LeftDown;
+    public event Action<int, int>? LeftUp;
+    public event Action<int, int>? MiddleUp;
 
     public RECT Area { get; private set; }
     public bool Shown { get; private set; }
@@ -81,16 +82,25 @@ sealed class Overlay : NativeWindow
                 m.Result = 1;
                 return;
             case WM_MOUSEMOVE:
-                MouseMove?.Invoke((short)(m.LParam.ToInt64() & 0xFFFF), (short)((m.LParam.ToInt64() >> 16) & 0xFFFF));
+                MouseMove?.Invoke(X(m), Y(m));
+                break;
+            case WM_LBUTTONDOWN:
+                // Keep getting the pointer while the button is down, for dragging.
+                SetCapture(Handle);
+                LeftDown?.Invoke(X(m), Y(m));
                 break;
             case WM_LBUTTONUP:
-                LeftClick?.Invoke((short)(m.LParam.ToInt64() & 0xFFFF), (short)((m.LParam.ToInt64() >> 16) & 0xFFFF));
+                ReleaseCapture();
+                LeftUp?.Invoke(X(m), Y(m));
                 break;
-            case WM_RBUTTONUP:
-                RightClick?.Invoke((short)(m.LParam.ToInt64() & 0xFFFF), (short)((m.LParam.ToInt64() >> 16) & 0xFFFF));
+            case WM_MBUTTONUP:
+                MiddleUp?.Invoke(X(m), Y(m));
                 break;
         }
         base.WndProc(ref m);
+
+        static int X(Message m) => (short)(m.LParam.ToInt64() & 0xFFFF);
+        static int Y(Message m) => (short)((m.LParam.ToInt64() >> 16) & 0xFFFF);
     }
 }
 
@@ -110,6 +120,15 @@ sealed class Thumbnail : IDisposable
         GetWindowRect(window, out var wr);
         var fr = Frame(window);
         _source = new RECT(fr.Left - wr.Left, fr.Top - wr.Top, fr.Right - wr.Left, fr.Bottom - wr.Top);
+    }
+
+    // The part of `window` that is on the screen inside `area`.
+    public Thumbnail(IntPtr overlay, IntPtr window, RECT area)
+    {
+        Window = window;
+        if (DwmRegisterThumbnail(overlay, window, out _id) != 0) _id = IntPtr.Zero;
+        GetWindowRect(window, out var wr);
+        _source = new RECT(area.Left - wr.Left, area.Top - wr.Top, area.Right - wr.Left, area.Bottom - wr.Top);
     }
 
     // Draws the window into this box; the part above `clipTop` is left out, so whatever Lanes

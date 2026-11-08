@@ -6,9 +6,9 @@ namespace Lanes;
 static class Native
 {
     public const int WM_INPUT = 0x00FF, WM_MOUSEMOVE = 0x0200, WM_LBUTTONDOWN = 0x0201, WM_LBUTTONUP = 0x0202,
-        WM_RBUTTONUP = 0x0205, WM_KEYDOWN = 0x0100, WM_MOUSEACTIVATE = 0x0021, WM_SETCURSOR = 0x0020,
+        WM_RBUTTONUP = 0x0205, WM_MBUTTONUP = 0x0208, WM_SYSCOMMAND = 0x0112, WM_KEYDOWN = 0x0100, WM_MOUSEACTIVATE = 0x0021, WM_SETCURSOR = 0x0020,
         WM_NCHITTEST = 0x0084, WM_DISPLAYCHANGE = 0x007E, WM_DPICHANGED = 0x02E0, WM_USER = 0x0400;
-    public const int MA_NOACTIVATE = 3;
+    public const int MA_NOACTIVATE = 3, SC_CLOSE = 0xF060;
     public const uint RID_INPUT = 0x10000003, RIDI_PREPARSEDDATA = 0x20000005, RIDI_DEVICENAME = 0x20000007;
     public const uint RIDEV_INPUTSINK = 0x00000100, RIM_TYPEHID = 2;
     public const int HIDP_STATUS_SUCCESS = 0x00110000, HidP_Input = 0;
@@ -89,6 +89,8 @@ static class Native
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
     [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
+    [DllImport("user32.dll")] public static extern IntPtr SetCapture(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern bool ReleaseCapture();
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
@@ -128,6 +130,8 @@ static class Native
     }
 
     public static bool Cloaked(IntPtr hwnd) => DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, out int c, 4) == 0 && c != 0;
+    // Hidden by the shell, as windows on other virtual desktops are (DWM_CLOAKED_SHELL).
+    public static bool CloakedByShell(IntPtr hwnd) => DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, out int c, 4) == 0 && c == 2;
 
     // The window's visible rectangle, without the invisible resize borders.
     public static RECT Frame(IntPtr hwnd) =>

@@ -41,7 +41,7 @@ sealed partial class Engine : IGestureSink
     readonly Dictionary<IntPtr, int> _fingersOn = new();
     bool Touching => _fingersOn.Values.Any(n => n > 0);
     readonly Dictionary<IntPtr, long> _lastReport = new();
-    readonly Dictionary<Guid, string> _titles = new();
+    readonly Dictionary<Guid, string> _titles = new(), _names = new();
     long _lastSnapshot;
 
     SwitchState? _switch;
@@ -91,8 +91,9 @@ sealed partial class Engine : IGestureSink
             _gfx = new Gfx();
             _gfx.Attach(_overlay.Handle, _overlay.Area.Width, _overlay.Area.Height);
             _overlay.MouseMove += OnMouseMove;
-            _overlay.LeftClick += OnLeftClick;
-            _overlay.RightClick += OnRightClick;
+            _overlay.LeftDown += OnLeftDown;
+            _overlay.LeftUp += OnLeftUp;
+            _overlay.MiddleUp += OnMiddleUp;
             _touchpad = new Touchpad(OnFrame);
             _touchpad.Register(_msg.Handle);
             if (Desktops.Load())
@@ -142,7 +143,7 @@ sealed partial class Engine : IGestureSink
         _overlay.Hide();
     }
 
-    bool Animating => _switch != null || (_overview != null && (_overview.Tracking || _overview.Spring != null || _overview.Zoom != null)) || _redraw;
+    bool Animating => _switch != null || _overview is { } o && (o.Tracking || o.Spring != null || o.Zoom != null || o.Swipe != null || o.Moving) || _redraw;
     bool _redraw;
 
     void Tick()
@@ -219,6 +220,7 @@ sealed partial class Engine : IGestureSink
     {
         if (!Ready) return;
         _current = Desktops.Current;
+        _lastSwitchAt = Now;
         _lanes.Reconcile(Desktops.All(), _current);
         Settings.SaveLanes(_lanes);
         // A fresh picture in a moment, once the desktop has drawn and Windows' "Desktop N" pill is gone.
@@ -231,16 +233,21 @@ sealed partial class Engine : IGestureSink
     void RefreshTitles()
     {
         _titles.Clear();
+        _names.Clear();
         var all = Desktops.All();
         for (int i = 0; i < all.Count; i++)
         {
             string name = Desktops.Name(all[i]);
+            _names[all[i]] = name.Length > 0 ? name : $"Desktop {i + 1}";
             if (name.Length == 0 && _appOf.TryGetValue(all[i], out var app)) name = app;
             _titles[all[i]] = name.Length > 0 ? name : $"Desktop {i + 1}";
         }
     }
 
     string Title(Guid desktop) => _titles.TryGetValue(desktop, out var t) ? t : "Desktop";
+
+    // The name Windows itself shows for a desktop: the one you gave it, or "Desktop N".
+    string WindowsName(Guid desktop) => _names.TryGetValue(desktop, out var t) ? t : $"Desktop {Desktops.IndexOf(desktop) + 1}";
 
     // ---------- pictures ----------
 
@@ -367,6 +374,8 @@ sealed partial class Engine : IGestureSink
         _ignoring = false;
         if (kind == GestureKind.Switch)
         {
+            // Four fingers in the open overview move between desktops without leaving it.
+            if (_overview is { Open: true, Drag: null }) { BeginInnerSwipe(axis); return; }
             if (_overview != null || _switch is { Spring: null }) { _ignoring = true; return; }
             BeginSwitch(axis);
         }
@@ -377,6 +386,7 @@ sealed partial class Engine : IGestureSink
     {
         if (_ignoring) return;
         if (_switch != null) MoveSwitch(dx, dy);
+        else if (_overview?.Swipe != null) MoveInnerSwipe(dx, dy);
         else if (_overview != null) MoveOverview(dy);
     }
 
@@ -392,6 +402,7 @@ sealed partial class Engine : IGestureSink
     {
         if (_ignoring) { _ignoring = false; return; }
         if (_switch != null) EndSwitch(vx, vy);
+        else if (_overview?.Swipe is { Spring: null }) EndInnerSwipe(vx, vy);
         else if (_overview != null) EndOverview(vy);
     }
 
@@ -470,6 +481,10 @@ sealed partial class Engine : IGestureSink
         Settings.SaveLanes(_lanes);
         return LaneMap.Load(_lanes.Save());
     }
+
+    // For the demo run's log; call on the engine thread (through Ask).
+    public int LaneOf(Guid desktop) => _lanes.Locate(desktop)?.Lane ?? -1;
+    public string LanesText() => string.Join(" | ", _lanes.Lanes.Select(l => l.Desktops.Count)) + " desktops";
 
     sealed class MessageWindow : NativeWindow
     {
