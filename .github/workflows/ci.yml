@@ -66,6 +66,7 @@ jobs:
           Copy-Item "$env:LOCALAPPDATA\Lanes\log.txt" demo/ -ErrorAction SilentlyContinue
           Get-Content demo/log.txt -ErrorAction SilentlyContinue
           if (-not (Test-Path demo/4-overview-open.png)) { "screenshots missing"; exit 1 }
+          if (-not (Select-String -Path demo/log.txt -Pattern 'click reached the window' -Quiet)) { "the overlay blocks clicks"; exit 1 }
       - name: Install and uninstall
         run: |
           $k = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PrecisionTouchPad'

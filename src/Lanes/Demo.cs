@@ -52,12 +52,12 @@ static class Demo
             await Swipe(engine, 4, -1, 0, 0.42 * 0.58, hold: async () => { engine.Screenshot(Path.Combine(dir, "2-horizontal-swipe.png")); await Task.Delay(600); });
             await Task.Delay(1500);
             // Right, past the end of the lane... first back to Editor, then once more into the stretch.
-            await Swipe(engine, 4, 1, 0, 0.42 * 0.8);
+            await Swipe(engine, 4, 1, 0, 0.42 * 0.8, earlyShot: Path.Combine(dir, "7-switch-early.png"));
             await Task.Delay(1500);
             await Swipe(engine, 4, 1, 0, 0.42 * 0.5, hold: async () => { engine.Screenshot(Path.Combine(dir, "2b-end-of-lane.png")); await Task.Delay(300); });
             await Task.Delay(1500);
             // Three fingers up: the overview, held at 45%, then opened fully.
-            await Swipe(engine, 3, 0, -1, 0.28 * 0.45, hold: async () => { engine.Screenshot(Path.Combine(dir, "3-overview-opening.png")); await Task.Delay(600); }, release: false);
+            await Swipe(engine, 3, 0, -1, 0.28 * 0.45, earlyShot: Path.Combine(dir, "8-overview-early.png"), hold: async () => { engine.Screenshot(Path.Combine(dir, "3-overview-opening.png")); await Task.Delay(600); }, release: false);
             await Swipe(engine, 3, 0, -1, 0.28 * 0.7, continueFrom: 0.28 * 0.45);
             await Task.Delay(1200);
             engine.Screenshot(Path.Combine(dir, "4-overview-open.png"));
@@ -66,6 +66,15 @@ static class Demo
             await Task.Delay(1500);
             engine.Screenshot(Path.Combine(dir, "5-after.png"));
             await Task.Delay(1000);
+
+            // The overlay, cloaked between swipes, must let clicks through to the windows below.
+            var editorWindow = Application.OpenForms.Cast<Form>().First(f => f.Text == "Editor");
+            bool clicked = false;
+            editorWindow.MouseClick += (_, _) => clicked = true;
+            var c = editorWindow.RectangleToScreen(editorWindow.ClientRectangle);
+            Click(c.Left + c.Width / 2, c.Top + c.Height / 2);
+            await Task.Delay(500);
+            Log.Write(clicked ? "click reached the window under the overlay" : "CLICK BLOCKED by the overlay");
             Tray.Instance?.ShowMenu(new Point(1800, 1000));
             await Task.Delay(800);
             engine.Screenshot(Path.Combine(dir, "6-tray-menu.png"));
@@ -84,7 +93,7 @@ static class Demo
 
     // Fingers land, travel `distance` pad widths in the direction (dx, dy) at about 0.6 pad widths/s,
     // optionally stop and hold, then lift (unless `release` is false, to carry on in the next call).
-    static async Task Swipe(Engine engine, int fingers, int dx, int dy, double distance, Func<Task>? hold = null, bool release = true, double continueFrom = 0, double speed = 0.6)
+    static async Task Swipe(Engine engine, int fingers, int dx, int dy, double distance, Func<Task>? hold = null, bool release = true, double continueFrom = 0, double speed = 0.6, string? earlyShot = null)
     {
         const int stepMs = 8;
         int steps = (int)Math.Ceiling((distance - continueFrom) / (speed * stepMs / 1000.0));
@@ -93,6 +102,8 @@ static class Demo
         for (int i = 0; i <= steps; i++)
         {
             engine.Feed(new TouchFrame(0, At(Pos(i))));
+            // About 60 ms after the swipe is recognised: the first frames must already be ours.
+            if (earlyShot != null && i == 12) engine.Screenshot(earlyShot);
             await Task.Delay(stepMs);
         }
         if (hold != null)
@@ -107,6 +118,16 @@ static class Demo
             await keep;
         }
         if (release) engine.Feed(new TouchFrame(0, Array.Empty<Finger>()));
+    }
+
+    [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] static extern void mouse_event(uint flags, int dx, int dy, uint data, IntPtr extra);
+
+    static void Click(int x, int y)
+    {
+        SetCursorPos(x, y);
+        mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
+        mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
     }
 
     static void Open(string title, Color back, Color accent, Rectangle at, Guid desktop)

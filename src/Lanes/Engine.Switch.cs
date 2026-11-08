@@ -41,6 +41,7 @@ sealed partial class Engine
         s.NextPicture = s.Next is Guid n ? Picture(n) : null;
         _switch = s;
         _gfx.Frames.Clear();
+        _overlay.Place();
         RenderSwitch();
         _overlay.Show();
         Log.Write($"switch {axis} from {Title(_current)}; previous {(s.Previous is Guid a ? Title(a) : "-")}, next {(s.Next is Guid b ? Title(b) : "-")}");

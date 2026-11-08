@@ -76,6 +76,7 @@ sealed partial class Engine
         _overview = o;
         PrepareTiles(o);
         _gfx.Frames.Clear();
+        _overlay.Place();
         RenderOverview();
         _overlay.Show();
         Log.Write($"overview: {o.Windows.Count} windows");

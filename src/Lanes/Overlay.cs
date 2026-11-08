@@ -28,6 +28,18 @@ sealed class Overlay : NativeWindow
         if (excludeFromCapture) SetWindowDisplayAffinity(Handle, WDA_EXCLUDEFROMCAPTURE);
         int round = 1; // DWMWCP_DONOTROUND: square corners on a full-screen window
         DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, ref round, 4);
+        // The window stays shown and is cloaked when not in use: a cloaked window takes no
+        // clicks and is not drawn, but DWM keeps its last frame, so uncloaking shows the
+        // picture at once. (Showing a hidden window takes a few frames to show its content.)
+        Cloak(true);
+        PickArea();
+        SetWindowPos(Handle, HWND_TOPMOST, Area.Left, Area.Top, Area.Width, Area.Height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+
+    void Cloak(bool on)
+    {
+        int v = on ? 1 : 0;
+        DwmSetWindowAttribute(Handle, 13 /* DWMWA_CLOAK */, ref v, 4);
     }
 
     // The work area (screen minus taskbar) of the monitor the pointer is on.
@@ -41,9 +53,11 @@ sealed class Overlay : NativeWindow
 
     public float Scale => Math.Max(1, GetDpiForWindow(Handle)) / 96f;
 
+    // Call after drawing the first frame for the new area.
     public void Show()
     {
         SetWindowPos(Handle, HWND_TOPMOST, Area.Left, Area.Top, Area.Width, Area.Height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        Cloak(false);
         Shown = true;
     }
 
@@ -51,7 +65,7 @@ sealed class Overlay : NativeWindow
 
     public void Hide()
     {
-        ShowWindow(Handle, SW_HIDE);
+        Cloak(true);
         Shown = false;
     }
 
