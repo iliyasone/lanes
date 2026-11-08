@@ -260,7 +260,8 @@ static class Demo
             if (!File.Exists(path)) { Log.Write($"{name}: no screenshot"); continue; }
             using var b = new Bitmap(path);
             int minX = int.MaxValue, minY = int.MaxValue, maxX = -1, maxY = -1;
-            for (int y = b.Height - 300; y < b.Height; y++)
+            int bottom = Screen.PrimaryScreen!.WorkingArea.Bottom;
+            for (int y = bottom - 120; y < bottom; y++)
                 for (int x = b.Width / 2 - 300; x < b.Width / 2 + 300; x++)
                 {
                     var c = b.GetPixel(x, y);
@@ -273,7 +274,8 @@ static class Demo
                 for (int x = minX + 2; x < maxX - 1; x++)
                     if (b.GetPixel(x, y).R > 90) { tx0 = Math.Min(tx0, x); tx1 = Math.Max(tx1, x); ty0 = Math.Min(ty0, y); ty1 = Math.Max(ty1, y); }
             Log.Write($"{name}: pill {minX},{minY} {maxX - minX + 1}x{maxY - minY + 1}; text {tx0},{ty0} {tx1 - tx0 + 1}x{ty1 - ty0 + 1}");
-            using var crop = b.Clone(new Rectangle(minX - 6, minY - 6, maxX - minX + 13, maxY - minY + 13), b.PixelFormat);
+            var box = Rectangle.Intersect(new Rectangle(minX - 6, minY - 6, maxX - minX + 13, maxY - minY + 13), new Rectangle(0, 0, b.Width, b.Height));
+            using var crop = b.Clone(box, b.PixelFormat);
             crop.Save(Path.Combine(dir, name + "-crop.png"));
         }
     }
