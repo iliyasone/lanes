@@ -84,6 +84,9 @@ static class Native
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
     [DllImport("user32.dll")] public static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
+    [DllImport("user32.dll")] public static extern bool GetWindowDisplayAffinity(IntPtr hwnd, out uint affinity);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int RegisterWindowMessage(string name);
+    [DllImport("user32.dll")] public static extern IntPtr SendMessageTimeout(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
     [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
     [DllImport("user32.dll")] public static extern IntPtr MonitorFromPoint(POINT pt, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
@@ -142,6 +145,13 @@ static class Native
         var mi = new MONITORINFO { Size = Marshal.SizeOf<MONITORINFO>() };
         GetMonitorInfo(monitor, ref mi);
         return mi;
+    }
+
+    // The monitor the pointer is on.
+    public static MONITORINFO PointerMonitor()
+    {
+        GetCursorPos(out var pt);
+        return MonitorOf(MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY));
     }
 
     public static MONITORINFO PrimaryMonitor() => MonitorOf(MonitorFromPoint(default, MONITOR_DEFAULTTOPRIMARY));

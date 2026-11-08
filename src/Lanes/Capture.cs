@@ -27,6 +27,40 @@ static class Capture
         return p;
     }
 
+    // Windows that stay live over Lanes' animations, such as a status pill shown on every
+    // desktop. Right before a picture of the screen, Lanes sends the registered message
+    // "Lanes.ScreenPicture" with wParam 1 to each visible topmost window. A window that wants to
+    // stay over the animation leaves itself out of screen pictures before it returns
+    // (SetWindowDisplayAffinity with WDA_EXCLUDEFROMCAPTURE); Lanes then keeps it above the
+    // overlay until the gesture ends. After the picture, wParam 0 tells it that it may show in
+    // pictures again, so screenshots and screen sharing keep it.
+    public static readonly int ScreenPictureMessage = RegisterWindowMessage("Lanes.ScreenPicture");
+
+    // A picture of `area` without the windows that asked to stay live; `keepUnder` is the lowest
+    // of those, for the overlay to go just under.
+    public static Pixels ScreenWithout(RECT area, IntPtr own, out IntPtr keepUnder)
+    {
+        var asked = new List<IntPtr>();
+        IntPtr lowest = IntPtr.Zero;
+        EnumWindows((h, _) =>
+        {
+            if (h == own || !IsWindowVisible(h) || Cloaked(h)) return true;
+            if ((GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64() & WS_EX_TOPMOST) == 0) return true;
+            var f = Frame(h);
+            if (f.Right <= area.Left || f.Left >= area.Right || f.Bottom <= area.Top || f.Top >= area.Bottom) return true;
+            SendMessageTimeout(h, ScreenPictureMessage, (IntPtr)1, IntPtr.Zero, 0x2 /* SMTO_ABORTIFHUNG */, 50, out _);
+            asked.Add(h);
+            // Front to back, so the last one found is the lowest.
+            if (GetWindowDisplayAffinity(h, out uint a) && a == WDA_EXCLUDEFROMCAPTURE) lowest = h;
+            return true;
+        }, IntPtr.Zero);
+        if (lowest != IntPtr.Zero) DwmFlush();
+        var p = Screen(area);
+        foreach (var h in asked) PostMessage(h, ScreenPictureMessage, IntPtr.Zero, IntPtr.Zero);
+        keepUnder = lowest;
+        return p;
+    }
+
     public static Pixels FromBitmap(Bitmap bmp)
     {
         var p = new Pixels(bmp.Width, bmp.Height);
@@ -42,21 +76,29 @@ static class Capture
 
     // The desktop's wallpaper as Windows draws it on a monitor of this size (Fill, Fit, Stretch,
     // Centre or Tile), or a dark plain colour when there is none.
-    public static Bitmap Wallpaper(Guid desktop, int width, int height, int left = 0, int top = 0)
+    // The picture file Windows shows on this desktop: its own, else the one for all desktops.
+    public static string? WallpaperPath(Guid desktop)
+    {
+        string? path = OwnWallpaperPath(desktop) ?? Registry.GetValue(@"HKEY_CURRENT_USER\Control Panel\Desktop", "WallPaper", null) as string;
+        return string.IsNullOrEmpty(path) || !File.Exists(path) ? null : path;
+    }
+
+    public static string? OwnWallpaperPath(Guid desktop)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey($@"Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops\Desktops\{{{desktop.ToString().ToUpperInvariant()}}}");
+            return key?.GetValue("Wallpaper") is string path && File.Exists(path) ? path : null;
+        }
+        catch { return null; }
+    }
+
+    public static Bitmap Wallpaper(string? path, int width, int height)
     {
         var bmp = new Bitmap(width, height, PixelFormat.Format32bppPArgb);
         using var g = Graphics.FromImage(bmp);
         g.Clear(BackgroundColour());
-        string? path = null;
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey($@"Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops\Desktops\{{{desktop.ToString().ToUpperInvariant()}}}");
-            path = key?.GetValue("Wallpaper") as string;
-        }
-        catch { }
-        if (string.IsNullOrEmpty(path) || !File.Exists(path))
-            path = Registry.GetValue(@"HKEY_CURRENT_USER\Control Panel\Desktop", "WallPaper", null) as string;
-        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return bmp;
+        if (path == null) return bmp;
         string style = Registry.GetValue(@"HKEY_CURRENT_USER\Control Panel\Desktop", "WallpaperStyle", "10") as string ?? "10";
         string tile = Registry.GetValue(@"HKEY_CURRENT_USER\Control Panel\Desktop", "TileWallpaper", "0") as string ?? "0";
         try

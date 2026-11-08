@@ -14,8 +14,14 @@ sealed class Overlay : NativeWindow
     public event Action<int, int>? LeftUp;
     public event Action<int, int>? MiddleUp;
 
+    // The monitor the overlay is on, its work area (without the taskbar), and the part the
+    // overlay covers: the work area, or the whole monitor when a full-screen window is involved.
+    public RECT Monitor { get; private set; }
+    public RECT Work { get; private set; }
     public RECT Area { get; private set; }
     public bool Shown { get; private set; }
+    // A window that stays above the overlay while it is up (see ScreenPicture in Capture.cs).
+    public IntPtr Under;
 
     public Overlay()
     {
@@ -43,32 +49,41 @@ sealed class Overlay : NativeWindow
         DwmSetWindowAttribute(Handle, 13 /* DWMWA_CLOAK */, ref v, 4);
     }
 
-    // The work area (screen minus taskbar) of the monitor the pointer is on.
-    public RECT PickArea()
+    // The monitor the pointer is on; the overlay covers its work area, or all of it.
+    public RECT PickArea(bool full = false)
     {
-        GetCursorPos(out var pt);
-        var mi = MonitorOf(MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY));
-        Area = mi.Work;
+        var mi = PointerMonitor();
+        Monitor = mi.Monitor;
+        Work = mi.Work;
+        Area = full ? mi.Monitor : mi.Work;
         return Area;
     }
+
+    IntPtr After => Under != IntPtr.Zero ? Under : HWND_TOPMOST;
 
     public float Scale => Math.Max(1, GetDpiForWindow(Handle)) / 96f;
 
     // Call after drawing the first frame for the new area.
     public void Show()
     {
-        SetWindowPos(Handle, HWND_TOPMOST, Area.Left, Area.Top, Area.Width, Area.Height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        SetWindowPos(Handle, After, Area.Left, Area.Top, Area.Width, Area.Height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
         Cloak(false);
         Shown = true;
     }
 
-    public void Place() => SetWindowPos(Handle, HWND_TOPMOST, Area.Left, Area.Top, Area.Width, Area.Height, SWP_NOACTIVATE);
+    public void Place() => SetWindowPos(Handle, After, Area.Left, Area.Top, Area.Width, Area.Height, SWP_NOACTIVATE);
 
     public void Hide()
     {
         Cloak(true);
         Shown = false;
+        Under = IntPtr.Zero;
     }
+
+    // Leaves the overlay out of screen pictures for a moment, so Lanes can take one of what is
+    // under it while it is up. False where Windows cannot (before Windows 10 2004).
+    public bool LeaveOutOfPictures(bool on) =>
+        SetWindowDisplayAffinity(Handle, on ? WDA_EXCLUDEFROMCAPTURE : WDA_NONE) && (!on || GetWindowDisplayAffinity(Handle, out uint a) && a == WDA_EXCLUDEFROMCAPTURE);
 
     protected override void WndProc(ref Message m)
     {

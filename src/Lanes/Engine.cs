@@ -33,9 +33,13 @@ sealed partial class Engine : IGestureSink
     readonly Dictionary<Guid, ID2D1Bitmap1> _bitmaps = new();
     readonly Dictionary<Guid, ID2D1Bitmap1> _tilePictures = new();
     readonly Dictionary<Guid, string> _appOf = new();
-    readonly Dictionary<Guid, (Pixels Sharp, Pixels Blurred)> _wallpaperPixels = new();
+    readonly Dictionary<Guid, (Pixels Sharp, Pixels Blurred, string? Path)> _wallpaperPixels = new();
     readonly Dictionary<Guid, (ID2D1Bitmap1 Sharp, ID2D1Bitmap1 Blurred)> _wallpapers = new();
-    Task<Pixels>? _touchCapture;
+    // Whether a window covered the whole screen (the taskbar hidden) when the picture was taken.
+    readonly Dictionary<Guid, bool> _fullScreen = new();
+    // The overlay area the pictures on the GPU are cut for.
+    RECT _picturesFor;
+    Task<(Pixels Pixels, IntPtr KeepUnder)>? _touchCapture;
     Guid _touchCaptureOf;
     // Fingers on each touchpad in its last report (a laptop's own pad keeps reporting none).
     readonly Dictionary<IntPtr, int> _fingersOn = new();
@@ -88,6 +92,7 @@ sealed partial class Engine : IGestureSink
             _msg = new MessageWindow(this);
             _overlay = new Overlay();
             _overlay.PickArea();
+            _picturesFor = _overlay.Area;
             _gfx = new Gfx();
             _gfx.Attach(_overlay.Handle, _overlay.Area.Width, _overlay.Area.Height);
             _overlay.MouseMove += OnMouseMove;
@@ -165,6 +170,42 @@ sealed partial class Engine : IGestureSink
         double now = Now;
         if (_switch != null) StepSwitch(now);
         if (_overview != null) StepOverview(now);
+        if (_retakeAt > 0 && now >= _retakeAt) Retake();
+    }
+
+    // When Lanes itself changed what is on this desktop while the overview is up (a window moved
+    // away or closed, a desktop closed into this one, a switch inside it), the picture it keeps
+    // of the desktop is taken again a moment later, from under the overlay; otherwise a later
+    // swipe would show the desktop as it was.
+    double _retakeAt;
+
+    void RetakeSoon() => _retakeAt = Now + 0.3;
+
+    void Retake()
+    {
+        _retakeAt = 0;
+        if (_overview == null || _switch != null) return;
+        if (!_overlay.LeaveOutOfPictures(true))
+        {
+            _overlay.LeaveOutOfPictures(false);
+            return;
+        }
+        var desktop = _current;
+        var monitor = _overlay.Monitor;
+        Task.Run(() =>
+        {
+            DwmFlush();
+            return Capture.Screen(monitor);
+        }).ContinueWith(t => Post(() =>
+        {
+            _overlay.LeaveOutOfPictures(false);
+            if (t.Status != TaskStatus.RanToCompletion) return;
+            if (desktop != _current || _overview == null) { t.Result.Dispose(); return; }
+            Remember(desktop, t.Result);
+            if (_overview.Strip.Tiles.FirstOrDefault(x => x.Desktop == desktop) is { } tile) TilePicture(desktop, (float)tile.Rect.W, (float)tile.Rect.H);
+            _redraw = true;
+            Log.Write("picture of this desktop taken again");
+        }));
     }
 
     void Render()
@@ -223,7 +264,11 @@ sealed partial class Engine : IGestureSink
     void OnDesktopChanged()
     {
         if (!Ready) return;
-        _current = Desktops.Current;
+        var now = Desktops.Current;
+        // Lanes' own switches set _current first; any other (a taskbar button, Ctrl+Win+arrow)
+        // leaves the open overview showing another desktop's windows: it closes.
+        if (now != _current && _overview != null && _switch == null) CloseOverviewNow();
+        _current = now;
         _lastSwitchAt = Now;
         _lanes.Reconcile(Desktops.All(), _current);
         Settings.SaveLanes(_lanes);
@@ -261,7 +306,7 @@ sealed partial class Engine : IGestureSink
         long now = Environment.TickCount64;
         if (now - _lastSnapshot < 5000 || Touching) return;
         _lastSnapshot = now;
-        Remember(_current, Capture.Screen(_overlay.PickArea()));
+        Remember(_current, Capture.Screen(PointerMonitor().Monitor));
         Warm();
     }
 
@@ -282,13 +327,48 @@ sealed partial class Engine : IGestureSink
         if (_tilePictures.Remove(desktop, out var tile)) tile.Dispose();
         var fg = GetForegroundWindow();
         if (fg != IntPtr.Zero && Desktops.OnCurrent(fg)) _appOf[desktop] = AppWindows.AppName(fg);
+        _fullScreen[desktop] = FullScreenInFront(pixels.Width, pixels.Height);
     }
+
+    // A window in front that covers the whole monitor (a video, a game, a browser in full
+    // screen): Windows hides the taskbar behind it.
+    bool FullScreenInFront(int width, int height)
+    {
+        var fg = GetForegroundWindow();
+        if (fg == IntPtr.Zero || fg == _overlay.Handle || ClassName(fg) is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd") return false;
+        var m = MonitorOf(MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST)).Monitor;
+        if (m.Width != width || m.Height != height) return false;
+        var f = Frame(fg);
+        return f.Left <= m.Left && f.Top <= m.Top && f.Right >= m.Right && f.Bottom >= m.Bottom;
+    }
+
+    bool FullScreen(Guid? desktop) => desktop is Guid d && _fullScreen.GetValueOrDefault(d);
+
+    // The overlay covers the work area, or the whole monitor when a desktop the gesture shows
+    // has a full-screen window: then each desktop's picture brings its own taskbar, or none,
+    // instead of the real taskbar staying over all of them. Call while the overlay is hidden.
+    void UseArea(bool full)
+    {
+        var area = _overlay.PickArea(full);
+        if (area.Left == _picturesFor.Left && area.Top == _picturesFor.Top && area.Right == _picturesFor.Right && area.Bottom == _picturesFor.Bottom
+            && _gfx.Width == area.Width && _gfx.Height == area.Height) return;
+        foreach (var b in _bitmaps.Values) b.Dispose();
+        foreach (var b in _tilePictures.Values) b.Dispose();
+        foreach (var (a, b) in _wallpapers.Values) { a.Dispose(); b.Dispose(); }
+        _bitmaps.Clear(); _tilePictures.Clear(); _wallpapers.Clear();
+        _picturesFor = area;
+        _gfx.Attach(_overlay.Handle, area.Width, area.Height);
+    }
+
+    // The overlay's part of the monitor, in the pixels of a picture of the whole monitor.
+    RECT Inner => new(_overlay.Area.Left - _overlay.Monitor.Left, _overlay.Area.Top - _overlay.Monitor.Top,
+        _overlay.Area.Right - _overlay.Monitor.Left, _overlay.Area.Bottom - _overlay.Monitor.Top);
 
     ID2D1Bitmap1? Picture(Guid desktop)
     {
         if (_bitmaps.TryGetValue(desktop, out var b)) return b;
-        if (_snapshots.TryGetValue(desktop, out var p) && p.Width == _gfx.Width && p.Height == _gfx.Height)
-            return _bitmaps[desktop] = _gfx.Bitmap(p);
+        if (_snapshots.TryGetValue(desktop, out var p) && p.Width == _overlay.Monitor.Width && p.Height == _overlay.Monitor.Height)
+            return _bitmaps[desktop] = _gfx.Bitmap(p, Inner);
         return Wallpaper(desktop)?.Sharp;
     }
 
@@ -304,39 +384,56 @@ sealed partial class Engine : IGestureSink
     (ID2D1Bitmap1 Sharp, ID2D1Bitmap1 Blurred)? Wallpaper(Guid desktop)
     {
         if (_wallpapers.TryGetValue(desktop, out var w)) return w;
-        (Pixels Sharp, Pixels Blurred) px;
+        (Pixels Sharp, Pixels Blurred, string? Path) px;
         bool ready;
         lock (_wallpaperPixels) ready = _wallpaperPixels.TryGetValue(desktop, out px);
-        if (!ready) px = MakeWallpaper(desktop);
-        return _wallpapers[desktop] = (_gfx.Bitmap(px.Sharp), _gfx.Bitmap(px.Blurred));
+        var m = _overlay.Monitor;
+        if (!ready || px.Sharp.Width != m.Width || px.Sharp.Height != m.Height) px = MakeWallpaper(desktop, m);
+        var inner = Inner;
+        double k = (double)px.Blurred.Width / px.Sharp.Width;
+        var small = new RECT((int)(inner.Left * k), (int)(inner.Top * k), (int)Math.Ceiling(inner.Right * k), (int)Math.Ceiling(inner.Bottom * k));
+        return _wallpapers[desktop] = (_gfx.Bitmap(px.Sharp, inner), _gfx.Bitmap(px.Blurred, small));
     }
 
-    (Pixels Sharp, Pixels Blurred) MakeWallpaper(Guid desktop)
+    // The wallpaper on the whole monitor, sharp and blurred.
+    (Pixels Sharp, Pixels Blurred, string? Path) MakeWallpaper(Guid desktop, RECT monitor)
     {
-        var area = _overlay.Area;
-        var mi = MonitorOf(MonitorFromPoint(new POINT { X = area.Left + 1, Y = area.Top + 1 }, MONITOR_DEFAULTTONEAREST));
-        using var full = Capture.Wallpaper(desktop, mi.Monitor.Width, mi.Monitor.Height);
-        using var work = full.Clone(new System.Drawing.Rectangle(area.Left - mi.Monitor.Left, area.Top - mi.Monitor.Top, area.Width, area.Height), System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
-        var px = (Capture.FromBitmap(work), Capture.Blurred(work));
+        string? path = Capture.WallpaperPath(desktop);
+        using var full = Capture.Wallpaper(path, monitor.Width, monitor.Height);
+        var px = (Capture.FromBitmap(full), Capture.Blurred(full), path);
         lock (_wallpaperPixels) _wallpaperPixels[desktop] = px;
         return px;
     }
 
+    // Makes the wallpapers ahead of time, and again for a desktop whose picture file changed
+    // (you picked another, or Windows gave a new desktop its own a moment after it was made).
     void PrepareWallpapers()
     {
         if (!Ready) return;
         var all = Desktops.All();
+        var monitor = _overlay.Monitor;
         Task.Run(() =>
         {
             foreach (var d in all)
                 try
                 {
+                    (Pixels Sharp, Pixels Blurred, string? Path) had;
                     bool have;
-                    lock (_wallpaperPixels) have = _wallpaperPixels.ContainsKey(d);
-                    if (!have) MakeWallpaper(d);
+                    lock (_wallpaperPixels) have = _wallpaperPixels.TryGetValue(d, out had);
+                    if (have && had.Path == Capture.WallpaperPath(d)) continue;
+                    MakeWallpaper(d, monitor);
+                    if (have) Post(() => WallpaperChanged(d));
                 }
                 catch (Exception e) { Log.Write($"wallpaper: {e.Message}"); }
         });
+    }
+
+    void WallpaperChanged(Guid desktop)
+    {
+        Log.Write($"wallpaper of desktop {Desktops.IndexOf(desktop) + 1} changed");
+        if (_wallpapers.Remove(desktop, out var w)) { w.Sharp.Dispose(); w.Blurred.Dispose(); }
+        if (!_snapshots.ContainsKey(desktop) && _tilePictures.Remove(desktop, out var t)) t.Dispose();
+        _redraw = true;
     }
 
     // ---------- touchpad ----------
@@ -353,14 +450,15 @@ sealed partial class Engine : IGestureSink
         if (fingers >= 3 && before < 3 && !_overlay.Shown && _switch == null)
         {
             DiscardTouchCapture();
-            var area = _overlay.PickArea();
+            var monitor = PointerMonitor().Monitor;
+            var own = _overlay.Handle;
             _touchCaptureOf = _current;
             _touchCapture = Task.Run(() =>
             {
                 long t0 = Environment.TickCount64;
-                var p = Capture.Screen(area);
+                var p = Capture.ScreenWithout(monitor, own, out var keep);
                 _captureMs = Environment.TickCount64 - t0;
-                return p;
+                return (p, keep);
             });
         }
         if (!_recognizers.TryGetValue(device, out var r)) _recognizers[device] = r = new GestureRecognizer(this);
@@ -379,7 +477,7 @@ sealed partial class Engine : IGestureSink
         if (kind == GestureKind.Switch)
         {
             // Four fingers in the open overview move between desktops without leaving it.
-            if (_overview is { Open: true, Drag: null }) { BeginInnerSwipe(axis); return; }
+            if (_overview is { Open: true, Drag: null, Going: null }) { BeginInnerSwipe(axis); return; }
             if (_overview != null || _switch is { Spring: null }) { _ignoring = true; return; }
             BeginSwitch(axis);
         }
@@ -415,29 +513,33 @@ sealed partial class Engine : IGestureSink
     {
         var t = _touchCapture;
         _touchCapture = null;
-        t?.ContinueWith(x => { if (x.Status == TaskStatus.RanToCompletion) x.Result.Dispose(); });
+        t?.ContinueWith(x => { if (x.Status == TaskStatus.RanToCompletion) x.Result.Pixels.Dispose(); });
     }
 
     long _captureMs;
     // How long the last swipe's first frame waited for the picture of the screen, for the log.
     public string CaptureNote = "";
 
+    // The picture of the screen for a gesture that starts now; windows that asked to stay live
+    // over it will be kept above the overlay.
     Pixels TakeTouchCapture()
     {
         long t0 = Environment.TickCount64;
         Pixels? snap = null;
+        IntPtr keep = IntPtr.Zero;
         try
         {
             if (_touchCapture != null && _touchCaptureOf == _current && _touchCapture.Wait(150))
             {
-                snap = _touchCapture.Result;
+                (snap, keep) = _touchCapture.Result;
                 _touchCapture = null;
             }
         }
         catch { }
         DiscardTouchCapture();
         bool fresh = snap == null;
-        snap ??= Capture.Screen(_overlay.PickArea());
+        snap ??= Capture.ScreenWithout(PointerMonitor().Monitor, _overlay.Handle, out keep);
+        _overlay.Under = keep;
         CaptureNote = $"screen picture {(fresh ? "taken late" : $"taken in {_captureMs} ms")}, first frame waited {Environment.TickCount64 - t0} ms";
         return snap;
     }
@@ -445,7 +547,6 @@ sealed partial class Engine : IGestureSink
     public void OpenOverviewFromMenu() => Post(() =>
     {
         if (!Ready || _overview != null || _switch != null) return;
-        _overlay.PickArea();
         _touchCaptureOf = _current;
         BeginOverview();
         _overview!.Tracking = false;

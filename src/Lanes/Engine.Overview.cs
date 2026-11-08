@@ -52,6 +52,8 @@ sealed partial class Engine
         public Spring Spring = null!;
         public double Start;
         public double Z;
+        // Windows has switched to the target, near the end; the picture stays a moment longer.
+        public double SwitchedAt = -1;
     }
 
     // A window or a desktop being dragged with the mouse.
@@ -98,15 +100,20 @@ sealed partial class Engine
         public InnerSwipe? Swipe;
         public bool Moving; // tiles or windows still gliding to new places
         public double LastStep;
+        // A desktop picked with the mouse: its lane slides it under the ring first, then it zooms in.
+        public Guid? Going;
+        public double GoingAt;
+        public Task? GoingWallpaper;
+        public Box? RingShown;
         public bool Open => !Tracking && Spring == null && Zoom == null && P > 0.99;
-        public bool Idle => Open && Drag == null && Swipe == null;
+        public bool Idle => Open && Drag == null && Swipe == null && Going == null;
     }
 
     void BeginOverview()
     {
         if (_overview is { } open)
         {
-            if (open.Zoom != null || open.Swipe != null || open.Drag != null) { _ignoring = true; return; }
+            if (open.Zoom != null || open.Swipe != null || open.Drag != null || open.Going != null) { _ignoring = true; return; }
             open.Tracking = true;
             open.Spring = null;
             open.Press = null;
@@ -116,10 +123,9 @@ sealed partial class Engine
         }
         if (_switch != null) { _ignoring = true; return; }
         _current = Desktops.Current;
-        var snap = TakeTouchCapture();
+        Remember(_current, TakeTouchCapture());
         RefreshTitles();
-        if (snap.Width != _gfx.Width || snap.Height != _gfx.Height) _gfx.Attach(_overlay.Handle, snap.Width, snap.Height);
-        Remember(_current, snap);
+        UseArea(FullScreen(_current));
         var o = new OverviewState { Tracking = true, Track = new OverviewTrack(0, _tuning), LastStep = Now };
         Relayout(o, snap: true);
         // Registered first, so the windows are drawn over it.
@@ -138,11 +144,14 @@ sealed partial class Engine
     // Lays the rows out again after the lanes changed; tiles glide to their new places unless `snap`.
     void Relayout(OverviewState o, bool snap = false)
     {
-        o.Strip = Strip.Layout(_lanes, _current, _gfx.Width, _gfx.Height, _overlay.Scale, dragging: o.Drag != null);
+        double spreadTop = o.Strip?.SpreadTop ?? double.NaN;
+        o.Strip = Strip.Layout(_lanes, o.Going ?? _current, _gfx.Width, _gfx.Height, _overlay.Scale, dragging: o.Drag != null);
         if (snap) o.TileShown.Clear();
         foreach (var t in o.Strip.Tiles) o.TileShown.TryAdd(Key(t), t.Rect);
         foreach (var t in o.Strip.Tiles)
             if (t.Kind == TileKind.Desktop) TilePicture(t.Desktop, (float)t.Rect.W, (float)t.Rect.H);
+        // More or fewer lanes move where the windows may go: they glide there too.
+        if (o.Page != null && Math.Abs(o.Strip.SpreadTop - spreadTop) > 0.5) Respread(o.Page, o.Strip, o);
         o.Moving = true;
     }
 
@@ -172,11 +181,11 @@ sealed partial class Engine
     }
 
     // The windows left on the page take the room of one that went.
-    void Respread(Page page, Strip strip)
+    void Respread(Page page, Strip strip, OverviewState? o = null)
     {
         float s = _overlay.Scale;
         page.To = Spread.Layout(page.From, SpreadArea(strip), 32 * s, 52 * s, 200 * s).ToList();
-        _overview!.Moving = true;
+        (o ?? _overview!).Moving = true;
     }
 
     void MoveOverview(double dy)
@@ -208,7 +217,7 @@ sealed partial class Engine
 
     void CloseOverview()
     {
-        if (_overview is { Open: true, Swipe: null }) SettleOverview(0, 0);
+        if (_overview is { Open: true, Swipe: null, Going: null }) SettleOverview(0, 0);
     }
 
     void StepOverview(double now)
@@ -216,11 +225,21 @@ sealed partial class Engine
         var o = _overview!;
         Glide(o, now);
         if (o.Swipe != null) StepInnerSwipe(now);
+        if (o.Going is Guid going && o.Zoom == null)
+        {
+            // Zooms in once its lane has nearly slid into place (and a new desktop's wallpaper is known).
+            var to = o.Strip.Tiles.FirstOrDefault(t => t.Desktop == going && t.Kind == TileKind.Desktop);
+            var at = to == null ? (Box?)null : o.TileShown.GetValueOrDefault(Key(to), to.Rect);
+            bool slid = at is { } b && Math.Abs(b.X - to!.Rect.X) + Math.Abs(b.Y - to.Rect.Y) < 3 * _overlay.Scale;
+            if ((slid && o.GoingWallpaper?.IsCompleted != false) || now - o.GoingAt > 0.6) ZoomInto(going, at ?? new Box(0, 0, _gfx.Width, _gfx.Height));
+            return;
+        }
         if (o.Zoom is { } z)
         {
             double t = now - z.Start;
             z.Z = z.Spring.At(t);
-            if (z.Spring.Done(t, 0.002)) FinishZoom();
+            if (z.SwitchedAt < 0 && z.Z > 0.985) SwitchForZoom(z);
+            if (z.Spring.Done(t, 0.002) && now - z.SwitchedAt >= 0.2) FinishZoom();
             return;
         }
         if (o.Spring == null) return;
@@ -248,6 +267,8 @@ sealed partial class Engine
         bool moving = false;
         foreach (var t in o.Strip.Tiles)
             o.TileShown[Key(t)] = Toward(o.TileShown.TryGetValue(Key(t), out var b) ? b : t.Rect, t.Rect, k, ref moving);
+        if (o.Going is Guid g && o.RingShown is { } ring && o.Strip.Tiles.FirstOrDefault(t => t.Desktop == g && t.Kind == TileKind.Desktop) is { } goal)
+            o.RingShown = Toward(ring, goal.Rect, k, ref moving);
         for (int i = 0; i < o.Page.To.Count; i++)
             o.Page.Shown[i] = Toward(o.Page.Shown[i], o.Page.To[i], k, ref moving);
         o.Moving = moving;
@@ -282,21 +303,40 @@ sealed partial class Engine
         o.Zoom = new Zoom { Target = target, From = from, Spring = new Spring(0, 0, 1, _tuning.OverviewResponse), Start = Now };
     }
 
+    // As a swipe does: Windows switches as the picture comes to rest, its pill comes up over
+    // Lanes' copy, and the new desktop has a moment to draw before the picture goes.
+    void SwitchForZoom(Zoom z)
+    {
+        z.SwitchedAt = Now;
+        if (z.Target == _current) return;
+        if (!Desktops.Switch(z.Target)) Log.Write("switch failed");
+        _overlay.Place();
+        _lastSwitchAt = Now;
+        _current = z.Target;
+        _lanes.Visited(z.Target);
+    }
+
     void FinishZoom()
     {
         var z = _overview!.Zoom!;
         z.Z = 1;
         RenderOverview();
-        if (z.Target != _current)
-        {
-            Desktops.Switch(z.Target);
-            _current = z.Target;
-            _lanes.Visited(z.Target);
-            Settings.SaveLanes(_lanes);
-            DwmFlush();
-            DwmFlush();
-        }
+        Settings.SaveLanes(_lanes);
         CloseOverviewNow();
+    }
+
+    // Clicked: the desktop's lane slides it under the ring (the ring moves to its lane), then it zooms in.
+    void GoTo(OverviewState o, Guid target, Task? wallpaper = null)
+    {
+        var ring = o.Strip.Tiles.FirstOrDefault(t => t.Desktop == _current && t.Kind == TileKind.Desktop);
+        o.RingShown = ring == null ? null : o.TileShown.GetValueOrDefault(Key(ring), ring.Rect);
+        o.Going = target;
+        o.GoingAt = Now;
+        o.GoingWallpaper = wallpaper;
+        o.Hover = -1;
+        o.HoverTile = null;
+        Relayout(o);
+        _gfx.Frames.Clear();
     }
 
     // The lanes changed: Windows' order follows them, and they are saved.
@@ -319,6 +359,19 @@ sealed partial class Engine
         LanesChanged();
         Log.Write(newLane ? "new lane with a new desktop" : "new desktop");
         return made;
+    }
+
+    // Windows gives a new desktop a wallpaper of its own a moment after making it; waits for
+    // that (half a second at most) and makes Lanes' copy of it.
+    Task OwnWallpaper(Guid desktop)
+    {
+        var monitor = _overlay.Monitor;
+        return Task.Run(async () =>
+        {
+            for (int i = 0; i < 10 && Capture.OwnWallpaperPath(desktop) == null; i++) await Task.Delay(50);
+            MakeWallpaper(desktop, monitor);
+            Post(() => WallpaperChanged(desktop));
+        });
     }
 
     // ---------- four fingers inside the overview ----------
@@ -395,6 +448,7 @@ sealed partial class Engine
             o.Page.Dispose();
             o.Page = arrived;
             Relayout(o, snap: true);
+            RetakeSoon();
         }
         _redraw = true;
         Log.Write($"overview swipe drawn: {_gfx.FrameStats()}");
@@ -503,11 +557,15 @@ sealed partial class Engine
         {
             case { Kind: TileKind.Desktop } t:
                 if (t.Desktop == _current) CloseOverview();
-                else ZoomInto(t.Desktop, o.TileShown.GetValueOrDefault(Key(t), t.Rect));
+                else GoTo(o, t.Desktop);
                 return;
             case { } t:
                 if (NewDesktop(t.Lane, t.Kind == TileKind.NewLane) is Guid made)
-                    ZoomInto(made, t.Rect with { W = t.Rect.H * _gfx.Width / _gfx.Height });
+                {
+                    // The new desktop grows out of the "+" (or "New lane") it was made with.
+                    o.TileShown[made.ToString()] = t.Rect with { W = Math.Min(t.Rect.W, o.Strip.TileW), H = o.Strip.TileH };
+                    GoTo(o, made, OwnWallpaper(made));
+                }
                 return;
         }
         CloseOverview();
@@ -531,6 +589,7 @@ sealed partial class Engine
                 Log.Write($"window moved to desktop {Desktops.IndexOf(target) + 1}");
                 o.Page.RemoveAt(d.Window);
                 Respread(o.Page, o.Strip);
+                RetakeSoon();
             }
             else
             {
@@ -564,6 +623,7 @@ sealed partial class Engine
             // As in Task View: the window is asked to close (it may still ask to save first).
             PostMessage(o.Page.Windows[w].Handle, WM_SYSCOMMAND, (IntPtr)SC_CLOSE, IntPtr.Zero);
             Log.Write("window closed");
+            RetakeSoon();
             o.Page.RemoveAt(w);
             o.Hover = -1;
             Respread(o.Page, o.Strip);
@@ -585,7 +645,7 @@ sealed partial class Engine
         Log.Write($"closed a desktop; its windows went to desktop {Desktops.IndexOf(to) + 1}");
         if (here)
         {
-            _current = Desktops.Current;
+            _current = Desktops.Current is var now && now != desktop ? now : to;
             _overlay.Place();
         }
         LanesChanged();
@@ -598,6 +658,7 @@ sealed partial class Engine
         }
         o.HoverTile = null;
         _redraw = true;
+        if (here || to == _current) RetakeSoon();
     }
 
     static int HitWindow(OverviewState o, int x, int y)
@@ -717,13 +778,15 @@ sealed partial class Engine
         float la = Math.Clamp((p - 0.7f) / 0.3f, 0, 1) * keep;
         double ox = sw == null || vertical ? 0 : sw.Offset, oy = vertical ? sw!.Offset : 0;
         float clip = vertical ? (float)o.Strip.Bottom + dy : float.NegativeInfinity;
+        // A window going up under the lane rows fades as it goes, instead of being cut off.
+        float Fade(Box b) => vertical ? 1 - Math.Clamp((clip + 40 * s - (float)b.Y) / Math.Max(1, (float)b.H * 0.6f), 0, 1) : 1;
         if (vertical) g.Clip(0, clip, g.Width, g.Height - clip);
         for (int i = 0; i < boxes.Length; i++)
         {
             if (o.Drag?.Window == i) continue;
             var b = boxes[i] with { X = boxes[i].X + ox, Y = boxes[i].Y + oy };
-            page.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep, clip);
-            if (la > 0.002f) WindowTitle(page, i, b, la);
+            page.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep * Fade(b), clip);
+            if (la > 0.002f) WindowTitle(page, i, b, la * Fade(b));
             if (o.Hover == i && o.Idle)
                 g.RoundRectOutline((float)b.X - 5 * s, (float)b.Y - 5 * s, (float)b.W + 10 * s, (float)b.H + 10 * s, 11 * s, 0xD9FFFFFF, 2 * s);
         }
@@ -735,8 +798,8 @@ sealed partial class Engine
             for (int i = 0; i < other.Thumbs.Count; i++)
             {
                 var b = other.To[i] with { X = other.To[i].X + ox + (vertical ? 0 : step), Y = other.To[i].Y + oy + (vertical ? step : 0) };
-                other.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep, clip);
-                WindowTitle(other, i, b, la);
+                other.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep * Fade(b), clip);
+                WindowTitle(other, i, b, la * Fade(b));
             }
         }
         if (vertical) g.Unclip();
@@ -751,6 +814,8 @@ sealed partial class Engine
         {
             var b = zoom.From.Lerp(new Box(0, 0, g.Width, g.Height), Math.Clamp(z, 0, 1));
             g.RoundImage(target, (float)b.X, (float)b.Y, (float)b.W, (float)b.H, 8 * s * keep, 1);
+            // As after a swipe, the desktop's pill: Windows' own comes up over it once it switched.
+            DesktopPill(zoom.Target, 0, Math.Clamp((z - 0.75f) / 0.25f, 0, 1));
         }
         g.End();
     }
@@ -811,6 +876,7 @@ sealed partial class Engine
         }
 
         // Where you are. A sideways swipe slides the lane under it; one up or down moves it to the next lane.
+        if (o.Going != null && o.RingShown is { } going) ring = going with { Y = going.Y + dy };
         if (ring is { } rb)
         {
             if (o.Swipe?.Axis == Axis.Horizontal) rb = rb with { X = rb.X - shift };

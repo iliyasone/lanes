@@ -120,6 +120,15 @@ sealed class Gfx : IDisposable
         Dc.CreateBitmap(new SizeI(p.Width, p.Height), p.Data, (uint)(p.Width * 4),
             new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, p.Opaque ? D2DAlpha.Ignore : D2DAlpha.Premultiplied), 96, 96, BitmapOptions.None));
 
+    // Only the part of the pixels inside `crop` (clamped to them).
+    public ID2D1Bitmap1 Bitmap(Pixels p, Native.RECT crop)
+    {
+        int l = Math.Clamp(crop.Left, 0, p.Width - 1), t = Math.Clamp(crop.Top, 0, p.Height - 1);
+        int r = Math.Clamp(crop.Right, l + 1, p.Width), b = Math.Clamp(crop.Bottom, t + 1, p.Height);
+        return Dc.CreateBitmap(new SizeI(r - l, b - t), p.Data + (nint)(((long)t * p.Width + l) * 4), (uint)(p.Width * 4),
+            new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, p.Opaque ? D2DAlpha.Ignore : D2DAlpha.Premultiplied), 96, 96, BitmapOptions.None));
+    }
+
     // A smaller copy made once with high-quality filtering, so small pictures cost nothing per frame.
     // Call between frames only.
     public ID2D1Bitmap1 Scaled(ID2D1Bitmap1 src, int w, int h, float radius = 0)
