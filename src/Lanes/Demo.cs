@@ -290,64 +290,47 @@ static class Demo
         mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
     }
 
-    // The test windows' taskbar button (they are all one program's): with Windows' previews
-    // turned off as Lanes does, the pointer resting on it brings up Lanes' map of the desktops,
-    // with the windows where they are, and the map goes once the pointer leaves it. The one on
-    // the Agent desktop clicked, Lanes goes there and brings it to the front.
+    // The test windows' taskbar button (they are all one program's): the pointer resting on it
+    // brings up Lanes' map of the desktops, with the windows where they are, before Windows' own
+    // previews would come (the log says whether they did), and the map goes once the pointer
+    // leaves it. The one on the Agent desktop clicked, Lanes goes there and brings it to the front.
     static async Task AppOverview(Engine engine, string dir, Guid editor, Guid agent)
     {
-        Log.Write("app map: start");
         Desktops.Switch(editor);
         await Task.Delay(2500);
         engine.Snapshot();
         await Task.Delay(400);
-        Log.Write("app map: turning Windows' previews off");
-        var off = Task.Run(TaskbarSetting.PreviewsOff);
-        Log.Write(await Task.WhenAny(off, Task.Delay(15000)) == off ? $"app map: previews turned off now: {off.Result}" : "app map: turning previews off TIMED OUT");
-        await Task.Delay(1000);
         var mine = Application.OpenForms.Cast<Form>().First(f => f.Text == "Editor").Handle;
         var button = engine.Buttons == null ? null : await engine.Buttons.ButtonOf(mine);
         if (button == null) { Log.Write("app map: no taskbar button found for the test windows"); return; }
         var r = button.Rect;
         Log.Write($"app map: the test windows' button is \"{button.App.Name}\" ({button.App.Id}) at {r.Left},{r.Top} {r.Width}x{r.Height}, {button.Windows} windows");
         int cx = (r.Left + r.Right) / 2, cy = (r.Top + r.Bottom) / 2;
-        // Rests on the button: whether Windows' previews come up, and whether Lanes' map does.
-        async Task<bool> Rest(string shot)
+        // Rests on the button: when Windows starts its previews, if it does, and when Lanes' map is up.
+        async Task Rest()
         {
             var before = TopWindows();
             SetCursorPos(cx - 20, cy);
-            for (int i = 0; i < 20; i++) { mouse_event(0x1, 1, 0, 0, IntPtr.Zero); await Task.Delay(20); }
-            await Task.Delay(1500);
-            var previews = TopWindows().Where(w => !before.Contains(w) && Native.ClassName(w) is "Xaml_WindowedPopupClass" or "ThumbnailDeviceHelperWnd" or "TaskListThumbnailWnd").ToList();
-            var (_, shown) = await engine.OverviewLayout();
-            Log.Write($"app map: resting on the button, Windows' previews: {(previews.Count == 0 ? "none" : string.Join(", ", previews.Select(Describe)))}; Lanes' map: {(shown.Count == 0 ? "NOT OPEN" : string.Join(", ", shown.Select(w => $"{w.Title} {w.Rect.Width}x{w.Rect.Height}")))}");
-            engine.Screenshot(Path.Combine(dir, shot));
-            await Task.Delay(300);
-            return previews.Count > 0;
+            long t0 = Environment.TickCount64;
+            long? previews = null, map = null;
+            for (int i = 0; Environment.TickCount64 - t0 < 1800; i++)
+            {
+                if (i < 20) mouse_event(0x1, 1, 0, 0, IntPtr.Zero);
+                if (previews == null && TopWindows().Any(w => !before.Contains(w) && Native.ClassName(w) is "Xaml_WindowedPopupClass" or "ThumbnailDeviceHelperWnd")) previews = Environment.TickCount64 - t0;
+                if (map == null && (await engine.OverviewLayout()).Windows.Count > 0) map = Environment.TickCount64 - t0;
+                await Task.Delay(20);
+            }
+            Log.Write($"app map: resting on the button, Windows' previews {(previews == null ? "never started" : $"STARTED after {previews} ms")}; Lanes' map {(map == null ? "NOT OPEN" : $"up after {map} ms")}");
         }
-        bool previewsShown = await Rest("18c-map-on-hover.png");
+        await Rest();
+        engine.Screenshot(Path.Combine(dir, "18c-map-on-hover.png"));
+        await Task.Delay(300);
         // The pointer goes up the screen, away from the map and the taskbar.
         SetCursorPos(cx, 120);
         mouse_event(0x1, 0, 1, 0, IntPtr.Zero);
         await Task.Delay(1200);
         Log.Write($"app map: after the pointer left it, it is {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STILL OPEN")}");
-        if (previewsShown)
-        {
-            TaskbarSetting.RestartExplorer();
-            await Task.Delay(4000);
-            Log.Write($"after Explorer restarted: {Desktops.Count} desktops, on desktop {Desktops.IndexOf(Desktops.Current) + 1}");
-            button = await engine.Buttons!.ButtonOf(mine);
-            if (button == null) { Log.Write("app map: no taskbar button after Explorer restarted"); return; }
-            r = button.Rect;
-            (cx, cy) = ((r.Left + r.Right) / 2, (r.Top + r.Bottom) / 2);
-            await Rest("18c-map-on-hover-after-restart.png");
-        }
-        else
-        {
-            SetCursorPos(cx - 20, cy);
-            for (int i = 0; i < 20; i++) { mouse_event(0x1, 1, 0, 0, IntPtr.Zero); await Task.Delay(20); }
-            await Task.Delay(1500);
-        }
+        await Rest();
         engine.Screenshot(Path.Combine(dir, "18-app-overview.png"));
         var (_, windows) = await engine.OverviewLayout();
         var other = windows.FirstOrDefault(w => w.Title == "Agent").Rect;
@@ -360,6 +343,20 @@ static class Demo
         await Task.Delay(2500);
         Log.Write($"after a click on Agent there: {(Desktops.Current == agent ? "on its desktop" : "on another desktop")}, \"{Native.WindowText(GetForegroundWindow())}\" in front");
         engine.Screenshot(Path.Combine(dir, "18b-after-app-click.png"));
+        // Back over the button, then a click on the taskbar's Start button through the map.
+        Desktops.Switch(editor);
+        await Task.Delay(2000);
+        await Rest();
+        var start = TopWindows();
+        SetCursorPos(r.Left - 400, cy);
+        mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
+        await Task.Delay(150);
+        mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
+        await Task.Delay(1500);
+        Log.Write($"app map: after a click on the taskbar left of the buttons: the map is {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STILL OPEN")}; new windows: {string.Join(", ", TopWindows().Where(w => !start.Contains(w)).Take(5).Select(Describe))}");
+        engine.Screenshot(Path.Combine(dir, "18d-taskbar-click-through-map.png"));
+        SendKeys.SendWait("{ESC}");
+        await Task.Delay(800);
     }
 
     // The top-level windows shown now.

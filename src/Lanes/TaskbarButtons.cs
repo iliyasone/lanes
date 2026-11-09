@@ -9,11 +9,12 @@ namespace Lanes;
 // An app as the taskbar groups its windows: the id Windows gives it (see AppIds) and its name.
 sealed record AppRef(string Id, string Name);
 
-// The pointer resting on an app's taskbar button, where Windows would show small previews of
-// its windows (Lanes turns them off, see TaskbarSetting), shows Lanes' map of the desktops with
-// that app's windows; so does a click on an app with two or more windows. A click with Shift,
-// Ctrl or Alt held, any other mouse button, and a click on an app with one window go to Windows
-// as before, and so does a press that becomes a drag (Lanes hands it back to Windows where it was).
+// The pointer resting on an app's taskbar button shows Lanes' map of the desktops with that
+// app's windows, a moment before Windows would show small previews of them (Windows 11 has no
+// setting to turn those off; the map, once up, lies over the taskbar, so they never come); so
+// does a click on an app with two or more windows. A click with Shift, Ctrl or Alt held, any
+// other mouse button, and a click on an app with one window go to Windows as before, and so does
+// a press that becomes a drag (Lanes hands it back to Windows where it was).
 //
 // Windows draws its taskbar itself. Which button is where, Lanes reads through UI Automation
 // (each button's "Appid: ..." and place) whenever the pointer comes over the taskbar, on a
@@ -124,12 +125,10 @@ sealed class TaskbarButtons
 
     static bool Held() => GetAsyncKeyState(0x10) < 0 || GetAsyncKeyState(0x11) < 0 || GetAsyncKeyState(0x12) < 0;
 
-    Button? At(POINT pt)
-    {
-        foreach (var b in _buttons)
-            if (Inside(b.Rect, pt)) return OverTaskbar(pt) ? b : null;
-        return null;
-    }
+    Button? At(POINT pt) => Under(pt) is { } b && OverTaskbar(pt) ? b : null;
+
+    // The button at `pt`, whatever lies over the taskbar there (the map does).
+    public Button? Under(POINT pt) => _buttons.FirstOrDefault(b => Inside(b.Rect, pt));
 
     static bool Inside(RECT r, POINT pt) => pt.X >= r.Left && pt.X < r.Right && pt.Y >= r.Top && pt.Y < r.Bottom;
 
@@ -150,7 +149,7 @@ sealed class TaskbarButtons
     }
 
     // Hands a press back to Windows, where it was.
-    static void Press(POINT at)
+    public static void Press(POINT at)
     {
         int x0 = GetSystemMetrics(76), y0 = GetSystemMetrics(77), w = GetSystemMetrics(78), h = GetSystemMetrics(79);
         var input = new INPUT

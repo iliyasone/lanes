@@ -34,9 +34,6 @@ static class Program
         engine.Start();
         if (settings.Gestures && engine.Ready && !demo) WindowsGestures.TakeOver();
         if (engine.Ready && !demo) TaskbarSetting.ShowAllDesktops();
-        // The first time, Explorer starts again with its previews off (see TaskbarSetting); on a
-        // thread of its own, so nothing here waits for Explorer.
-        if (engine.Ready && !demo) Task.Run(() => { if (TaskbarSetting.PreviewsOff()) TaskbarSetting.RestartExplorer(); });
         // Whatever ends Lanes, Windows gets its gestures back.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => { if (!demo) WindowsGestures.GiveBack(); };
 

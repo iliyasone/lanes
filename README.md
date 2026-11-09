@@ -114,16 +114,16 @@ are on, in the middle: what is above and below you reads at a glance.
   go there (the overview zooms into it); **click +** for a new desktop at the end of your lane.
 - **Esc**, a click on empty space or **three fingers down** close it.
 
-**Rest the pointer on an app on the taskbar** (Lanes turns Windows' small previews there off;
-the first time, Explorer restarts for it), or click one that has two windows or more, and a
-map of your desktops comes out of the taskbar on a panel of frosted glass over about half the
+**Rest the pointer on an app on the taskbar**, or click one that has two windows or more, and
+in place of Windows' small previews a map of your desktops comes out of the taskbar on a panel of frosted glass over about half the
 screen. The lanes are as in the overview, with the same names, about twice as big; every
 desktop is in grey, and the app's windows on it are live and in colour, exactly where they
 are, so you see at once where each one is. The pointer over a window lifts it a little and
 outlines it, and its desktop's name gives way to the window's title; over another app's
 button, the map shows that app instead. Click a window to go to it (on another desktop, the
 map zooms into that desktop first), a desktop to go there; the map goes once the pointer
-leaves it and the taskbar, or with Esc. A click on an app with one window, a click with Shift,
+leaves it and the taskbar, with Esc, or with a click elsewhere on the taskbar, which goes on to
+the taskbar. A click on an app with one window, a click with Shift,
 Ctrl or Alt held, the middle button and dragging a button along the taskbar work as in
 Windows.
 

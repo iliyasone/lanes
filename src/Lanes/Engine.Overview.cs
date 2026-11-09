@@ -387,11 +387,14 @@ sealed partial class Engine
     // there while that window is the active one: for that time Lanes makes the taskbar itself the
     // active window, which Windows then keeps in front, as when it is clicked. As the overview
     // closes without another window picked, the full-screen window is the active one again.
+    // Not under an app's map: Windows would show its previews over the map as soon as the pointer
+    // rested on a button there. The map's picture of the taskbar takes the pointer instead (see
+    // OnMouseMove, TaskbarPress).
     void UpdateHole(OverviewState o)
     {
-        bool open = o.Open && o.Zoom == null;
-        LiftTaskbar(open && FullScreen(_current));
-        _overlay.Hole(open ? TaskbarOn(_overlay.Monitor) : null);
+        bool hole = o.Open && o.Zoom == null && o.App == null;
+        LiftTaskbar(hole && FullScreen(_current));
+        _overlay.Hole(hole ? TaskbarOn(_overlay.Monitor) : null);
     }
 
     void NoHole()
@@ -892,7 +895,7 @@ sealed partial class Engine
     // app's windows sooner. Not over the overview, which a click on a button turns into the map.
     AppRef? _hover;
     double _hoverAt;
-    const double HoverTime = 0.45, OtherAppTime = 0.15;
+    const double HoverTime = 0.3, OtherAppTime = 0.15;
 
     void Hovered(AppRef? app)
     {
@@ -913,7 +916,7 @@ sealed partial class Engine
     {
         GetCursorPos(out var pt);
         double x = pt.X - _overlay.Area.Left, y = pt.Y - _overlay.Area.Top, m = 24 * _overlay.Scale;
-        bool on = x >= 0 && x < _gfx.Width && (y >= o.Panel.Top - m && y < o.Panel.Bottom + m || TaskbarOn(_overlay.Monitor) is RECT bar && PointerIn(bar));
+        bool on = x >= 0 && x < _gfx.Width && (y >= o.Panel.Top - m && y < o.Panel.Bottom + m || OnTaskbar((int)x, (int)y));
         if (on) o.AwaySince = 0;
         else if (o.AwaySince == 0) o.AwaySince = now;
         else if (now - o.AwaySince > 0.3)
@@ -1016,7 +1019,40 @@ sealed partial class Engine
 
     void OnLeftDown(int x, int y)
     {
-        if (_overview is { Idle: true } o) o.Press = (x, y);
+        if (_overview is not { Idle: true } o) return;
+        if (o.App != null && OnTaskbar(x, y)) TaskbarPress(o, x, y);
+        else o.Press = (x, y);
+    }
+
+    bool OnTaskbar(int x, int y) => TaskbarOn(_overlay.Monitor) is RECT bar && PointIn(bar, x, y);
+
+    // `bar` from TaskbarOn (on the monitor) holds the overlay's point (x, y).
+    bool PointIn(RECT bar, int x, int y)
+    {
+        int mx = x + _overlay.Area.Left - _overlay.Monitor.Left, my = y + _overlay.Area.Top - _overlay.Monitor.Top;
+        return mx >= bar.Left && mx < bar.Right && my >= bar.Top && my < bar.Bottom;
+    }
+
+    // The taskbar's button under the overlay's point (x, y).
+    TaskbarButtons.Button? ButtonUnder(int x, int y) =>
+        Buttons?.Under(new POINT { X = x + _overlay.Area.Left, Y = y + _overlay.Area.Top });
+
+    // A press on the taskbar's picture under an app's map: on an app with two or more windows,
+    // the map shows that app's; anything else (an app with one window, the Start button, the
+    // tray) the map goes and the press goes on to the taskbar itself, as if the map were not there.
+    void TaskbarPress(OverviewState o, int x, int y)
+    {
+        _hover = null;
+        if (ButtonUnder(x, y) is { Windows: >= 2 } b)
+        {
+            ShowApp(b.App);
+            return;
+        }
+        ReleaseCapture();
+        _overlay.Hole(TaskbarOn(_overlay.Monitor));
+        TaskbarButtons.Press(new POINT { X = x + _overlay.Area.Left, Y = y + _overlay.Area.Top });
+        Log.Write("map closed: a press on the taskbar went on to it");
+        CloseOverview();
     }
 
     void OnMouseMove(int x, int y)
@@ -1049,6 +1085,13 @@ sealed partial class Engine
             }
             _redraw = true;
             return;
+        }
+        // On an app's map, over another app's button on the taskbar's picture: that app's map in a moment.
+        if (o.App != null && OnTaskbar(x, y))
+        {
+            var app = ButtonUnder(x, y) is { Windows: >= 1 } b ? b.App : null;
+            if (app == null || app.Id == o.App.Id) _hover = null;
+            else if (app.Id != _hover?.Id) Hovered(app);
         }
         // The buttons over the window under the pointer keep it so while the pointer goes up to them.
         int button = o.App == null && o.Hover >= 0 && o.Idle ? ButtonAt(o, o.Hover, x, y) : -1;
