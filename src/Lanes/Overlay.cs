@@ -66,7 +66,22 @@ sealed class Overlay : NativeWindow
         return Area;
     }
 
-    IntPtr After => Under != IntPtr.Zero ? Under : HWND_TOPMOST;
+    // Under the kept window only while it is still among the topmost ones: its program may have
+    // put it under ordinary windows since, and the overlay would go there with it, out of sight.
+    IntPtr After => Under != IntPtr.Zero && AmongTopmost(Under) ? Under : HWND_TOPMOST;
+
+    static bool AmongTopmost(IntPtr window)
+    {
+        for (IntPtr h = GetTopWindow(IntPtr.Zero); h != IntPtr.Zero; h = GetWindow(h, 2 /* GW_HWNDNEXT */))
+        {
+            if (h == window) return true;
+            if (IsWindowVisible(h) && !Cloaked(h) && (GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64() & WS_EX_TOPMOST) == 0) return false;
+        }
+        return false;
+    }
+
+    [DllImport("user32.dll")] static extern IntPtr GetTopWindow(IntPtr parent);
+    [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr hwnd, uint cmd);
 
     public float Scale => Math.Max(1, GetDpiForWindow(Handle)) / 96f;
 
