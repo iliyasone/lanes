@@ -28,6 +28,8 @@ sealed class TaskbarButtons
     readonly Action<AppRef, bool> _clicked;
     // The app whose button the pointer came onto, or null as it leaves the buttons.
     readonly Action<AppRef?> _hovered;
+    // A press on the taskbar while the app map lies over it, with where it was.
+    readonly Action<POINT> _pressedUnderMap;
     string? _over;
     volatile Button[] _buttons = Array.Empty<Button>();
     volatile RECT[] _bars = Array.Empty<RECT>();
@@ -40,10 +42,14 @@ sealed class TaskbarButtons
     IntPtr _hook;
     HookProc? _proc;
 
-    public TaskbarButtons(Action<AppRef, bool> clicked, Action<AppRef?> hovered)
+    // The app map lies over the taskbar.
+    public volatile bool UnderMap;
+
+    public TaskbarButtons(Action<AppRef, bool> clicked, Action<AppRef?> hovered, Action<POINT> pressedUnderMap)
     {
         _clicked = clicked;
         _hovered = hovered;
+        _pressedUnderMap = pressedUnderMap;
         var reader = new Thread(ReadLoop) { IsBackground = true, Name = "taskbar buttons" };
         reader.SetApartmentState(ApartmentState.STA);
         reader.Start();
@@ -92,6 +98,14 @@ sealed class TaskbarButtons
                         }
                         break;
                     case WM_LBUTTONDOWN:
+                        // Caught here, not by the map's window: a press that window got would leave
+                        // Windows holding the button down, and one handed on to the taskbar after
+                        // it would go nowhere.
+                        if (UnderMap && _bars.Any(r => Inside(r, m.Pt)))
+                        {
+                            _pressedUnderMap(m.Pt);
+                            return 1;
+                        }
                         if (Held() || At(m.Pt) is not { } b) break;
                         if (b.Windows >= 2)
                         {

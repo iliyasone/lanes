@@ -393,12 +393,14 @@ sealed partial class Engine
     void UpdateHole(OverviewState o)
     {
         bool hole = o.Open && o.Zoom == null && o.App == null;
+        if (Buttons != null) Buttons.UnderMap = o.App != null;
         LiftTaskbar(hole && FullScreen(_current));
         _overlay.Hole(hole ? TaskbarOn(_overlay.Monitor) : null);
     }
 
     void NoHole()
     {
+        if (Buttons != null) Buttons.UnderMap = false;
         _overlay.Hole(null);
         LiftTaskbar(false);
     }
@@ -1025,8 +1027,7 @@ sealed partial class Engine
     void OnLeftDown(int x, int y)
     {
         if (_overview is not { Idle: true } o) return;
-        if (o.App != null && OnTaskbar(x, y)) TaskbarPress(o, x, y);
-        else o.Press = (x, y);
+        o.Press = (x, y);
     }
 
     bool OnTaskbar(int x, int y) => TaskbarOn(_overlay.Monitor) is RECT bar && PointIn(bar, x, y);
@@ -1042,21 +1043,21 @@ sealed partial class Engine
     TaskbarButtons.Button? ButtonUnder(int x, int y) =>
         Buttons?.Under(new POINT { X = x + _overlay.Area.Left, Y = y + _overlay.Area.Top });
 
-    // A press on the taskbar's picture under an app's map: on an app with two or more windows,
-    // the map shows that app's; anything else (an app with one window, the Start button, the
-    // tray) the map goes and the press goes on to the taskbar itself, as if the map were not there.
-    void TaskbarPress(OverviewState o, int x, int y)
+    // A press on the taskbar under an app's map (TaskbarButtons' hook catches it): on an app with
+    // two or more windows, the map shows that app's; anything else (an app with one window, the
+    // Start button, the tray) the map goes and the press goes on to the taskbar itself, as if the
+    // map were not there.
+    void TaskbarPress(POINT at)
     {
         _hover = null;
-        if (ButtonUnder(x, y) is { Windows: >= 2 } b)
+        if (_overview is { App: not null } && Buttons?.Under(at) is { Windows: >= 2 } b)
         {
             ShowApp(b.App);
             return;
         }
         // Gone at once, as Windows' own pop-ups go: the press must find the taskbar under it.
-        ReleaseCapture();
-        CloseOverviewNow();
-        TaskbarButtons.Press(new POINT { X = x + _overlay.Area.Left, Y = y + _overlay.Area.Top });
+        if (_overview is { App: not null }) CloseOverviewNow();
+        TaskbarButtons.Press(at);
         Log.Write("map closed: a press on the taskbar went on to it");
     }
 

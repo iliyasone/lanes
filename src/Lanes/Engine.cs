@@ -122,7 +122,8 @@ sealed partial class Engine : IGestureSink
                 Desktops.Listen(_msg.Handle, WM_DESKTOP_CHANGED);
                 SetUpLanes();
                 Ready = true;
-                Buttons = new TaskbarButtons((app, taken) => Post(() => TaskbarClicked(app, taken)), app => Post(() => Hovered(app)));
+                Buttons = new TaskbarButtons((app, taken) => Post(() => TaskbarClicked(app, taken)), app => Post(() => Hovered(app)),
+                    pt => Post(() => TaskbarPress(pt)));
             }
             else Status?.Invoke("This Windows version is not supported");
             PrepareWallpapers();
