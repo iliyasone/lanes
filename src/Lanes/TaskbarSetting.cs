@@ -68,8 +68,9 @@ static class TaskbarSetting
             Directory.CreateDirectory(Log.Dir);
             if (!File.Exists(SavedHover)) File.WriteAllText(SavedHover, before?.ToString() ?? "none");
             k.SetValue(Hover, Never, RegistryValueKind.DWord);
+            long t0 = Environment.TickCount64;
             Notify();
-            Log.Write($"taskbar: Windows' previews of the windows turned off (the delay was {before ?? "not set"})");
+            Log.Write($"taskbar: Windows' previews of the windows turned off (the delay was {before ?? "not set"}); Explorer told in {Environment.TickCount64 - t0} ms");
             return true;
         }
         catch (Exception e) { Log.Write($"taskbar previews: {e.Message}"); return false; }

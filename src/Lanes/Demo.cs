@@ -296,11 +296,14 @@ static class Demo
     // the Agent desktop clicked, Lanes goes there and brings it to the front.
     static async Task AppOverview(Engine engine, string dir, Guid editor, Guid agent)
     {
+        Log.Write("app map: start");
         Desktops.Switch(editor);
         await Task.Delay(2500);
         engine.Snapshot();
         await Task.Delay(400);
-        Log.Write($"app map: previews turned off now: {TaskbarSetting.PreviewsOff()}");
+        Log.Write("app map: turning Windows' previews off");
+        var off = Task.Run(TaskbarSetting.PreviewsOff);
+        Log.Write(await Task.WhenAny(off, Task.Delay(15000)) == off ? $"app map: previews turned off now: {off.Result}" : "app map: turning previews off TIMED OUT");
         await Task.Delay(1000);
         var mine = Application.OpenForms.Cast<Form>().First(f => f.Text == "Editor").Handle;
         var button = engine.Buttons == null ? null : await engine.Buttons.ButtonOf(mine);
@@ -425,6 +428,7 @@ static class Demo
         await Task.Delay(1500);
         notes.WindowState = FormWindowState.Normal;
         await Task.Delay(500);
+        Log.Write("window buttons: done");
     }
 
     // A browser in full screen, as with a video, lies over the taskbar; in the overview the real

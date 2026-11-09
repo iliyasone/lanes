@@ -435,7 +435,8 @@ sealed partial class Engine
         else if (_lifted is var (bar, over, _))
         {
             _lifted = null;
-            if (GetForegroundWindow() == bar) AppWindows.Activate(over);
+            // Not once a swipe inside the overview has left its desktop: Windows would go back there.
+            if (GetForegroundWindow() == bar && Desktops.WindowDesktop(over) == _current) AppWindows.Activate(over);
             var front = GetForegroundWindow();
             Log.Write($"full-screen window active again: {(front == over ? "yes" : $"no, {ClassName(front)} is")}");
         }
