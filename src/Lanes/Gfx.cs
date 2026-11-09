@@ -99,32 +99,16 @@ sealed class Gfx : IDisposable
         Dc.Clear(clear);
     }
 
-    // The frame goes to the screen, and the live window pictures (DWM's, see Thumbnail) move
-    // once the graphics card has drawn it: DWM shows a frame Lanes drew at its first composition
-    // after the card is done with it, but moves the live pictures at the first one after it is
-    // told, so told at once they would be a frame ahead of what Lanes draws round them (their
-    // shadows) whenever the card is slow.
+    // The frame goes to the screen, then the live window pictures (DWM's, see Thumbnail) move:
+    // DWM moves them at its first composition after being told, but shows a frame Lanes drew
+    // only once it is handed over, so told while the frame was still being drawn they could run
+    // a frame ahead of what Lanes draws round them (their shadows).
     public void End()
     {
         Dc.EndDraw();
         _swap!.Present(1, PresentFlags.None);
         Frames.Add(System.Diagnostics.Stopwatch.GetTimestamp());
-        WaitForCard();
         Thumbnail.Release();
-    }
-
-    ID3D11Query? _drawn;
-
-    unsafe void WaitForCard()
-    {
-        var ctx = Device.ImmediateContext;
-        _drawn ??= Device.CreateQuery(new QueryDescription(QueryType.Event));
-        ctx.End(_drawn);
-        ctx.Flush();
-        long until = System.Diagnostics.Stopwatch.GetTimestamp() + System.Diagnostics.Stopwatch.Frequency / 30;
-        int done = 0;
-        while (ctx.GetData(_drawn, (IntPtr)(&done), 4, AsyncGetDataFlags.None).Code != 0 && System.Diagnostics.Stopwatch.GetTimestamp() < until)
-            Thread.Yield();
     }
 
     // When each frame was handed over, for the timing line in the log after each animation.
@@ -347,7 +331,6 @@ sealed class Gfx : IDisposable
         foreach (var b in _brushes.Values) b.Dispose();
         foreach (var f in _formats.Values) f.Dispose();
         _target?.Dispose();
-        _drawn?.Dispose();
         _swap?.Dispose();
         Dc.Dispose();
         _d2dDevice.Dispose();
