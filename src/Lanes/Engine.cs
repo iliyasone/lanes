@@ -642,6 +642,13 @@ sealed partial class Engine : IGestureSink
             else if (c0 - a0 >= a1 - c1) { a1 = c0; shadeEnd = true; }
             else { a0 = c1; shadeStart = true; }
         }
+        // Wholly under full-screen windows.
+        if (a1 - a0 < 0.5f)
+        {
+            t.Place(0, 0, 1, 1, 0);
+            foreach (var slice in _taskbarShade) slice.Place(0, 0, 1, 1, 0);
+            return;
+        }
         float step = 2.5f * _overlay.Scale, width = Shade.Length * step;
         float m0 = shadeStart ? a0 + width : a0, m1 = shadeEnd && !shadeStart ? a1 - width : a1;
         t.PlaceCut(x, y, f.Width, f.Height, m0, Math.Max(m0, m1), horizontal);
