@@ -616,8 +616,9 @@ sealed partial class Engine : IGestureSink
     // black and a little less faded than the last: the window's shadow, falling on the taskbar
     // from as far as `ShadeReach` away, darkest at the edge (`Shade` is how dark, 0..1).
     readonly List<Thumbnail> _taskbarShade = new();
-    static readonly float[] Shade = Enumerable.Range(0, 12).Select(i => 0.5f * MathF.Pow(1 - (i + 0.5f) / 12, 2)).ToArray();
-    const float ShadeReach = 64;
+    static readonly float[] Shade = Enumerable.Range(0, 16).Select(i => 0.5f * MathF.Pow(1 - (i + 0.5f) / 16, 2)).ToArray();
+    // Long enough that the taskbar darkens well before a window coming over it reaches it.
+    const float ShadeReach = 160;
 
     void PlaceTaskbar(float opacity)
     {
