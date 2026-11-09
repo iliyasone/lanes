@@ -303,7 +303,8 @@ sealed partial class Engine : IGestureSink
 
     void OnDesktopChanged()
     {
-        if (!Ready) return;
+        // Lanes' own switches are still going: it knows where it is going already.
+        if (!Ready || !_switching.IsCompleted) return;
         var now = Desktops.Current;
         // Lanes' own switches set _current first; any other (a taskbar button, Ctrl+Win+arrow)
         // leaves the open overview showing another desktop's windows: it closes.

@@ -31,12 +31,39 @@ sealed partial class Engine
     // When Windows last switched desktops; its "Desktop N" pill stays about two seconds.
     double _lastSwitchAt = -10;
 
-    // Every switch Lanes makes: Windows' pill is kept away first (see WindowsPill).
+    // Every switch Lanes makes: Windows' pill is kept away first (see WindowsPill). Windows takes
+    // a tenth of a second or more to switch and hand the focus over, which would hold up a frame
+    // of the swipe still moving, so switches run in order on a thread of their own; `_switching`
+    // completes when the last has, and Lanes' picture stays until then.
     void SwitchTo(Guid desktop)
     {
         WindowsPill.Hide();
-        if (!Desktops.Switch(desktop)) Log.Write("switch failed");
         _lastSwitchAt = Now;
+        var done = new TaskCompletionSource();
+        _switching = done.Task;
+        Switches.Add(() =>
+        {
+            try { if (!Desktops.Switch(desktop)) Log.Write("switch failed"); }
+            catch (Exception e) { Log.Write($"switch: {e.Message}"); }
+            done.SetResult();
+            // Over whatever Windows brought forward.
+            Post(() => { if (_overlay.Shown) _overlay.Place(); });
+        });
+    }
+
+    Task _switching = Task.CompletedTask;
+    static readonly System.Collections.Concurrent.BlockingCollection<Action> Switches = new();
+
+    static Engine()
+    {
+        var t = new Thread(() =>
+        {
+            // A message queue, which handing the focus over needs (AttachThreadInput).
+            MessageLoop.PeekMessage(out _, IntPtr.Zero, 0, 0, 0);
+            foreach (var job in Switches.GetConsumingEnumerable()) job();
+        }) { IsBackground = true, Name = "desktop switches" };
+        t.SetApartmentState(ApartmentState.STA);
+        t.Start();
     }
 
     void BeginSwitch(Axis axis)
@@ -140,7 +167,7 @@ sealed partial class Engine
         bool done = s.Spring.Done(t);
         if (done) s.Offset = s.Spring.Target;
         if (!done) return;
-        if (s.Switched && now - s.SwitchedAt < 0.2) return;
+        if (s.Switched && (now - s.SwitchedAt < 0.2 || !_switching.IsCompleted)) return;
         RenderSwitch();
         FinishSwitch();
     }

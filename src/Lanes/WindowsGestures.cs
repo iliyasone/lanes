@@ -40,7 +40,7 @@ static class WindowsGestures
             key.SetValue("ThreeFingerSlideEnabled", 65535, RegistryValueKind.DWord);
             foreach (var v in Values) key.SetValue(v, 0, RegistryValueKind.DWord);
             Apply();
-            Log.Write("Windows gestures: four-finger swipes and three-finger up/down handed to Lanes");
+            Log.Write("Windows gestures: four-finger and three-finger swipes handed to Lanes");
         }
         catch (Exception e) { Log.Write($"take over gestures: {e.Message}"); }
     }

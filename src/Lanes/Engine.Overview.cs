@@ -393,13 +393,15 @@ sealed partial class Engine
             double t = now - z.Start;
             z.Z = z.Spring.At(t);
             if (z.SwitchedAt < 0 && z.Z > 0.985) SwitchForZoom(z);
-            if (z.Spring.Done(t, 0.002) && now - z.SwitchedAt >= 0.2) FinishZoom();
+            if (z.Spring.Done(t, 0.002) && now - z.SwitchedAt >= 0.2 && _switching.IsCompleted) FinishZoom();
             return;
         }
         if (o.Spring == null) return;
         double st = now - o.SpringStart;
         o.P = o.Spring.At(st);
         if (!o.Spring.Done(st, 0.002)) return;
+        // Closing over a desktop Windows is still switching to: the picture waits for it.
+        if (o.Spring.Target < 0.5 && !_switching.IsCompleted) return;
         o.P = o.Spring.Target;
         o.Spring = null;
         if (o.P < 0.5) CloseOverviewNow();
