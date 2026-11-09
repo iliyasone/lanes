@@ -103,11 +103,15 @@ sealed class TaskbarButtons
     }
 
     // Windows' previews of the button's windows, up since the pointer rested on it, go: Lanes'
-    // map comes in their place (and Windows never sees the click that would close them).
+    // map comes in their place (and Windows never sees the click that would close them). They
+    // are a pop-up of the taskbar's own (a XAML one in Windows 11 24H2, a classic window before).
     static void HidePreviews()
     {
-        for (IntPtr h = IntPtr.Zero; (h = FindWindowEx(IntPtr.Zero, h, "TaskListThumbnailWnd", null)) != IntPtr.Zero;)
-            if (IsWindowVisible(h)) ShowWindowAsync(h, 0 /* SW_HIDE */);
+        if (FindWindowEx(IntPtr.Zero, IntPtr.Zero, "Shell_TrayWnd", null) is var tray && tray == IntPtr.Zero) return;
+        GetWindowThreadProcessId(tray, out uint shell);
+        foreach (var cls in new[] { "Xaml_WindowedPopupClass", "TaskListThumbnailWnd" })
+            for (IntPtr h = IntPtr.Zero; (h = FindWindowEx(IntPtr.Zero, h, cls, null)) != IntPtr.Zero;)
+                if (IsWindowVisible(h) && GetWindowThreadProcessId(h, out uint pid) != 0 && pid == shell) ShowWindowAsync(h, 0 /* SW_HIDE */);
     }
 
     static bool Held() => GetAsyncKeyState(0x10) < 0 || GetAsyncKeyState(0x11) < 0 || GetAsyncKeyState(0x12) < 0;
