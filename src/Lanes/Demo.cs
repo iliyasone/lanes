@@ -123,13 +123,14 @@ static class Demo
             await Task.Delay(900);
             Log.Write("lanes now: " + await LanesNow(engine));
 
-            // Drag the Research window onto the "+" at the end of the top lane: a new desktop there.
+            // Drag the Research window onto the place for a new desktop at the right end of the
+            // top lane: a new desktop there.
             var (tiles2, windows) = await engine.OverviewLayout();
             var researchWindow = windows.First(w => w.Title == "Research").Rect;
             var researchHandle = Application.OpenForms.Cast<Form>().First(f => f.Text == "Research").Handle;
             await PressAndPull(researchWindow, 40);
             (tiles2, _) = await engine.OverviewLayout();
-            var plus = tiles2.First(t => t.Kind == TileKind.Plus && t.Lane == 0).Rect;
+            var plus = tiles2.Where(t => t.Kind == TileKind.NewDesk && t.Lane == 0).MaxBy(t => t.Rect.X).Rect;
             await Glide(new Point(plus.Left + plus.Width / 2, plus.Top + plus.Height / 2));
             await Task.Delay(300);
             engine.Screenshot(Path.Combine(dir, "13-drag-window.png"));
