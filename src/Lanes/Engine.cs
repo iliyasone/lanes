@@ -122,7 +122,7 @@ sealed partial class Engine : IGestureSink
                 Desktops.Listen(_msg.Handle, WM_DESKTOP_CHANGED);
                 SetUpLanes();
                 Ready = true;
-                Buttons = new TaskbarButtons(app => Post(() => ShowApp(app)));
+                Buttons = new TaskbarButtons((app, taken) => Post(() => TaskbarClicked(app, taken)), app => Post(() => Hovered(app)));
             }
             else Status?.Invoke("This Windows version is not supported");
             PrepareWallpapers();
@@ -155,7 +155,7 @@ sealed partial class Engine : IGestureSink
                 else
                 {
                     // Faster while Lanes' pill is fading after a switch.
-                    MessageLoop.Wait(_map.Shown || _revealAt > 0 || WindowsPill.Hidden ? 15u : 200u);
+                    MessageLoop.Wait(_map.Shown || _revealAt > 0 || WindowsPill.Hidden || _hover != null || _overview is { App: not null } ? 15u : 200u);
                     if (!MessageLoop.Pump()) break;
                     Tick();
                     Idle();
@@ -194,6 +194,7 @@ sealed partial class Engine : IGestureSink
         double now = Now;
         if (_switch != null) StepSwitch(now);
         if (_overview != null) StepOverview(now);
+        StepHover(now);
         if (_retakeAt > 0 && now >= _retakeAt) Retake();
         if (_map.Shown && _switch == null) StepLingeringPill(now);
         // Explorer's pop-up window goes back once Windows' pill would be gone (it stays 2 to 2.5
@@ -790,20 +791,26 @@ sealed partial class Engine : IGestureSink
         return _tilePictures[desktop] = _gfx.Scaled(full, (int)w, (int)h, 8 * _overlay.Scale);
     }
 
-    // A desktop itself (wallpaper and icons) at a tile's size, for an app's map. Made between
-    // frames (MakeMapTile, as the tiles get their places): drawing it takes the drawing context.
+    // A desktop's picture in grey at a tile's size, for an app's map. Made between frames
+    // (MakeMapTile, as the tiles get their places): drawing it takes the drawing context.
     readonly Dictionary<Guid, (ID2D1Bitmap1 From, ID2D1Bitmap1 Small)> _mapTiles = new();
 
     void MakeMapTile(Guid desktop, float w, float h)
     {
-        if (DeskPicture(desktop) is not { } full || MapTile(desktop, w) != null) return;
+        if (Picture(desktop) is not { } full || MapTile(desktop, w) != null) return;
         if (_mapTiles.Remove(desktop, out var old)) old.Small.Dispose();
-        _mapTiles[desktop] = (full, _gfx.Scaled(full, (int)w, (int)h, 8 * _overlay.Scale));
+        using var small = _gfx.Scaled(full, (int)w, (int)h, 8 * _overlay.Scale);
+        _mapTiles[desktop] = (full, _gfx.Grey(small, MapGrey));
     }
+
+    const float MapGrey = 0.75f;
 
     // The one made, if it is still of that desktop's picture and of this size.
     ID2D1Bitmap1? MapTile(Guid desktop, float w) =>
-        _mapTiles.TryGetValue(desktop, out var t) && t.From == DeskPicture(desktop) && Math.Abs(t.Small.PixelSize.Width - (int)w) <= 1 ? t.Small : null;
+        _mapTiles.TryGetValue(desktop, out var t) && t.From == Picture(desktop) && Math.Abs(t.Small.PixelSize.Width - (int)w) <= 1 ? t.Small : null;
+
+    // The screen as it was, blurred, behind an app's map; made as the map opens.
+    ID2D1Bitmap1? _mapBlur;
 
     (ID2D1Bitmap1 Sharp, ID2D1Bitmap1 Blurred)? Wallpaper(Guid desktop)
     {

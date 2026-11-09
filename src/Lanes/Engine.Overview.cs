@@ -108,7 +108,9 @@ sealed partial class Engine
     {
         public Thumbnail Thumb = null!;
         public Box From, To;
-        public double Start;
+        public double Start, Time = LeaveTime;
+        // Minimized: it goes into its taskbar button, faster as it goes, and fades only there.
+        public bool Minimized;
     }
 
     // Two fingers sideways over another lane's row: the row slides (`Shift`, from its desktop
@@ -179,12 +181,13 @@ sealed partial class Engine
         // comes to the front when the overview closes there.
         public IntPtr? Raise;
         // Opened from an app's taskbar button: that app, whose windows are shown on a map of the
-        // desktops, and every other window there, as shapes in the tiles.
+        // desktops. It comes out of the taskbar's edge on a panel of frosted glass, from `Panel.Top`
+        // to `Panel.Bottom` (`Below`: up from a taskbar at the bottom of the screen); and since
+        // when the pointer has been off it and off the taskbar (0 while it is on them).
         public AppRef? App;
-        public readonly Dictionary<Guid, List<Box>> Others = new();
-        // Opened from the taskbar, the real taskbar shows through only once the pointer has left
-        // it (Windows would show the button's window previews over the overview).
-        public bool HoleWaits;
+        public bool Below;
+        public (double Top, double Bottom) Panel;
+        public double AwaySince;
         // The button over the window under the pointer that the pointer is on (see WindowButtons).
         public int Button = -1;
         // A window picked on another desktop: it comes to the front once Lanes is there.
@@ -214,7 +217,7 @@ sealed partial class Engine
         UseArea();
         var o = new OverviewState { Tracking = true, Track = new OverviewTrack(0, _tuning), LastStep = Now, App = app };
         Relayout(o, snap: true);
-        o.Page = NewPage(_current, o.Strip, app, o.Others);
+        o.Page = NewPage(_current, o.Strip, app);
         _overview = o;
         _gfx.Frames.Clear();
         _overlay.Place();
@@ -269,9 +272,20 @@ sealed partial class Engine
     void Relayout(OverviewState o, bool snap = false)
     {
         double spreadTop = o.Strip?.SpreadTop ?? double.NaN;
-        o.Strip = Strip.Layout(_lanes, o.Going ?? _current, _gfx.Width, _gfx.Height, _overlay.Scale, dragging: o.Drag != null,
-            offset: WorkTop, room: WorkBottom - WorkTop, bin: Desktops.Count > 1, open: o.Drag?.Open, dragged: o.Drag is { Window: < 0 } dd ? dd.Desktop : Guid.Empty,
+        Strip Layout(double offset) => Strip.Layout(_lanes, o.Going ?? _current, _gfx.Width, _gfx.Height, _overlay.Scale, dragging: o.Drag != null,
+            offset: offset, room: WorkBottom - WorkTop, bin: Desktops.Count > 1, open: o.Drag?.Open, dragged: o.Drag is { Window: < 0 } dd ? dd.Desktop : Guid.Empty,
             app: o.App != null);
+        o.Strip = Layout(WorkTop);
+        if (o.App != null)
+        {
+            // An app's map lies along the taskbar: down from it at the top of the screen, up from
+            // it at the bottom.
+            o.Below = TaskbarOn(_overlay.Monitor) is RECT bar && bar.Top + bar.Bottom > _overlay.Monitor.Height;
+            double top = o.Below ? WorkBottom - (o.Strip.Bottom - WorkTop) : 0;
+            if (o.Below) o.Strip = Layout(top);
+            o.Panel = (top, o.Below ? _gfx.Height : o.Strip.Bottom);
+            if (_mapBlur == null && Picture(_current) is { } screen) _mapBlur = _gfx.Blurred(screen, _gfx.Width / 10, _gfx.Height / 10, 3);
+        }
         if (snap) o.TileShown.Clear();
         foreach (var t in o.Strip.Tiles) o.TileShown.TryAdd(Key(t), t.Rect);
         o.TileShown.TryAdd(ColumnKey, o.Strip.Column);
@@ -295,10 +309,10 @@ sealed partial class Engine
         return new Box(72 * s, strip.SpreadTop, _gfx.Width - 144 * s, WorkBottom - strip.SpreadTop - 20 * s);
     }
 
-    Page MakePage(Guid desktop, Strip strip, AppRef? app = null, Dictionary<Guid, List<Box>>? others = null)
+    Page MakePage(Guid desktop, Strip strip, AppRef? app = null)
     {
         var page = new Page { Desktop = desktop, Map = app != null };
-        foreach (var (w, on) in PageWindows(desktop, app, others))
+        foreach (var (w, on) in PageWindows(desktop, app))
         {
             var (shadow, thumb) = Pictures(w.Handle);
             var from = FromOf(w);
@@ -312,21 +326,15 @@ sealed partial class Engine
     Box FromOf(AppWindow w) => new(w.Frame.Left - _overlay.Area.Left, w.Frame.Top - _overlay.Area.Top, w.Frame.Width, w.Frame.Height);
 
     // The windows a page shows, back to front: the desktop's; or, for one app's map, its windows
-    // on every desktop, and in `others` every other window there, as boxes on the screen.
-    List<(AppWindow W, Guid On)> PageWindows(Guid desktop, AppRef? app, Dictionary<Guid, List<Box>>? others = null)
+    // on every desktop.
+    List<(AppWindow W, Guid On)> PageWindows(Guid desktop, AppRef? app)
     {
         var area = _overlay.Area;
         var here = AppWindows.OnScreen(area, _overlay.Handle, desktop == _current ? null : desktop);
         if (app == null) return here.Select(w => (w, desktop)).ToList();
         var all = AppWindows.OnOtherDesktops(area, _overlay.Handle);
         all[desktop] = here;
-        var list = new List<(AppWindow, Guid)>();
-        others?.Clear();
-        foreach (var (d, windows) in all)
-            foreach (var w in windows)
-                if (AppIds.Is(w.Handle, app)) list.Add((w, d));
-                else if (others != null) (others.TryGetValue(d, out var l) ? l : others[d] = new()).Add(FromOf(w));
-        return list;
+        return all.SelectMany(d => d.Value.Where(w => AppIds.Is(w.Handle, app)).Select(w => (w, d.Key))).ToList();
     }
 
     // Each window's place in the spread; on one app's map, where it is.
@@ -336,11 +344,11 @@ sealed partial class Engine
     // A page, and the taskbar's place among the window pictures: over them, as on the screen,
     // except on a desktop with a full-screen window, which lies over the taskbar; opening the
     // overview there, the taskbar comes out from under the window as it shrinks.
-    Page NewPage(Guid desktop, Strip strip, AppRef? app = null, Dictionary<Guid, List<Box>>? others = null)
+    Page NewPage(Guid desktop, Strip strip, AppRef? app = null)
     {
         bool under = FullScreen(desktop);
         if (under) RaiseTaskbar();
-        var page = MakePage(desktop, strip, app, others);
+        var page = MakePage(desktop, strip, app);
         if (!under) RaiseTaskbar();
         return page;
     }
@@ -353,7 +361,7 @@ sealed partial class Engine
         o.App = app;
         // From the overview to an app's map or back, the tiles grow or shrink.
         if (resize) Relayout(o);
-        o.Page = NewPage(desktop, o.Strip, app, o.Others);
+        o.Page = NewPage(desktop, o.Strip, app);
         old.Dispose();
         o.Hover = -1;
         _redraw = true;
@@ -383,9 +391,7 @@ sealed partial class Engine
     {
         bool open = o.Open && o.Zoom == null;
         LiftTaskbar(open && FullScreen(_current));
-        var bar = TaskbarOn(_overlay.Monitor);
-        o.HoleWaits = open && o.App != null && bar is RECT r && PointerIn(r);
-        _overlay.Hole(open && !o.HoleWaits ? bar : null);
+        _overlay.Hole(open ? TaskbarOn(_overlay.Monitor) : null);
     }
 
     void NoHole()
@@ -516,12 +522,7 @@ sealed partial class Engine
                 // Only a new size: windows that changed places (see Drop) keep theirs in the spread.
                 var f = page.Windows[i].Frame;
                 if (Math.Abs(f.Width - w.Frame.Width) + Math.Abs(f.Height - w.Frame.Height) < 4) continue;
-                // Its picture leaves out the window's new borders.
-                page.Windows[i] = w;
-                page.From[i] = FromOf(w);
-                page.Shadows[i].Dispose();
-                page.Thumbs[i].Dispose();
-                (page.Shadows[i], page.Thumbs[i]) = Pictures(w.Handle);
+                NewShape(page, i, w);
                 reshaped = true;
                 continue;
             }
@@ -535,6 +536,16 @@ sealed partial class Engine
         o.Hover = -1;
         Respread(page, o.Strip, o);
         Log.Write($"overview: {page.Windows.Count} windows now{(came.Count > 0 ? $"; came: {string.Join(", ", came)}" : "")}{(went.Count > 0 ? $"; went: {string.Join(", ", went)}" : "")}{(reshaped ? "; a window took a new shape" : "")}");
+    }
+
+    // A window that took a new shape: its picture leaves out its new borders.
+    void NewShape(Page page, int i, AppWindow w)
+    {
+        page.Windows[i] = w;
+        page.From[i] = FromOf(w);
+        page.Shadows[i].Dispose();
+        page.Thumbs[i].Dispose();
+        (page.Shadows[i], page.Thumbs[i]) = Pictures(w.Handle);
     }
 
     // The windows left on the page take the room of one that went.
@@ -588,7 +599,7 @@ sealed partial class Engine
         var o = _overview!;
         Glide(o, now);
         for (int i = o.Leaving.Count - 1; i >= 0; i--)
-            if (now - o.Leaving[i].Start > LeaveTime)
+            if (now - o.Leaving[i].Start > o.Leaving[i].Time)
             {
                 o.Leaving[i].Thumb.Dispose();
                 o.Leaving.RemoveAt(i);
@@ -616,6 +627,7 @@ sealed partial class Engine
             LookAgain(o);
             if (_lifted != null) LiftTaskbar(true);
         }
+        if (o.App != null && o.Idle) StepAway(o, now);
         if (o.Swipe != null) StepInnerSwipe(now);
         if (o.Going is Guid going && o.Zoom == null)
         {
@@ -757,6 +769,8 @@ sealed partial class Engine
         o.Swipe?.PreviousPage?.Dispose();
         o.Swipe?.NextPage?.Dispose();
         foreach (var l in o.Leaving) l.Thumb.Dispose();
+        _mapBlur?.Dispose();
+        _mapBlur = null;
     }
 
     void ZoomInto(Guid target, Box from)
@@ -845,9 +859,10 @@ sealed partial class Engine
 
     // ---------- one app's windows, from its taskbar button ----------
 
-    // A click on an app's taskbar button (see TaskbarButtons): a map of the desktops drops down
-    // over the screen, with the app's windows where they are on each (see RenderMap); a click on
-    // one goes there. The same button again closes it; another app's shows that app's instead.
+    // The pointer resting on an app's taskbar button, or a click on it (see TaskbarButtons): a
+    // map of the desktops comes out of the taskbar, with the app's windows where they are on each
+    // (see RenderMap); a click on one goes there. Another app's button shows that app's instead,
+    // and the map goes once the pointer has left it and the taskbar (StepAway).
     void ShowApp(AppRef app)
     {
         if (!Ready || _switch != null) return;
@@ -856,11 +871,55 @@ sealed partial class Engine
             OpenOverview(app);
             return;
         }
-        if (!o.Idle) return;
-        if (o.App?.Id == app.Id) { CloseOverview(); return; }
+        if (!o.Idle || o.App?.Id == app.Id) return;
         ShowPage(o, _current, app);
         UpdateHole(o);
         Log.Write($"map of {app.Name} instead: {o.Page.Windows.Count} windows");
+    }
+
+    // A click on an app's button: Lanes took it (two or more windows) and shows the map; or
+    // Windows has it (it brings up the app's one window), and an open map goes.
+    void TaskbarClicked(AppRef app, bool taken)
+    {
+        _hover = null;
+        if (taken) ShowApp(app);
+        else if (_overview is { App: not null }) CloseOverview();
+    }
+
+    // The button the pointer is on, and since when: resting there a moment opens the map (as
+    // Windows' previews would come up), and once it is open, another app's button shows that
+    // app's windows sooner. Not over the overview, which a click on a button turns into the map.
+    AppRef? _hover;
+    double _hoverAt;
+    const double HoverTime = 0.45, OtherAppTime = 0.15;
+
+    void Hovered(AppRef? app)
+    {
+        _hover = app;
+        _hoverAt = Now;
+    }
+
+    void StepHover(double now)
+    {
+        if (_hover is not { } app || now - _hoverAt < (_overview == null ? HoverTime : OtherAppTime)) return;
+        _hover = null;
+        if (_overview is { App: null }) return;
+        ShowApp(app);
+    }
+
+    // The map goes once the pointer has been off it and off the taskbar for a moment.
+    void StepAway(OverviewState o, double now)
+    {
+        GetCursorPos(out var pt);
+        double x = pt.X - _overlay.Area.Left, y = pt.Y - _overlay.Area.Top, m = 24 * _overlay.Scale;
+        bool on = x >= 0 && x < _gfx.Width && (y >= o.Panel.Top - m && y < o.Panel.Bottom + m || TaskbarOn(_overlay.Monitor) is RECT bar && PointerIn(bar));
+        if (on) o.AwaySince = 0;
+        else if (o.AwaySince == 0) o.AwaySince = now;
+        else if (now - o.AwaySince > 0.3)
+        {
+            Log.Write("map closed: the pointer left it");
+            CloseOverview();
+        }
     }
 
     // ---------- four fingers inside the overview ----------
@@ -963,7 +1022,6 @@ sealed partial class Engine
     {
         var o = _overview;
         if (o is not { Open: true } || o.Swipe != null) return;
-        if (o.HoleWaits && TaskbarOn(_overlay.Monitor) is RECT bar && !PointerIn(bar)) UpdateHole(o);
         if (o.MenuFor != null)
         {
             int item = MenuItemAt(o, x, y);
@@ -1275,8 +1333,9 @@ sealed partial class Engine
     // ---------- a window's buttons ----------
 
     // Over the window under the pointer, at its top right corner, three round buttons as on its
-    // title bar, which in the overview is only a picture: minimize, maximize (or restore), close.
-    // Drawn above the window: Lanes cannot draw over a window's live picture.
+    // title bar, which in the overview is only a picture: minimize, full screen (or back from it,
+    // as the green button on a Mac), close. Drawn above the window: Lanes cannot draw over a
+    // window's live picture.
     Box[] WindowButtons(Box b)
     {
         float s = _overlay.Scale;
@@ -1309,24 +1368,50 @@ sealed partial class Engine
         var w = o.Page.Windows[window];
         if (button == 0)
         {
-            // Minimized windows are not in the overview: it leaves, the others take its room.
+            // Minimized windows are not in the overview: it goes into its taskbar button, and the
+            // others take its room.
             PostMessage(w.Handle, WM_SYSCOMMAND, (IntPtr)SC_MINIMIZE, IntPtr.Zero);
             Log.Write("window minimized");
-            TakeOff(o, window);
+            var from = o.Page.Shown[window];
+            o.Leaving.Add(new Leaving { Thumb = o.Page.Detach(window), From = from, To = IntoTaskbar(w.Handle, from), Start = Now, Time = MinimizeTime, Minimized = true });
+            o.Hover = -1;
+            o.Button = -1;
+            Respread(o.Page, o.Strip);
         }
         else if (button == 1)
         {
-            bool max = AppWindows.Maximized(w.Handle);
-            PostMessage(w.Handle, WM_SYSCOMMAND, (IntPtr)(max ? SC_RESTORE : SC_MAXIMIZE), IntPtr.Zero);
-            Log.Write(max ? "window restored" : "window maximized");
-            // It takes its new shape among the others in a moment (see LookAgain).
-            o.LastLook = Now - 0.3;
-            _redraw = true;
+            bool full = AppWindows.InFullScreen(w.Handle);
+            if (full) AppWindows.LeaveFullScreen(w.Handle);
+            else AppWindows.FullScreen(w.Handle);
+            Log.Write(full ? "window back from full screen" : "window in full screen");
+            // In full screen it comes to the front as the overview closes here.
+            if (!full) o.Raise = w.Handle;
+            NewShape(o.Page, window, w with { Frame = Frame(w.Handle) });
+            if (!FullScreen(o.Page.Desktop)) RaiseTaskbar();
+            o.Button = -1;
+            Respread(o.Page, o.Strip, o);
         }
         else CloseWindow(o, window);
+        _redraw = true;
     }
 
-    void DrawWindowButtons(Box b, bool maximized, int under, float alpha)
+    const double MinimizeTime = 0.35;
+
+    // Where a minimized window goes: into its app's taskbar button, as wide as the button's icon
+    // (else into the middle of the taskbar).
+    Box IntoTaskbar(IntPtr window, Box from)
+    {
+        var area = _overlay.Area;
+        double cx = _gfx.Width / 2.0, cy = _gfx.Height, w = 40 * _overlay.Scale;
+        if (Buttons?.Of(window) is { } b)
+            (cx, cy, w) = ((b.Rect.Left + b.Rect.Right) / 2.0 - area.Left, (b.Rect.Top + b.Rect.Bottom) / 2.0 - area.Top, b.Rect.Width * 0.6);
+        else if (TaskbarOn(_overlay.Monitor) is RECT bar)
+            (cx, cy, w) = ((bar.Left + bar.Right) / 2.0 + _overlay.Monitor.Left - area.Left, (bar.Top + bar.Bottom) / 2.0 + _overlay.Monitor.Top - area.Top, bar.Height * 0.6);
+        double h = w * from.H / Math.Max(1, from.W);
+        return new Box(cx - w / 2, cy - h / 2, w, h);
+    }
+
+    void DrawWindowButtons(Box b, bool full, int under, float alpha)
     {
         var g = _gfx;
         float s = _overlay.Scale;
@@ -1344,13 +1429,16 @@ sealed partial class Engine
             uint ink = A(0xFFFFFFFFu, alpha);
             float t = 1.25f * s;
             if (k == 0) g.Rect(cx - arm, cy - t / 2, 2 * arm, t, ink);
-            else if (k == 1 && !maximized) g.RoundRectOutline(cx - arm, cy - arm, 2 * arm, 2 * arm, 1.5f * s, ink, t);
             else if (k == 1)
             {
-                // Restore: two windows, one behind the other.
-                g.RoundRectOutline(cx - arm, cy - arm + 2 * s, 2 * arm - 2 * s, 2 * arm - 2 * s, 1.5f * s, ink, t);
-                g.Line(cx - arm + 2 * s, cy - arm, cx + arm - 1.5f * s, cy - arm, ink, t);
-                g.Line(cx + arm, cy - arm + 1.5f * s, cx + arm, cy + arm - 2 * s, ink, t);
+                // Full screen: four corners, pointing out; back from it, pointing in.
+                float l = 3 * s, c = full ? arm - l : arm, way = full ? -1 : 1;
+                foreach (var (dx, dy) in new[] { (-1, -1), (1, -1), (-1, 1), (1, 1) })
+                {
+                    float x0 = cx + dx * c, y0 = cy + dy * c;
+                    g.Line(x0, y0, x0 - dx * way * l, y0, ink, t);
+                    g.Line(x0, y0, x0, y0 - dy * way * l, ink, t);
+                }
             }
             else
             {
@@ -1685,13 +1773,14 @@ sealed partial class Engine
         }
         foreach (var l in o.Leaving)
         {
-            double t = Ease(Math.Clamp((Now - l.Start) / LeaveTime, 0, 1));
+            double u = Math.Clamp((Now - l.Start) / l.Time, 0, 1);
+            double t = l.Minimized ? (u < 0.5 ? 4 * u * u * u : 1 - Math.Pow(2 - 2 * u, 3) / 2) : Ease(u);
             var b = l.From.Lerp(l.To, t);
-            l.Thumb.Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, (float)(1 - t));
+            l.Thumb.Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, (float)(l.Minimized ? Math.Clamp((1 - u) / 0.3, 0, 1) : 1 - t));
         }
 
         if (o.Idle && o.Drag == null && o.Hover >= 0 && o.Hover < page.Shown.Count)
-            DrawWindowButtons(page.Shown[o.Hover], AppWindows.Maximized(page.Windows[o.Hover].Handle), o.Button, (float)page.Lift[o.Hover]);
+            DrawWindowButtons(page.Shown[o.Hover], AppWindows.InFullScreen(page.Windows[o.Hover].Handle), o.Button, (float)page.Lift[o.Hover]);
         if (o.MenuFor != null && o.Idle) DrawMenu(o);
         // Over a full-screen window the taskbar is not on the screen: it slides in from past its
         // edge as the window makes room for the overview, and back out as the overview closes
@@ -1709,11 +1798,11 @@ sealed partial class Engine
         g.End();
     }
 
-    // One app's map (from its taskbar button): the lane rows, about twice as big, slide down over
-    // the screen as it was, a little darker; nothing is blurred and nothing moves. Each desktop
-    // shows itself with every other window on it as a pale shape where it is (DrawMapTile), and
-    // the app's windows, live, where they are. The one under the pointer rises a little,
-    // outlined, its title in place of its desktop's name.
+    // One app's map (from its taskbar button): a panel of frosted glass slides out of the
+    // taskbar's edge over about half the screen, the rest of the screen as it was, a little darker.
+    // On the panel the lane rows, about twice as big as in the overview, every desktop in grey
+    // with the app's windows on it live and in colour, where they are; nothing else moves. The
+    // window under the pointer rises a little, outlined, its title in place of its desktop's name.
     void RenderMap(OverviewState o)
     {
         var g = _gfx;
@@ -1723,9 +1812,19 @@ sealed partial class Engine
         var page = o.Page;
         g.Begin(Gfx.Color(0xFF000000));
         if (Picture(_current) is { } screen) g.Image(screen, 0, 0, g.Width, g.Height);
-        g.Rect(0, 0, g.Width, g.Height, A(0xFF000000, 0.6f * pc));
+        g.Rect(0, 0, g.Width, g.Height, A(0xFF000000, 0.2f * pc));
         float sp = Math.Clamp(p / 0.6f, 0, 1), sq = 1 - MathF.Pow(1 - sp, 3);
-        float slide = MathF.Round((1 - sq) * -(float)(o.Strip.Bottom + 2 * s));
+        float slide = MathF.Round((1 - sq) * (float)(o.Panel.Bottom - o.Panel.Top) * (o.Below ? 1 : -1));
+        float top = (float)o.Panel.Top + slide, bottom = (float)o.Panel.Bottom + slide;
+        if (bottom > top)
+        {
+            // The glass lies over the screen as it is: what shows through it stays put as it slides.
+            g.Clip(0, top, g.Width, bottom - top);
+            if (_mapBlur != null) g.Image(_mapBlur, 0, 0, g.Width, g.Height);
+            g.Rect(0, top, g.Width, bottom - top, A(0xFF000000, 0.35f));
+            g.Unclip();
+            g.Rect(0, o.Below ? top : bottom - 1, g.Width, 1, 0x1FFFFFFF);
+        }
         if (keep > 0.002f) DrawStrip(o, keep, slide, 0, null, p);
         for (int i = 0; i < page.Thumbs.Count; i++)
         {
@@ -1748,24 +1847,11 @@ sealed partial class Engine
         g.End();
     }
 
-    // A desktop on an app's map: the desktop itself, wallpaper and icons, and every window on it
-    // that is not the app's as a pale translucent shape where it is.
-    void DrawMapTile(OverviewState o, Guid desktop, float x, float y, float w, float h, float alpha)
+    // A desktop on an app's map: its picture, windows and all, in grey (see MakeMapTile).
+    void DrawMapTile(Guid desktop, float x, float y, float w, float h, float alpha)
     {
-        var g = _gfx;
-        float s = _overlay.Scale;
-        if (MapTile(desktop, w) is { } small) g.Image(small, x, y, w, h, alpha);
-        else if (DeskPicture(desktop) is { } full) g.RoundImage(full, x, y, w, h, 8 * s, alpha);
-        if (!o.Others.TryGetValue(desktop, out var others)) return;
-        float kx = w / g.Width, ky = h / g.Height;
-        g.Clip(x, y, w, h);
-        foreach (var b in others)
-        {
-            float bx = x + (float)b.X * kx, by = y + (float)b.Y * ky, bw = (float)b.W * kx, bh = (float)b.H * ky;
-            g.RoundRect(bx, by, bw, bh, 2 * s, A(0x30FFFFFF, alpha));
-            g.RoundRectOutline(bx + 0.5f, by + 0.5f, bw - 1, bh - 1, 2 * s, A(0x59FFFFFF, alpha), 1);
-        }
-        g.Unclip();
+        if (MapTile(desktop, w) is { } small) _gfx.Image(small, x, y, w, h, alpha);
+        else if (Picture(desktop) is { } full) _gfx.RoundImage(full, x, y, w, h, 8 * _overlay.Scale, alpha);
     }
 
     // A window's frame shrunk into its desktop's picture in the rows, where the band is now.
@@ -1792,10 +1878,8 @@ sealed partial class Engine
         var column = o.TileShown.GetValueOrDefault(ColumnKey, strip.Column);
         if (!o.Page.Map) g.RoundRect((float)column.X, (float)column.Y + dy, (float)column.W, (float)column.H, 12 * s, A(0x0DFFFFFF, a));
         Box? ring = null, ringTo = null;
-        // On an app's map the desktops it has windows on stand out, and the window under the
-        // pointer gives its title in place of its desktop's name.
+        // On an app's map the window under the pointer gives its title in place of its desktop's name.
         var page = o.Page;
-        var withApp = page.Map ? page.On.ToHashSet() : null;
         Guid? pointed = page.Map && o.Hover >= 0 && o.Hover < page.On.Count ? page.On[o.Hover] : null;
         foreach (var t in strip.Tiles)
         {
@@ -1850,9 +1934,8 @@ sealed partial class Engine
             if (t.Desktop == toward) ringTo = new Box(x, y, w, h);
             // A desktop being dragged leaves a faint place behind.
             float ta = drag != null && drag.Window < 0 && drag.Desktop == t.Desktop ? a * 0.3f : a;
-            if (withApp != null && !withApp.Contains(t.Desktop)) ta *= 0.6f;
             g.Shadow(x, y, w, h, 8 * s, 18 * s, 6 * s, 0.4f * ta);
-            if (page.Map) DrawMapTile(o, t.Desktop, x, y, w, h, ta);
+            if (page.Map) DrawMapTile(t.Desktop, x, y, w, h, ta);
             else DrawTilePicture(t.Desktop, x, y, w, h, ta);
             g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, 8 * s, A(page.Map ? 0x2EFFFFFFu : 0x1FFFFFFFu, ta), 1);
             if (targeted) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xFFFFFFFF, a), 2.5f * s);
@@ -1872,8 +1955,7 @@ sealed partial class Engine
                 g.Rect(fx + 8 * s + nw + 1, fy + 4 * s, 1.5f * s, fh - 8 * s, A(0xFFFFFFFF, ta));
                 continue;
             }
-            // On an app's map every desktop would be named after that app: its own name instead.
-            string title = t.Desktop == pointed ? page.Windows[o.Hover].Title : page.Map ? WindowsName(t.Desktop) : Title(t.Desktop);
+            string title = t.Desktop == pointed ? page.Windows[o.Hover].Title : Title(t.Desktop);
             float cw = Math.Min(g.TextWidth(title, capFont), w);
             g.Text(title, capFont, x + (w - cw) / 2, y + h + 6 * s, cw, 18 * s, A(0xFFE6E6E6, ta));
         }

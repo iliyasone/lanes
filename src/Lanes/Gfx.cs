@@ -150,6 +150,38 @@ sealed class Gfx : IDisposable
         return bmp;
     }
 
+    // A small copy, w x h, blurred by `sigma` of its own pixels: drawn stretched over the screen
+    // it reads as frosted glass. Call between frames only.
+    public ID2D1Bitmap1 Blurred(ID2D1Bitmap1 src, int w, int h, float sigma)
+    {
+        using var small = Scaled(src, w, h);
+        using var blur = new Vortice.Direct2D1.Effects.GaussianBlur(Dc) { StandardDeviation = sigma, BorderMode = BorderMode.Hard };
+        blur.SetInput(0, small, true);
+        return Through(blur, w, h);
+    }
+
+    // A grey copy, `light` as bright (0..1). Call between frames only.
+    public ID2D1Bitmap1 Grey(ID2D1Bitmap1 src, float light)
+    {
+        float r = 0.2126f * light, g = 0.7152f * light, b = 0.0722f * light;
+        using var grey = new Vortice.Direct2D1.Effects.ColorMatrix(Dc) { Matrix = new Matrix5x4(r, r, r, 0, g, g, g, 0, b, b, b, 0, 0, 0, 0, 1, 0, 0, 0, 0) };
+        grey.SetInput(0, src, true);
+        return Through(grey, src.PixelSize.Width, src.PixelSize.Height);
+    }
+
+    ID2D1Bitmap1 Through(ID2D1Effect effect, int w, int h)
+    {
+        var bmp = Dc.CreateBitmap(new SizeI(Math.Max(1, w), Math.Max(1, h)), IntPtr.Zero, 0,
+            new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, D2DAlpha.Premultiplied), 96, 96, BitmapOptions.Target));
+        Dc.Target = bmp;
+        Dc.BeginDraw();
+        Dc.Clear(new Color4(0, 0, 0, 0));
+        Dc.DrawImage(effect.Output, null, null, Vortice.Direct2D1.InterpolationMode.Linear, CompositeMode.SourceOver);
+        Dc.EndDraw();
+        Dc.Target = _target;
+        return bmp;
+    }
+
     // Draws into memory instead of the screen: `draw` uses the overlay's coordinates, and the
     // pixels returned are the w x h of them from (x, y), premultiplied. Call between frames only.
     (int W, int H, ID2D1Bitmap1 Target, ID2D1Bitmap1 Cpu)? _offscreen;

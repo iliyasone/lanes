@@ -131,7 +131,67 @@ static class AppWindows
         if (joined) AttachThreadInput(me, front, false);
     }
 
-    public static bool Maximized(IntPtr hwnd) => IsZoomed(hwnd);
+    // Windows put in full screen with the overview's button, as with the green button on a Mac:
+    // without their frame, over the whole monitor and the taskbar, the way Chrome goes full
+    // screen. What each had before (styles, place, maximized) is kept in a file, so it comes back
+    // even after Lanes restarted.
+    static readonly string FullFile = Path.Combine(Log.Dir, "full-screen.txt");
+    static Dictionary<IntPtr, (long Style, long Ex, RECT Rect, bool Max)>? _full;
+
+    static Dictionary<IntPtr, (long Style, long Ex, RECT Rect, bool Max)> Full
+    {
+        get
+        {
+            if (_full != null) return _full;
+            _full = new();
+            try
+            {
+                if (File.Exists(FullFile))
+                    foreach (var line in File.ReadAllLines(FullFile))
+                    {
+                        var v = line.Split(' ').Select(long.Parse).ToArray();
+                        if (IsWindow((IntPtr)v[0])) _full[(IntPtr)v[0]] = (v[1], v[2], new RECT((int)v[3], (int)v[4], (int)v[5], (int)v[6]), v[7] != 0);
+                    }
+            }
+            catch (Exception e) { Log.Write($"full-screen windows: {e.Message}"); }
+            return _full;
+        }
+    }
+
+    static void SaveFull()
+    {
+        try { File.WriteAllLines(FullFile, Full.Select(f => $"{(long)f.Key} {f.Value.Style} {f.Value.Ex} {f.Value.Rect.Left} {f.Value.Rect.Top} {f.Value.Rect.Right} {f.Value.Rect.Bottom} {(f.Value.Max ? 1 : 0)}")); }
+        catch (Exception e) { Log.Write($"full-screen windows: {e.Message}"); }
+    }
+
+    public static bool InFullScreen(IntPtr hwnd) => Full.ContainsKey(hwnd);
+
+    const long WS_CAPTION = 0x00C00000, WS_THICKFRAME = 0x00040000, FrameEx = 0x1 | 0x100 | 0x200 | 0x20000; // dialog, window, client and static edges
+    const uint SWP_FRAMECHANGED = 0x20, SMTO_ABORTIFHUNG = 2;
+
+    public static void FullScreen(IntPtr hwnd)
+    {
+        bool max = IsZoomed(hwnd);
+        if (max) SendMessageTimeout(hwnd, WM_SYSCOMMAND, (IntPtr)SC_RESTORE, IntPtr.Zero, SMTO_ABORTIFHUNG, 1000, out _);
+        GetWindowRect(hwnd, out var r);
+        long style = GetWindowLongPtr(hwnd, GWL_STYLE).ToInt64(), ex = GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64();
+        Full[hwnd] = (style, ex, r, max);
+        SaveFull();
+        SetWindowLongPtr(hwnd, GWL_STYLE, (IntPtr)(style & ~(WS_CAPTION | WS_THICKFRAME)));
+        SetWindowLongPtr(hwnd, GWL_EXSTYLE, (IntPtr)(ex & ~FrameEx));
+        var m = MonitorOf(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)).Monitor;
+        SetWindowPos(hwnd, IntPtr.Zero, m.Left, m.Top, m.Width, m.Height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    }
+
+    public static void LeaveFullScreen(IntPtr hwnd)
+    {
+        if (!Full.Remove(hwnd, out var was)) return;
+        SaveFull();
+        SetWindowLongPtr(hwnd, GWL_STYLE, (IntPtr)was.Style);
+        SetWindowLongPtr(hwnd, GWL_EXSTYLE, (IntPtr)was.Ex);
+        SetWindowPos(hwnd, IntPtr.Zero, was.Rect.Left, was.Rect.Top, was.Rect.Width, was.Rect.Height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        if (was.Max) SendMessageTimeout(hwnd, WM_SYSCOMMAND, (IntPtr)SC_MAXIMIZE, IntPtr.Zero, SMTO_ABORTIFHUNG, 1000, out _);
+    }
 
     // Two windows change places, each keeping its size (see Spread.Trade). A maximized one stays
     // as it is, and the other goes to the middle of the screen.

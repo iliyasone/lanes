@@ -9,11 +9,11 @@ namespace Lanes;
 // An app as the taskbar groups its windows: the id Windows gives it (see AppIds) and its name.
 sealed record AppRef(string Id, string Name);
 
-// A click on an app's taskbar button opens the overview with just that app's windows, from
-// every desktop, when it has two or more (Windows would show their small previews); as a Mac
-// shows an app's windows. A click with Shift, Ctrl or Alt held, any other mouse button, and a
-// click on an app with one window go to Windows as before, and so does a press that becomes a
-// drag (Lanes hands it back to Windows where it was).
+// The pointer resting on an app's taskbar button, where Windows would show small previews of
+// its windows (Lanes turns them off, see TaskbarSetting), shows Lanes' map of the desktops with
+// that app's windows; so does a click on an app with two or more windows. A click with Shift,
+// Ctrl or Alt held, any other mouse button, and a click on an app with one window go to Windows
+// as before, and so does a press that becomes a drag (Lanes hands it back to Windows where it was).
 //
 // Windows draws its taskbar itself. Which button is where, Lanes reads through UI Automation
 // (each button's "Appid: ..." and place) whenever the pointer comes over the taskbar, on a
@@ -23,7 +23,11 @@ sealed class TaskbarButtons
 {
     public sealed record Button(AppRef App, RECT Rect, int Windows);
 
-    readonly Action<AppRef> _clicked;
+    // A click on an app's button: whether Lanes took it (or Windows has it).
+    readonly Action<AppRef, bool> _clicked;
+    // The app whose button the pointer came onto, or null as it leaves the buttons.
+    readonly Action<AppRef?> _hovered;
+    string? _over;
     volatile Button[] _buttons = Array.Empty<Button>();
     volatile RECT[] _bars = Array.Empty<RECT>();
     long _readAt;
@@ -35,9 +39,10 @@ sealed class TaskbarButtons
     IntPtr _hook;
     HookProc? _proc;
 
-    public TaskbarButtons(Action<AppRef> clicked)
+    public TaskbarButtons(Action<AppRef, bool> clicked, Action<AppRef?> hovered)
     {
         _clicked = clicked;
+        _hovered = hovered;
         var reader = new Thread(ReadLoop) { IsBackground = true, Name = "taskbar buttons" };
         reader.SetApartmentState(ApartmentState.STA);
         reader.Start();
@@ -79,21 +84,26 @@ sealed class TaskbarButtons
                                 ThreadPool.QueueUserWorkItem(_ => Press(held.At));
                             }
                         }
-                        else Near(m.Pt);
+                        else
+                        {
+                            Near(m.Pt);
+                            Over(m.Pt);
+                        }
                         break;
                     case WM_LBUTTONDOWN:
-                        if (!Held() && At(m.Pt) is { Windows: >= 2 } b)
+                        if (Held() || At(m.Pt) is not { } b) break;
+                        if (b.Windows >= 2)
                         {
                             _pressed = (b, m.Pt);
-                            HidePreviews();
                             return 1;
                         }
+                        _clicked(b.App, false);
                         break;
                     case WM_LBUTTONUP:
                         if (_pressed is { } click)
                         {
                             _pressed = null;
-                            _clicked(click.Button.App);
+                            _clicked(click.Button.App, true);
                             return 1;
                         }
                         break;
@@ -102,16 +112,14 @@ sealed class TaskbarButtons
         return CallNextHookEx(_hook, code, wParam, lParam);
     }
 
-    // Windows' previews of the button's windows, up since the pointer rested on it, go: Lanes'
-    // map comes in their place (and Windows never sees the click that would close them). They
-    // are a pop-up of the taskbar's own (a XAML one in Windows 11 24H2, a classic window before).
-    static void HidePreviews()
+    // The pointer came onto an app's button, or left the buttons (a pinned app with no windows
+    // counts as none, and so does any while something is dragged over the taskbar).
+    void Over(POINT pt)
     {
-        if (FindWindowEx(IntPtr.Zero, IntPtr.Zero, "Shell_TrayWnd", null) is var tray && tray == IntPtr.Zero) return;
-        GetWindowThreadProcessId(tray, out uint shell);
-        foreach (var cls in new[] { "Xaml_WindowedPopupClass", "ThumbnailDeviceHelperWnd", "TaskListThumbnailWnd" })
-            for (IntPtr h = IntPtr.Zero; (h = FindWindowEx(IntPtr.Zero, h, cls, null)) != IntPtr.Zero;)
-                if (IsWindowVisible(h) && GetWindowThreadProcessId(h, out uint pid) != 0 && pid == shell) ShowWindowAsync(h, 0 /* SW_HIDE */);
+        var app = GetAsyncKeyState(0x01) >= 0 && At(pt) is { Windows: >= 1 } b ? b.App : null;
+        if (app?.Id == _over) return;
+        _over = app?.Id;
+        _hovered(app);
     }
 
     static bool Held() => GetAsyncKeyState(0x10) < 0 || GetAsyncKeyState(0x11) < 0 || GetAsyncKeyState(0x12) < 0;
@@ -217,6 +225,9 @@ sealed class TaskbarButtons
         }).ToArray();
     }
 
+    // The button of `window`'s app, as last read.
+    public Button? Of(IntPtr window) => _buttons.FirstOrDefault(b => AppIds.Is(window, b.App));
+
     // For the demo run: reads the taskbar now and gives the button of `window`'s app.
     public async Task<Button?> ButtonOf(IntPtr window)
     {
@@ -236,7 +247,6 @@ sealed class TaskbarButtons
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vk);
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT pt);
     [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
-    [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr hwnd, int cmd);
 }
 
 // The id Windows groups an app's windows by on the taskbar ("Chrome", "Telegram.TelegramDesktop",

@@ -290,43 +290,64 @@ static class Demo
         mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
     }
 
-    // The test windows' taskbar button (they are all one program's): the pointer rests on it a
-    // moment, as a hand does, and Windows shows its previews of the windows; a click, and Lanes'
-    // map of the desktops comes in their place, with the windows where they are. The one on the
-    // Agent desktop clicked, Lanes goes there and brings it to the front.
+    // The test windows' taskbar button (they are all one program's): with Windows' previews
+    // turned off as Lanes does, the pointer resting on it brings up Lanes' map of the desktops,
+    // with the windows where they are, and the map goes once the pointer leaves it. The one on
+    // the Agent desktop clicked, Lanes goes there and brings it to the front.
     static async Task AppOverview(Engine engine, string dir, Guid editor, Guid agent)
     {
         Desktops.Switch(editor);
         await Task.Delay(2500);
         engine.Snapshot();
         await Task.Delay(400);
+        Log.Write($"app map: previews turned off now: {TaskbarSetting.PreviewsOff()}");
+        await Task.Delay(1000);
         var mine = Application.OpenForms.Cast<Form>().First(f => f.Text == "Editor").Handle;
         var button = engine.Buttons == null ? null : await engine.Buttons.ButtonOf(mine);
         if (button == null) { Log.Write("app map: no taskbar button found for the test windows"); return; }
         var r = button.Rect;
         Log.Write($"app map: the test windows' button is \"{button.App.Name}\" ({button.App.Id}) at {r.Left},{r.Top} {r.Width}x{r.Height}, {button.Windows} windows");
-        var before = TopWindows();
         int cx = (r.Left + r.Right) / 2, cy = (r.Top + r.Bottom) / 2;
-        SetCursorPos(cx - 20, cy);
-        for (int i = 0; i < 20; i++) { mouse_event(0x1, 1, 0, 0, IntPtr.Zero); await Task.Delay(20); }
-        await Task.Delay(1500);
-        var previews = TopWindows().Where(w => !before.Contains(w)).ToList();
-        Log.Write($"app map: with the pointer on the button, Windows shows: {(previews.Count == 0 ? "nothing new" : string.Join(", ", previews.Select(Describe)))}");
-        // What is where the previews are (above the button), front to back.
-        var spot = new Native.POINT { X = cx, Y = r.Top - 80 };
-        string Over() => string.Join(", ", TopWindows().Where(h => Native.GetWindowRect(h, out var wr) && wr.Left <= spot.X && spot.X < wr.Right && wr.Top <= spot.Y && spot.Y < wr.Bottom)
-            .Take(6).Select(h => { Native.GetWindowRect(h, out var wr); Native.GetWindowThreadProcessId(h, out uint pid); string p = ""; try { p = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName; } catch { } return $"{Native.ClassName(h)} ({p}) {wr.Left},{wr.Top} {wr.Width}x{wr.Height}"; }));
-        Log.Write($"app map: over the previews' place: {Over()}; under the pointer there: {Describe(Native.GetAncestor(WindowFromPoint(spot), 2))}");
-        engine.Screenshot(Path.Combine(dir, "18c-windows-previews.png"));
-        mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
-        await Task.Delay(60);
-        mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
-        await Task.Delay(1300);
-        Log.Write($"app map: Windows' previews after the click: {(previews.Count == 0 ? "there were none" : string.Join(", ", previews.Select(h => $"{Native.ClassName(h)} {(Native.IsWindowVisible(h) ? "STILL SHOWN" : "gone")}")))}; over their place: {Over()}");
+        // Rests on the button: whether Windows' previews come up, and whether Lanes' map does.
+        async Task<bool> Rest(string shot)
+        {
+            var before = TopWindows();
+            SetCursorPos(cx - 20, cy);
+            for (int i = 0; i < 20; i++) { mouse_event(0x1, 1, 0, 0, IntPtr.Zero); await Task.Delay(20); }
+            await Task.Delay(1500);
+            var previews = TopWindows().Where(w => !before.Contains(w) && Native.ClassName(w) is "Xaml_WindowedPopupClass" or "ThumbnailDeviceHelperWnd" or "TaskListThumbnailWnd").ToList();
+            var (_, shown) = await engine.OverviewLayout();
+            Log.Write($"app map: resting on the button, Windows' previews: {(previews.Count == 0 ? "none" : string.Join(", ", previews.Select(Describe)))}; Lanes' map: {(shown.Count == 0 ? "NOT OPEN" : string.Join(", ", shown.Select(w => $"{w.Title} {w.Rect.Width}x{w.Rect.Height}")))}");
+            engine.Screenshot(Path.Combine(dir, shot));
+            await Task.Delay(300);
+            return previews.Count > 0;
+        }
+        bool previewsShown = await Rest("18c-map-on-hover.png");
+        // The pointer goes up the screen, away from the map and the taskbar.
+        SetCursorPos(cx, 120);
+        mouse_event(0x1, 0, 1, 0, IntPtr.Zero);
+        await Task.Delay(1200);
+        Log.Write($"app map: after the pointer left it, it is {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STILL OPEN")}");
+        if (previewsShown)
+        {
+            TaskbarSetting.RestartExplorer();
+            await Task.Delay(4000);
+            Log.Write($"after Explorer restarted: {Desktops.Count} desktops, on desktop {Desktops.IndexOf(Desktops.Current) + 1}");
+            button = await engine.Buttons!.ButtonOf(mine);
+            if (button == null) { Log.Write("app map: no taskbar button after Explorer restarted"); return; }
+            r = button.Rect;
+            (cx, cy) = ((r.Left + r.Right) / 2, (r.Top + r.Bottom) / 2);
+            await Rest("18c-map-on-hover-after-restart.png");
+        }
+        else
+        {
+            SetCursorPos(cx - 20, cy);
+            for (int i = 0; i < 20; i++) { mouse_event(0x1, 1, 0, 0, IntPtr.Zero); await Task.Delay(20); }
+            await Task.Delay(1500);
+        }
         engine.Screenshot(Path.Combine(dir, "18-app-overview.png"));
-        var (_, shown) = await engine.OverviewLayout();
-        Log.Write("app map shows: " + string.Join(", ", shown.Select(w => $"{w.Title} {w.Rect.Width}x{w.Rect.Height}")));
-        var other = shown.FirstOrDefault(w => w.Title == "Agent").Rect;
+        var (_, windows) = await engine.OverviewLayout();
+        var other = windows.FirstOrDefault(w => w.Title == "Agent").Rect;
         if (other.Width == 0) return;
         _pointer = new Point(cx, cy);
         await Glide(new Point(other.Left + other.Width / 2, other.Top + other.Height / 2));
@@ -352,7 +373,8 @@ static class Demo
         return $"{Native.ClassName(h)} \"{Native.WindowText(h)}\" {f.Left},{f.Top} {f.Width}x{f.Height}";
     }
 
-    // The buttons over a window in the overview: maximize, then restore, then minimize Notes.
+    // The buttons over a window in the overview: Notes to full screen and back, then minimized
+    // into its taskbar button (a picture as it goes).
     static async Task WindowButtons(Engine engine, string dir, Guid editor)
     {
         Desktops.Switch(editor);
@@ -360,6 +382,7 @@ static class Demo
         engine.Snapshot();
         await Task.Delay(400);
         var notes = Application.OpenForms.Cast<Form>().First(f => f.Text == "Notes");
+        var was = notes.Bounds;
         await Swipe(engine, 3, 0, -1, 0.28 * 0.7);
         await Task.Delay(1500);
         async Task<List<Rectangle>> Hover()
@@ -372,25 +395,31 @@ static class Demo
             await Task.Delay(400);
             return await engine.HoverButtons();
         }
-        async Task Press(List<Rectangle> buttons, int k)
+        async Task Press(List<Rectangle> buttons, int k, int wait = 1500)
         {
             var b = buttons[k];
             await Glide(new Point(b.Left + b.Width / 2, b.Top + b.Height / 2));
             await Task.Delay(300);
             Click(b.Left + b.Width / 2, b.Top + b.Height / 2);
-            await Task.Delay(1500);
+            await Task.Delay(wait);
         }
         var buttons = await Hover();
         if (buttons.Count != 3) { Log.Write("window buttons: none over Notes"); return; }
         engine.Screenshot(Path.Combine(dir, "4d-window-buttons.png"));
         await Press(buttons, 1);
-        Log.Write($"window buttons: after maximize, Notes is {(AppWindows.Maximized(notes.Handle) ? "maximized" : "NOT MAXIMIZED")}");
-        engine.Screenshot(Path.Combine(dir, "4e-after-maximize.png"));
+        var screen = Screen.FromHandle(notes.Handle).Bounds;
+        Log.Write($"window buttons: after full screen, Notes is at {notes.Bounds} ({(notes.Bounds == screen ? "the whole screen" : "NOT THE WHOLE SCREEN")}), {(AppWindows.InFullScreen(notes.Handle) ? "in" : "NOT IN")} full screen");
         buttons = await Hover();
+        engine.Screenshot(Path.Combine(dir, "4e-full-screen.png"));
         if (buttons.Count == 3) await Press(buttons, 1);
-        Log.Write($"window buttons: after restore, Notes is {(AppWindows.Maximized(notes.Handle) ? "STILL MAXIMIZED" : "back to its size")}");
+        Log.Write($"window buttons: back from full screen, Notes is at {notes.Bounds} ({(notes.Bounds == was ? "where it was" : $"NOT WHERE IT WAS, {was}")})");
         buttons = await Hover();
-        if (buttons.Count == 3) await Press(buttons, 0);
+        if (buttons.Count == 3)
+        {
+            await Press(buttons, 0, 120);
+            engine.Screenshot(Path.Combine(dir, "4f-minimizing.png"));
+            await Task.Delay(1400);
+        }
         Log.Write($"window buttons: after minimize, Notes is {(Native.IsIconic(notes.Handle) ? "minimized" : "NOT MINIMIZED")}; the overview shows {(await engine.OverviewLayout()).Windows.Count} windows");
         await Swipe(engine, 3, 0, 1, 0.28 * 0.8);
         await Task.Delay(1500);

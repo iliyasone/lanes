@@ -102,8 +102,10 @@ are on, in the middle: what is above and below you reads at a glance.
   anywhere else springs back to its place. The window you dragged comes to the front as the
   overview closes.
 - **The window under the pointer** is outlined and gets three round buttons over its top right
-  corner, as on its title bar (which in the overview is only a picture): minimize (it leaves
-  the overview), maximize or restore (it takes its new shape among the others), and close.
+  corner, as on its title bar (which in the overview is only a picture): minimize (it flies
+  into its app's taskbar button), full screen, as the green button on a Mac (the window loses
+  its frame and covers the whole screen and the taskbar; pressed again, it comes back as it
+  was), and close.
 
 ![A window's buttons in the overview](docs/screenshots/4d-window-buttons.png)
 - **Middle-click** a window to close it, or a desktop to close the desktop (its windows go to
@@ -112,16 +114,18 @@ are on, in the middle: what is above and below you reads at a glance.
   go there (the overview zooms into it); **click +** for a new desktop at the end of your lane.
 - **Esc**, a click on empty space or **three fingers down** close it.
 
-**Click an app on the taskbar** that has two windows or more (on any desktops), and in place
-of Windows' row of previews a map of your desktops drops down over the screen, which stays as
-it is, darker. The lanes are as in the overview, about twice as big; each desktop
-shows the app's windows, live, exactly where they are on it, and every other window as a pale
-shape, so you see where each one is. Desktops without the app's windows are dimmed. The
-pointer over a window lifts it a little and outlines it, and its desktop's name gives way to
-the window's title. Click a window to go to it (on another desktop, the map zooms into that
-desktop first), a desktop to go there; the same button again, Esc or a click elsewhere closes
-the map. An app with one window, a click with Shift, Ctrl or Alt held, the middle button and
-dragging a button along the taskbar work as in Windows.
+**Rest the pointer on an app on the taskbar** (Lanes turns Windows' small previews there off;
+the first time, Explorer restarts for it), or click one that has two windows or more, and a
+map of your desktops comes out of the taskbar on a panel of frosted glass over about half the
+screen. The lanes are as in the overview, with the same names, about twice as big; every
+desktop is in grey, and the app's windows on it are live and in colour, exactly where they
+are, so you see at once where each one is. The pointer over a window lifts it a little and
+outlines it, and its desktop's name gives way to the window's title; over another app's
+button, the map shows that app instead. Click a window to go to it (on another desktop, the
+map zooms into that desktop first), a desktop to go there; the map goes once the pointer
+leaves it and the taskbar, or with Esc. A click on an app with one window, a click with Shift,
+Ctrl or Alt held, the middle button and dragging a button along the taskbar work as in
+Windows.
 
 ![One app's windows on a map of the desktops](docs/screenshots/18-app-overview.png)
 
