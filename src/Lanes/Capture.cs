@@ -27,6 +27,55 @@ static class Capture
         return p;
     }
 
+    [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr hwnd, IntPtr dc, uint flags);
+    [DllImport("user32.dll")] static extern bool IsHungAppWindow(IntPtr hwnd);
+
+    // A picture of a desktop you are not on: its wallpaper with its windows' own pictures over
+    // it, back to front. Windows keeps what each window last showed while its desktop is hidden,
+    // and PrintWindow hands that over. A window that hands over nothing (not drawn since it
+    // opened) is left out. `wallpaper` is the size of `monitor`.
+    public static Pixels Composed(Pixels wallpaper, IReadOnlyList<AppWindow> windows, RECT monitor)
+    {
+        int mw = monitor.Width, mh = monitor.Height;
+        var p = new Pixels(mw, mh);
+        unsafe { Buffer.MemoryCopy((void*)wallpaper.Data, (void*)p.Data, (long)mw * mh * 4, (long)mw * mh * 4); }
+        IntPtr screen = GetDC(IntPtr.Zero), mem = CreateCompatibleDC(screen);
+        foreach (var w in windows)
+        {
+            if (IsHungAppWindow(w.Handle) || !GetWindowRect(w.Handle, out var wr) || wr.Width <= 0 || wr.Height <= 0) continue;
+            var bi = new BITMAPINFOHEADER { Size = Marshal.SizeOf<BITMAPINFOHEADER>(), Width = wr.Width, Height = -wr.Height, Planes = 1, BitCount = 32 };
+            IntPtr dib = CreateDIBSection(mem, ref bi, 0, out IntPtr bits, IntPtr.Zero, 0);
+            if (dib == IntPtr.Zero) continue;
+            IntPtr old = SelectObject(mem, dib);
+            if (PrintWindow(w.Handle, mem, 2 /* PW_RENDERFULLCONTENT */))
+            {
+                // Only the visible frame: the window's rectangle has invisible borders for resizing.
+                var f = w.Frame;
+                int l = Math.Max(f.Left, monitor.Left), t = Math.Max(f.Top, monitor.Top);
+                int r = Math.Min(f.Right, monitor.Right), b = Math.Min(f.Bottom, monitor.Bottom);
+                unsafe
+                {
+                    uint* src = (uint*)bits, dst = (uint*)p.Data;
+                    long lit = 0, seen = 0;
+                    for (int y = t; y < b; y += 16)
+                        for (int x = l; x < r; x += 16, seen++)
+                            if ((src[(long)(y - wr.Top) * wr.Width + (x - wr.Left)] & 0xFFFFFF) > 0x0A0A0A) lit++;
+                    if (seen > 0 && lit * 50 > seen)
+                        for (int y = t; y < b; y++)
+                        {
+                            uint* from = src + (long)(y - wr.Top) * wr.Width + (l - wr.Left), to = dst + (long)(y - monitor.Top) * mw + (l - monitor.Left);
+                            for (int x = 0; x < r - l; x++) to[x] = from[x] | 0xFF000000;
+                        }
+                }
+            }
+            SelectObject(mem, old);
+            DeleteObject(dib);
+        }
+        DeleteDC(mem);
+        ReleaseDC(IntPtr.Zero, screen);
+        return p;
+    }
+
     // Windows that stay live over Lanes' animations, such as a status pill shown on every
     // desktop. Right before a picture of the screen, Lanes sends the registered message
     // "Lanes.ScreenPicture" with wParam 1 to each visible topmost window. A window that wants to

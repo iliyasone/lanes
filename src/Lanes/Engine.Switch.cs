@@ -207,20 +207,25 @@ sealed partial class Engine
     // The bottom of the screen above the taskbar, in the overlay's own coordinates.
     float WorkBottom => _overlay.Work.Bottom - _overlay.Area.Top;
 
-    // Lanes' pill, in the place of Windows' "Desktop N" one: the lanes in miniature, each lane a
-    // row of its desktops, the rows centred on one grid. A blue cell is where you are and your
-    // lane is lighter. The pill keeps its size and place; the blue cell follows the fingers to the
-    // desktop the swipe goes to, and the lighter row goes with it to another lane. Windows' volume
+    // Lanes' pill, in the place of Windows' "Desktop N" one: the overview's lanes in miniature.
+    // As there, each lane lies with the desktop it would take you to in the middle column, where
+    // the blue cell is, and your lane is lighter. A sideways swipe slides your lane under the
+    // blue cell; one up or down carries the blue cell, and the lighter row, straight to the next
+    // lane. The pill is as wide as the longest lane could need either way, so it keeps its size
+    // and place. Windows' volume
     // or brightness pop-up shows in the same place: the pill then stands beside it. Should Windows'
     // pill come up anyway (Lanes could not find its window), Lanes' one goes above it.
     sealed record Pill(float X, float Y, float W, float H);
 
     const float Cell = 14, CellH = 9, CellGap = 3, PillPad = 12;
 
+    // Columns in the pill: the longest lane can lie fully to either side of the middle one.
+    int PillColumns => 2 * Math.Max(1, _lanes.Lanes.Max(l => l.Desktops.Count)) - 1;
+
     Pill PillFor()
     {
         float s = _overlay.Scale;
-        int n = _lanes.Lanes.Count, cols = Math.Max(1, _lanes.Lanes.Max(l => l.Desktops.Count));
+        int n = _lanes.Lanes.Count, cols = PillColumns;
         float w = MathF.Round((cols * Cell + (cols - 1) * CellGap + 2 * PillPad) * s);
         float h = MathF.Round((n * CellH + (n - 1) * CellGap + 2 * PillPad) * s);
         float bottom = WorkBottom - (WindowsPill.Available ? 13 : 77) * s;
@@ -236,13 +241,11 @@ sealed partial class Engine
 
     float? _pillX, _pillAside;
 
-    // Where desktop `i` of lane `l` is drawn in the pill.
-    (float X, float Y) CellAt(Pill p, int l, float i)
+    // Where the cell in `column` of lane `l` is drawn in the pill.
+    (float X, float Y) CellAt(Pill p, int l, float column)
     {
         float s = _overlay.Scale;
-        int cols = Math.Max(1, _lanes.Lanes.Max(x => x.Desktops.Count));
-        int indent = (cols - _lanes.Lanes[l].Desktops.Count) / 2;
-        return (p.X + (PillPad + (indent + i) * (Cell + CellGap)) * s, p.Y + (PillPad + l * (CellH + CellGap)) * s);
+        return (p.X + (PillPad + column * (Cell + CellGap)) * s, p.Y + (PillPad + l * (CellH + CellGap)) * s);
     }
 
     // The pill during a swipe: `k` (0..1) is how far it has gone toward the desktop it would land on.
@@ -252,8 +255,8 @@ sealed partial class Engine
         DrawPill(p, sw.From, f < 0 ? sw.Next : f > 0 ? sw.Previous : null, Math.Abs(f), -f, alpha);
     }
 
-    // `stretch` moves the blue cell along your lane when there is no desktop to go to (the
-    // picture's give at a lane's end).
+    // `stretch` moves your lane a little when there is no desktop to go to (the picture's give
+    // at a lane's end).
     void DrawPill(Pill p, Guid from, Guid? toward, float k, float stretch, float alpha)
     {
         var g = _gfx;
@@ -262,20 +265,24 @@ sealed partial class Engine
         g.RoundRect(p.X + 1, p.Y + 1, p.W - 2, p.H - 2, 7 * s, A(0xF52C2C2C, alpha));
         if (_lanes.Locate(from) is not var (fromLane, fromIndex)) return;
         var (toLane, toIndex) = toward is Guid t && _lanes.Locate(t) is var (tl, ti) ? (tl, ti) : (fromLane, fromIndex);
+        float middle = (PillColumns - 1) / 2f;
+        // Your lane's shift, in columns: toward the next desktop along it, or the give at its end.
+        float slide = toward == null ? -stretch : toLane == fromLane ? -(toIndex - fromIndex) * k : 0;
         for (int l = 0; l < _lanes.Lanes.Count; l++)
         {
+            var desks = _lanes.Lanes[l].Desktops;
+            int anchor = l == fromLane ? fromIndex : Math.Max(0, desks.IndexOf(_lanes.CurrentOf(l) ?? Guid.Empty));
             float light = toLane == fromLane ? (l == fromLane ? 1 : 0) : l == fromLane ? 1 - k : l == toLane ? k : 0;
             uint colour = A(0xFFFFFFFF, (0x24 + (0x59 - 0x24) * light) / 255f);
-            for (int i = 0; i < _lanes.Lanes[l].Desktops.Count; i++)
+            for (int i = 0; i < desks.Count; i++)
             {
-                var (x, y) = CellAt(p, l, i);
+                var (x, y) = CellAt(p, l, middle + i - anchor + (l == fromLane ? slide : 0));
                 g.RoundRect(x, y, cell, cellH, 2.5f * s, A(colour, alpha));
             }
         }
-        var a = CellAt(p, fromLane, fromIndex);
-        var b = toward != null ? CellAt(p, toLane, toIndex) : CellAt(p, fromLane, fromIndex + stretch);
-        float m = toward != null ? k : 1;
-        g.RoundRect(a.X + (b.X - a.X) * m, a.Y + (b.Y - a.Y) * m, cell, cellH, 2.5f * s, A(0xFF4CC2FF, alpha));
+        var a = CellAt(p, fromLane, middle);
+        var b = CellAt(p, toLane, middle);
+        g.RoundRect(a.X, a.Y + (b.Y - a.Y) * k, cell, cellH, 2.5f * s, A(0xFF4CC2FF, alpha));
     }
 
     // After a swipe (one that went back too) or a desktop picked in the overview, the pill stays

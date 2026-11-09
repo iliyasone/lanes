@@ -119,6 +119,7 @@ sealed partial class Engine : IGestureSink
             }
             else Status?.Invoke("This Windows version is not supported");
             PrepareWallpapers();
+            ComposeMissing();
         }
         catch (Exception e)
         {
@@ -510,6 +511,45 @@ sealed partial class Engine : IGestureSink
         var px = (Capture.FromBitmap(full), Capture.Blurred(full), path);
         lock (_wallpaperPixels) _wallpaperPixels[desktop] = px;
         return px;
+    }
+
+    // Pictures of the desktops Lanes has none of (it just started), made from their windows (see
+    // Capture.Composed), so the first swipe to one shows it as it is rather than its bare
+    // wallpaper. A real picture replaces each once you are there.
+    void ComposeMissing()
+    {
+        if (!Ready) return;
+        var monitor = _overlay.Monitor;
+        var jobs = Desktops.All().Where(d => d != _current && !_snapshots.ContainsKey(d))
+            .Select(d => (Desktop: d, Windows: AppWindows.OnScreen(monitor, _overlay.Handle, d))).ToList();
+        if (jobs.Count == 0) return;
+        Task.Run(() =>
+        {
+            long t0 = Environment.TickCount64;
+            foreach (var (d, windows) in jobs)
+                try
+                {
+                    (Pixels Sharp, Pixels Blurred, string? Path) wall;
+                    bool have;
+                    lock (_wallpaperPixels) have = _wallpaperPixels.TryGetValue(d, out wall);
+                    if (!have || wall.Sharp.Width != monitor.Width || wall.Sharp.Height != monitor.Height) wall = MakeWallpaper(d, monitor);
+                    var picture = Capture.Composed(wall.Sharp, windows, monitor);
+                    var front = windows.Count > 0 ? windows[^1] : null;
+                    bool full = front != null && front.Frame.Left <= monitor.Left && front.Frame.Top <= monitor.Top
+                        && front.Frame.Right >= monitor.Right && front.Frame.Bottom >= monitor.Bottom;
+                    Post(() =>
+                    {
+                        if (_snapshots.ContainsKey(d)) { picture.Dispose(); return; }
+                        _snapshots[d] = picture;
+                        if (_bitmaps.Remove(d, out var bmp)) bmp.Dispose();
+                        if (_tilePictures.Remove(d, out var tile)) tile.Dispose();
+                        _fullScreen[d] = full;
+                        if (front != null) _appOf.TryAdd(d, front.App);
+                    });
+                }
+                catch (Exception e) { Log.Write($"picture of desktop {Desktops.IndexOf(d) + 1}: {e.Message}"); }
+            Log.Write($"pictures of {jobs.Count} desktops made from their windows in {Environment.TickCount64 - t0} ms");
+        });
     }
 
     // Makes the wallpapers ahead of time, and again for a desktop whose picture file changed
