@@ -511,8 +511,9 @@ sealed partial class Engine
             int i = page.Windows.FindIndex(x => x.Handle == w.Handle);
             if (i >= 0)
             {
+                // Only a new size: windows that changed places (see Drop) keep theirs in the spread.
                 var f = page.Windows[i].Frame;
-                if (Math.Abs(f.Left - w.Frame.Left) + Math.Abs(f.Top - w.Frame.Top) + Math.Abs(f.Right - w.Frame.Right) + Math.Abs(f.Bottom - w.Frame.Bottom) < 4) continue;
+                if (Math.Abs(f.Width - w.Frame.Width) + Math.Abs(f.Height - w.Frame.Height) < 4) continue;
                 // Its picture leaves out the window's new borders.
                 page.Windows[i] = w;
                 page.From[i] = FromOf(w);
