@@ -46,8 +46,13 @@ sealed partial class Engine
             try { if (!Desktops.Switch(desktop)) Log.Write("switch failed"); }
             catch (Exception e) { Log.Write($"switch: {e.Message}"); }
             done.SetResult();
-            // Over whatever Windows brought forward.
-            Post(() => { if (_overlay.Shown) _overlay.Place(); });
+            // Over whatever Windows brought forward; the overview looks at the windows again a
+            // moment later, once Windows has shown the new desktop's.
+            Post(() =>
+            {
+                if (_overlay.Shown) _overlay.Place();
+                if (_overview != null) _overview.LastLook = Now;
+            });
         });
     }
 
@@ -236,9 +241,10 @@ sealed partial class Engine
         // come to rest, so there is none on the desktop the swipe lands on.
         PlaceTaskbar(horizontal, covers, Math.Clamp(Math.Min(Math.Abs(o), page - Math.Abs(o)) / (0.1f * page), 0, 1));
         g.End();
-        // Lanes' pill stays put over both desktops, in its own window above the live pictures.
+        // Lanes' pill stays put over both desktops, in its own window above the live pictures;
+        // it comes up from below as it shows.
         float hud = HudAlpha(s);
-        ShowPill(p => DrawPill(s, p, hud));
+        ShowPill(p => DrawPill(s, p, hud), (1 - (float)Ease(hud)) * PillRise * _overlay.Scale);
 
         void Draw(ID2D1Bitmap1 bmp, float at)
         {
@@ -275,7 +281,7 @@ sealed partial class Engine
 
     const float EdgeReach = 24;
 
-    // Lanes' pill comes in quickly as a swipe starts, and stays after it (see LingerPill).
+    // Lanes' pill comes in quickly as a swipe starts, rising a little, and stays after it (see LingerPill).
     float HudAlpha(SwitchState s) => (float)Math.Clamp((Now - s.Start) / 0.12, 0, 1);
 
     // The bottom of the screen above the taskbar, in the overlay's own coordinates.
@@ -386,16 +392,19 @@ sealed partial class Engine
     // over the desktop as long as Windows' own would (about two seconds), in a small window of
     // its own, then fades.
     const double PillStays = 2.0, PillFades = 0.25;
+    const float PillRise = 16;
     double _pillSince;
+    float _pillGone;
     Action<Pill>? _pillDraw;
 
     // The pill in its small window of its own, above the overlay and the live window pictures
-    // DWM draws over everything Lanes draws there.
-    void ShowPill(Action<Pill> draw)
+    // DWM draws over everything Lanes draws there; `down` below its place.
+    void ShowPill(Action<Pill> draw, float down = 0)
     {
         var p = PillFor();
         using var pixels = _gfx.Offscreen((int)p.X, (int)p.Y, (int)p.W, (int)p.H, () => draw(p));
-        _map.Show(pixels, _overlay.Area.Left + (int)p.X, _overlay.Area.Top + (int)p.Y);
+        _map.Show(pixels, _overlay.Area.Left + (int)p.X, _overlay.Area.Top + (int)(p.Y + down));
+        _pillGone = 0;
     }
 
     void LingerPill(Action<Pill> draw, double since)
@@ -409,19 +418,28 @@ sealed partial class Engine
 
     void LingerPill(SwitchState s) => LingerPill(p => DrawPill(s, p, HudAlpha(s)), s.Switched ? s.SwitchedAt : Now);
 
+    // Once its time is up the pill goes down out of sight as it fades; the overview opening
+    // takes it down the same way with the fingers (the overview has the lanes itself), and
+    // whichever is further on wins: a swipe up given up halfway brings it back while its time lasts.
     void StepLingeringPill(double now)
     {
         double t = now - _pillSince;
-        if (t >= PillStays + PillFades)
+        double overview = _overview is { } o ? (o.Zoom != null || o.Swipe != null ? 1 : o.P / 0.5) : 0;
+        float gone = (float)Math.Clamp(Math.Max((t - PillStays) / PillFades, overview), 0, 1);
+        if (gone >= 1)
         {
             _map.Hide();
             _pillX = _pillAside = null;
             return;
         }
-        if (t > PillStays) _map.Fade((float)(1 - (t - PillStays) / PillFades));
         float before = _pillX ?? 0;
         var p = PillFor();
-        if (Math.Abs(p.X - before) >= 0.5f) _map.Move(_overlay.Area.Left + (int)p.X, _overlay.Area.Top + (int)p.Y);
+        if (gone != _pillGone) _map.Fade(1 - gone);
+        if (Math.Abs(p.X - before) >= 0.5f || gone != _pillGone)
+            _map.Move(_overlay.Area.Left + (int)p.X, _overlay.Area.Top + (int)(p.Y + gone * (p.H + 13 * _overlay.Scale)));
+        _pillGone = gone;
+        // Over the overview, which comes up in front of it.
+        if (_overview != null) _map.Raise();
     }
 
     static uint A(uint argb, float alpha) => ((uint)Math.Clamp((argb >> 24) * alpha, 0, 255) << 24) | (argb & 0xFFFFFF);

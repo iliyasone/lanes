@@ -104,10 +104,20 @@ static class AppWindows
         return name.Length > 0 ? name : WindowText(hwnd);
     }
 
-    // Brings a window to the front; Windows allows it because Lanes just got the click.
+    // Brings a window to the front. Windows allows that after a click Lanes got, but not always
+    // after a gesture (the overview closed with three fingers), so Lanes joins the input of the
+    // window in front for that moment, as the desktop switch does.
     public static void Activate(IntPtr hwnd)
     {
         if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+        uint me = GetCurrentThreadId(), front = GetWindowThreadProcessId(GetForegroundWindow(), out _);
+        bool joined = front != 0 && front != me && AttachThreadInput(me, front, true);
+        BringWindowToTop(hwnd);
         SetForegroundWindow(hwnd);
+        if (joined) AttachThreadInput(me, front, false);
     }
+
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] static extern bool AttachThreadInput(uint from, uint to, bool attach);
+    [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr hwnd);
 }

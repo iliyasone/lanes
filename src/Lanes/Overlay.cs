@@ -221,6 +221,8 @@ sealed class MapWindow : NativeWindow
 
     public void Move(int x, int y) => SetWindowPos(Handle, IntPtr.Zero, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 
+    public void Raise() => SetWindowPos(Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
     public void Fade(float alpha)
     {
         var blend = new BLENDFUNCTION { SourceConstantAlpha = (byte)Math.Clamp(alpha * 255, 0, 255), AlphaFormat = 1 };

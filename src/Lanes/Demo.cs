@@ -118,7 +118,8 @@ static class Demo
             (tiles, _) = await engine.OverviewLayout();
             var newLane = tiles.Last(t => t.Kind == TileKind.NewLane).Rect;
             await Glide(new Point(newLane.Left + newLane.Width / 2, newLane.Top + newLane.Height / 2));
-            await Task.Delay(300);
+            await Task.Delay(400);
+            engine.Screenshot(Path.Combine(dir, "12a-drag-desktop-new-lane.png"));
             Release();
             await Task.Delay(900);
             Log.Write("lanes now: " + await LanesNow(engine));
@@ -129,6 +130,18 @@ static class Demo
             var researchWindow = windows.First(w => w.Title == "Research").Rect;
             var researchHandle = Application.OpenForms.Cast<Form>().First(f => f.Text == "Research").Handle;
             await PressAndPull(researchWindow, 40);
+            (tiles2, _) = await engine.OverviewLayout();
+            // Held a moment by the gap between two desktops of a lane, it opens a place there;
+            // moved on, the place closes.
+            var pair = tiles2.Where(t => t.Kind == TileKind.Desktop).GroupBy(t => t.Lane).Select(g => g.OrderBy(t => t.Rect.X).ToList()).FirstOrDefault(r => r.Count >= 2);
+            if (pair != null)
+            {
+                await Glide(new Point((pair[0].Rect.Right + pair[1].Rect.Left) / 2, pair[0].Rect.Top + pair[0].Rect.Height / 2));
+                await Task.Delay(700);
+                engine.Screenshot(Path.Combine(dir, "13a-drag-window-between.png"));
+                await Glide(new Point(pair[0].Rect.Left + pair[0].Rect.Width / 2, pair[0].Rect.Bottom + 200));
+                await Task.Delay(500);
+            }
             (tiles2, _) = await engine.OverviewLayout();
             var plus = tiles2.Where(t => t.Kind == TileKind.NewDesk && t.Lane == 0).MaxBy(t => t.Rect.X).Rect;
             await Glide(new Point(plus.Left + plus.Width / 2, plus.Top + plus.Height / 2));

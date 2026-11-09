@@ -35,7 +35,8 @@ taskbar comes out from under the window with the window's light shadow on it, wh
 the window's edge leaves the taskbar and as the desktops come to rest.
 
 At the bottom, in the place of Windows' "Desktop N" pill (which Lanes keeps away), a small
-map of the lanes moves with the fingers and stays as long as Windows' pill would: the blue
+map of the lanes rises in, moves with the fingers and stays as long as Windows' pill would,
+then goes down out of sight (or with the fingers, if they open the overview first): the blue
 cell is where you are and your lane stands out from the others; a sideways swipe slides your
 lane under the blue cell, one up or down carries it to the next lane. The map, like Windows'
 pop-ups, is light or dark as Windows is (Settings → Personalization → Colors). When Windows'
@@ -84,15 +85,17 @@ are on, in the middle: what is above and below you reads at a glance.
 - **Four fingers** move to the next desktop or lane as they do outside it, and the overview
   stays: the windows of the next desktop slide in with the fingers, your lane slides under
   the blue ring (or the ring moves to the next lane), and Windows switches when you let go.
-- **Drag a desktop** to another place in its lane or into another lane; a blue bar shows
-  where it goes. While you drag, thin bars come in above the top lane and below the bottom
-  one, and dropping there makes a **New lane** for it; nothing moves to make room. A lane
-  left without desktops goes away.
+- **Drag a desktop** to another place in its lane or into another lane. As you pick it up,
+  thin bars come in on every side: above the top lane and below the bottom one (a **New
+  lane**) and at both ends of each lane. Wherever you hold it, its place opens: the desktops
+  beside it move apart, or the lanes below a new lane move down and the band grows, and a
+  blue block grows where it will go. A lane left without desktops goes away.
 - **Drag a window** onto a desktop to move it there (it shrinks into that desktop's
-  picture), onto the thin bar at either end of a lane's row for a new desktop there, onto
-  **+** for a new desktop at the end of your lane, or above or below the lanes for a new lane
-  with it. A window let go anywhere else springs back to its place, and comes to the front
-  as the overview closes.
+  picture). Held over a bar, at a lane's end or above or below the lanes, it opens a place
+  there for a new desktop (or lane) with it, the same way; held a moment by the gap between
+  two desktops, it opens one between them. **+** also takes it, for a new desktop at the end
+  of your lane. A window let go anywhere else springs back to its place, and comes to the
+  front as the overview closes.
 - **Middle-click** a window to close it, or a desktop to close the desktop (its windows go to
   the desktop next to it), as in Task View.
 - **Click a window** to bring it to the front and close the overview; **click a desktop** to

@@ -18,9 +18,12 @@ public readonly record struct DeskDrop(int Lane, int Index, bool NewLane);
 // run off the screen's sides when long. One "+" in the top right corner adds a desktop at the
 // end of your lane; a bin just below it (`bin`: there is more than one desktop) takes a
 // desktop dropped on it and closes it. While something is dragged, the room above the rows and
-// the room below them take it into a new lane there; while a window is dragged, the room at
-// each end of a row takes it to a new desktop there. Nothing moves to make that room: it shows
-// as a thin bar (Bar) where the new lane or desktop would go.
+// the room below them take it into a new lane there, and the room at each end of a row to a
+// new desktop there: thin bars (Bar) show those places, and nothing moves for them. The place
+// the dragged thing is held over (`open`) opens: the rows below a new lane move down a row and
+// the band grows; in a row, the desktops past the place, on the side away from the middle
+// column, move a step out. A block (Opened) then stands where the new lane's or desktop's
+// first desktop will be.
 public sealed class Strip
 {
     public List<StripTile> Tiles { get; } = new();
@@ -33,6 +36,10 @@ public sealed class Strip
     public double Gap { get; private set; }
     public double RowGap { get; private set; }
     public double Caption { get; private set; }
+    // The place opened, where the new desktop would be, and its slot (the room it takes for
+    // what is held over it): a NewLane tile, or a NewDesk tile whose Index is where in the lane.
+    public Box? Opened { get; private set; }
+    public StripTile? OpenedSlot { get; private set; }
     readonly List<double> _rowY = new();
     double _column, _pad;
 
@@ -40,8 +47,10 @@ public sealed class Strip
 
     // Tiles have the screen's shape (`width` x `height`); the rows start `offset` down from its
     // top and take about a third of the `room` below that (by default the whole height), as the
-    // Spaces bar does in Mission Control, leaving the rest to the windows.
-    public static Strip Layout(LaneMap map, Guid current, double width, double height, double s, bool dragging = false, double offset = 0, double? room = null, bool bin = false, bool window = false)
+    // Spaces bar does in Mission Control, leaving the rest to the windows. `open` is counted as
+    // DropFor counts it, without the `dragged` desktop.
+    public static Strip Layout(LaneMap map, Guid current, double width, double height, double s, bool dragging = false,
+        double offset = 0, double? room = null, bool bin = false, DeskDrop? open = null, Guid dragged = default)
     {
         var strip = new Strip();
         int n = map.Lanes.Count;
@@ -49,29 +58,59 @@ public sealed class Strip
         double tw = 160 * s, aspect = height / width, limit = (room ?? height) * 0.36;
         double Height(double w) => n * (w * aspect + caption) + (n - 1) * rowGap;
         while (tw > 96 * s && pad + Height(tw) > limit) tw -= 4 * s;
-        double th = tw * aspect, rowH = th + caption;
+        double th = tw * aspect, rowH = th + caption, step = tw + gap, rowStep = rowH + rowGap;
         double column = (width - tw) / 2;
         strip.TileW = tw; strip.TileH = th; strip.Gap = gap; strip.RowGap = rowGap; strip.Caption = caption;
         strip._column = column;
         strip._pad = pad;
         double y0 = top;
+        int newLane = dragging && open is { NewLane: true } nl ? Math.Clamp(nl.Lane, 0, n) : -1;
+        double RowTop(int l) => y0 + (l + (newLane >= 0 && l >= newLane ? 1 : 0)) * rowStep;
+        double rowsEnd = y0 + (n + (newLane >= 0 ? 1 : 0)) * rowStep - rowGap;
+        if (newLane >= 0)
+        {
+            // The new lane's row, and the room it takes: the whole row, and for one at an edge
+            // of the rows the room past it that opened it.
+            double y = y0 + newLane * rowStep;
+            double from = newLane == 0 ? 0 : newLane == n ? y - rowGap - caption : y - rowGap / 2;
+            double to = y + rowH + (newLane == n ? pad : rowGap / 2);
+            strip.Opened = new Box(column, y, tw, th);
+            strip.OpenedSlot = new StripTile(TileKind.NewLane, newLane, 0, Guid.Empty, new Box(0, from, width, to - from));
+        }
         // Above the rows, up to the top of the screen.
-        if (dragging) strip.Tiles.Add(new StripTile(TileKind.NewLane, 0, 0, Guid.Empty, new Box(0, 0, width, top)));
+        if (dragging) strip.Tiles.Add(newLane == 0 ? strip.OpenedSlot! : new StripTile(TileKind.NewLane, 0, 0, Guid.Empty, new Box(0, 0, width, top)));
         for (int l = 0; l < n; l++)
         {
             var lane = map.Lanes[l];
             Guid anchor = lane.Desktops.Contains(current) ? current : map.CurrentOf(l) ?? Guid.Empty;
-            int c = Math.Max(0, lane.Desktops.IndexOf(anchor));
-            double y = y0 + l * (rowH + rowGap), x = column - c * (tw + gap);
+            int c = Math.Max(0, lane.Desktops.IndexOf(anchor)), k = lane.Desktops.Count;
+            double y = RowTop(l), x0 = column - c * step;
             strip._rowY.Add(y);
-            if (dragging && window) strip.Tiles.Add(new StripTile(TileKind.NewDesk, l, 0, Guid.Empty, new Box(x - gap - slot, y, slot, th)));
-            for (int i = 0; i < lane.Desktops.Count; i++, x += tw + gap)
-                strip.Tiles.Add(new StripTile(TileKind.Desktop, l, i, lane.Desktops[i], new Box(x, y, tw, th)));
-            if (dragging && window) strip.Tiles.Add(new StripTile(TileKind.NewDesk, l, lane.Desktops.Count, Guid.Empty, new Box(x, y, slot, th)));
+            // A place opened in this row, before the desktop at `at` (counting the dragged one).
+            int at = -1;
+            if (dragging && open is { NewLane: false } o && o.Lane == l)
+            {
+                int p = lane.Desktops.IndexOf(dragged);
+                at = Math.Clamp(p >= 0 && o.Index >= p ? o.Index + 1 : o.Index, 0, k);
+            }
+            double X(int i) => x0 + i * step + (at < 0 ? 0 : at > c ? (i >= at ? step : 0) : (i < at ? -step : 0));
+            if (at >= 0)
+            {
+                // Its room: the block and the gaps beside it, and the edge of the desktop next to
+                // the gap it opened from, so it stays open while held where it opened.
+                double gx = x0 + (at > c ? at : at - 1) * step, from = x0 + at * step - gap / 2;
+                double left = Math.Min(gx - gap / 2, from - Near(gap, tw)), right = Math.Max(gx + tw + gap / 2, from + Near(gap, tw));
+                strip.Opened = new Box(gx, y, tw, th);
+                strip.OpenedSlot = new StripTile(TileKind.NewDesk, l, at, Guid.Empty, new Box(left, y, right - left, th));
+                strip.Tiles.Add(strip.OpenedSlot);
+            }
+            if (dragging && at != 0) strip.Tiles.Add(new StripTile(TileKind.NewDesk, l, 0, Guid.Empty, new Box(X(0) - gap - slot, y, slot, th)));
+            for (int i = 0; i < k; i++)
+                strip.Tiles.Add(new StripTile(TileKind.Desktop, l, i, lane.Desktops[i], new Box(X(i), y, tw, th)));
+            if (dragging && at != k) strip.Tiles.Add(new StripTile(TileKind.NewDesk, l, k, Guid.Empty, new Box(X(k - 1) + step, y, slot, th)));
         }
-        double rowsEnd = y0 + n * (rowH + rowGap) - rowGap;
         // Below the last row's desktops, past their names to the band's edge.
-        if (dragging) strip.Tiles.Add(new StripTile(TileKind.NewLane, n, 0, Guid.Empty, new Box(0, rowsEnd - caption, width, caption + pad)));
+        if (dragging) strip.Tiles.Add(newLane == n ? strip.OpenedSlot! : new StripTile(TileKind.NewLane, n, 0, Guid.Empty, new Box(0, rowsEnd - caption, width, caption + pad)));
         strip.Tiles.Add(new StripTile(TileKind.Plus, map.Locate(current)?.Lane ?? 0, 0, Guid.Empty, new Box(width - 28 * s - plus, top, plus, plus)));
         if (bin) strip.Tiles.Add(new StripTile(TileKind.Trash, 0, 0, Guid.Empty, new Box(width - 28 * s - plus, top + plus + 12 * s, plus, plus)));
         strip.Bottom = rowsEnd + pad;
@@ -90,8 +129,36 @@ public sealed class Strip
         _ => t.Rect,
     };
 
-    // Where the new desktop of a slot at a row's end would be, just past that end.
-    public Box Ghost(StripTile t) => new(t.Index == 0 ? t.Rect.Right - TileW : t.Rect.X, t.Rect.Y, TileW, TileH);
+    // Where the block of a place grows out of before it opens (as DropFor counts, without the
+    // `dragged` desktop): its bar, or one in the gap between two desktops.
+    public Box Seed(DeskDrop place, Guid dragged, double thick)
+    {
+        if (place.NewLane)
+            return Tiles.FirstOrDefault(t => t.Kind == TileKind.NewLane && t.Lane == place.Lane) is { } lane ? Bar(lane, thick) : new Box(_column, Bottom, TileW, thick);
+        var row = Tiles.Where(t => t.Kind == TileKind.Desktop && t.Lane == place.Lane).ToList();
+        int p = row.FindIndex(t => t.Desktop == dragged), at = Math.Clamp(p >= 0 && place.Index >= p ? place.Index + 1 : place.Index, 0, row.Count);
+        double y = _rowY[place.Lane], x = row.Count == 0 ? _column + TileW / 2
+            : at == 0 ? row[0].Rect.X - Gap / 2 : at == row.Count ? row[^1].Rect.Right + Gap / 2 : (row[at - 1].Rect.Right + row[at].Rect.X) / 2;
+        return new Box(x - thick / 2, y, thick, TileH);
+    }
+
+    // Held this near the gap between two desktops of a row (and not at a row's end), a window
+    // asks for a new desktop there: the place, counted in the lane as it is.
+    public DeskDrop? Between(double x, double y)
+    {
+        for (int lane = 0; lane < _rowY.Count; lane++)
+        {
+            if (y < _rowY[lane] || y >= _rowY[lane] + TileH) continue;
+            var row = Tiles.Where(t => t.Kind == TileKind.Desktop && t.Lane == lane).OrderBy(t => t.Rect.X).ToList();
+            for (int i = 1; i < row.Count; i++)
+                if (Math.Abs(x - (row[i - 1].Rect.Right + row[i].Rect.X) / 2) <= Near(Gap, TileW) && row[i].Rect.X - row[i - 1].Rect.Right < 2 * Gap)
+                    return new DeskDrop(lane, row[i].Index, false);
+        }
+        return null;
+    }
+
+    // How near a gap's middle counts as by it: the gap and a little of each desktop beside it.
+    static double Near(double gap, double tileW) => gap / 2 + 0.15 * tileW;
 
     // The lane whose row is at height y, if any.
     public int? LaneAt(double y)
@@ -101,8 +168,9 @@ public sealed class Strip
         return null;
     }
 
+    // The "+" and the bin first: a new lane's room can reach their corner.
     public StripTile? Hit(double x, double y) =>
-        Tiles.FirstOrDefault(t => x >= t.Rect.X && x < t.Rect.Right && y >= t.Rect.Y && y < t.Rect.Bottom);
+        Tiles.OrderBy(t => t.Kind is TileKind.Plus or TileKind.Trash ? 0 : 1).FirstOrDefault(t => x >= t.Rect.X && x < t.Rect.Right && y >= t.Rect.Y && y < t.Rect.Bottom);
 
     // Where a desktop dragged to (x, y) would go; null when it would stay where it is or the
     // point is not over the rows.
@@ -124,17 +192,5 @@ public sealed class Strip
             return new DeskDrop(lane, index, false);
         }
         return null;
-    }
-
-    // The bar that shows where a dragged desktop would be inserted in a row.
-    public Box Marker(DeskDrop drop, Guid dragged, double s)
-    {
-        var row = Tiles.Where(t => t.Kind == TileKind.Desktop && t.Lane == drop.Lane && t.Desktop != dragged).ToList();
-        double y = _rowY[drop.Lane], x;
-        if (row.Count == 0) x = Column.X + 16 * s - Gap / 2;
-        else if (drop.Index <= 0) x = row[0].Rect.X - Gap / 2;
-        else if (drop.Index >= row.Count) x = row[^1].Rect.Right + Gap / 2;
-        else x = (row[drop.Index - 1].Rect.Right + row[drop.Index].Rect.X) / 2;
-        return new Box(x - 2 * s, y - 4 * s, 4 * s, TileH + 8 * s);
     }
 }

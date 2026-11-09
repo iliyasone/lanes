@@ -83,8 +83,15 @@ sealed partial class Engine
         // when it was picked up (it rises a little then).
         public Box Box, Speed;
         public double Since;
-        public StripTile? Target;    // a window over a desktop, a "+" or "New lane"
+        public StripTile? Target;    // a window over a desktop, a "+" or a place opened for it
         public DeskDrop? Drop;       // a desktop over the rows
+        // The place opened among the rows for it (see Strip); and the gap between two desktops a
+        // window is held by, where a place opens after a moment.
+        public DeskDrop? Open, Waiting;
+        public double WaitingSince;
+        // The opened place's block as drawn: it grows out of its bar (or the gap) and back into it.
+        public Box? Ghost;
+        public Box Seed;
     }
 
     // A window let go over a desktop: it shrinks into it and fades.
@@ -193,7 +200,8 @@ sealed partial class Engine
         _overlay.Place();
         RenderOverview();
         _overlay.Show();
-        _map.Hide();
+        // Lanes' pill, if it is still up, goes down as the overview opens (StepLingeringPill).
+        if (_map.Shown) _map.Raise();
         Log.Write($"overview: {o.Page.Windows.Count} windows; {CaptureNote}");
     }
 
@@ -241,15 +249,21 @@ sealed partial class Engine
     {
         double spreadTop = o.Strip?.SpreadTop ?? double.NaN;
         o.Strip = Strip.Layout(_lanes, o.Going ?? _current, _gfx.Width, _gfx.Height, _overlay.Scale, dragging: o.Drag != null,
-            offset: WorkTop, room: WorkBottom - WorkTop, bin: Desktops.Count > 1, window: o.Drag is { Window: >= 0 });
+            offset: WorkTop, room: WorkBottom - WorkTop, bin: Desktops.Count > 1, open: o.Drag?.Open, dragged: o.Drag is { Window: < 0 } dd ? dd.Desktop : Guid.Empty);
         if (snap) o.TileShown.Clear();
         foreach (var t in o.Strip.Tiles) o.TileShown.TryAdd(Key(t), t.Rect);
+        o.TileShown.TryAdd(ColumnKey, o.Strip.Column);
+        o.TileShown.TryAdd(BandKey, Band(o.Strip));
         foreach (var t in o.Strip.Tiles)
             if (t.Kind == TileKind.Desktop) TilePicture(t.Desktop, (float)t.Rect.W, (float)t.Rect.H);
         // More or fewer lanes move where the windows may go: they glide there too.
         if (o.Page != null && Math.Abs(o.Strip.SpreadTop - spreadTop) > 0.5) Respread(o.Page, o.Strip, o);
         o.Moving = true;
     }
+
+    // The column of current desktops and the band's bottom edge glide too, as a place opens.
+    const string ColumnKey = "Column", BandKey = "Band";
+    static Box Band(Strip strip) => new(0, strip.Bottom, 0, 0);
 
     Box SpreadArea(Strip strip)
     {
@@ -462,7 +476,9 @@ sealed partial class Engine
             o.Dwell = null;
             if (o.Idle && dwell != o.Page.Desktop) ShowPage(o, dwell);
         }
-        if (o.Idle && now - o.LastLook > 0.5)
+        // Not while Windows is switching desktops: the screen would still show the last one's
+        // windows, and the ones shown would be swapped for them and back.
+        if (o.Idle && now - o.LastLook > 0.5 && _switching.IsCompleted)
         {
             o.LastLook = now;
             LookAgain(o);
@@ -516,6 +532,8 @@ sealed partial class Engine
         {
             foreach (var t in o.Strip.Tiles)
                 o.TileShown[Key(t)] = Toward(o.TileShown.TryGetValue(Key(t), out var b) ? b : t.Rect, t.Rect, k, ref moving);
+            foreach (var (key, want) in new[] { (ColumnKey, o.Strip.Column), (BandKey, Band(o.Strip)) })
+                o.TileShown[key] = Toward(o.TileShown.TryGetValue(key, out var b) ? b : want, want, k, ref moving);
             if (o.Going is Guid g && o.RingShown is { } ring && o.Strip.Tiles.FirstOrDefault(t => t.Desktop == g && t.Kind == TileKind.Desktop) is { } goal)
                 o.RingShown = Toward(ring, goal.Rect, k, ref moving);
         }
@@ -536,12 +554,24 @@ sealed partial class Engine
             if (Pull(ref d.Box, ref d.Speed, DragTarget(o, d), dt, 45, 1)) moving = true;
             if (now - d.Since < PickUp) moving = true;
         }
-        // The slots' bars are still growing in.
-        if (o.Drag != null && now - o.Drag.Since < SlotsIn) moving = true;
+        if (o.Drag is { } dg)
+        {
+            // The slots' bars are still growing in.
+            if (now - dg.Since < SlotsIn) moving = true;
+            // The opened place's block grows out of its bar, or goes back into it.
+            if (o.Strip.Opened is { } open) dg.Ghost = Toward(dg.Ghost ?? dg.Seed, open, k, ref moving);
+            else if (dg.Ghost is { } shown) dg.Ghost = Toward(shown, dg.Seed, k, ref moving) is var back && back == dg.Seed ? null : back;
+            // Held by a gap: the place there opens after a moment.
+            if (dg.Waiting != null && dg.Open == null)
+            {
+                moving = true;
+                if (now - dg.WaitingSince >= Wait) Aim(o, dg);
+            }
+        }
         o.Moving = moving;
     }
 
-    const double PickUp = 0.15, LeaveTime = 0.3, SlotsIn = 0.2;
+    const double PickUp = 0.15, LeaveTime = 0.3, SlotsIn = 0.2, Wait = 0.25;
 
     // One step of a spring pulling each side of `at` toward `to`, `v` its speed: `omega` how
     // fast it swings, `zeta` how soon it stops (1: no bounce). False once it is there.
@@ -829,15 +859,28 @@ sealed partial class Engine
         else return;
         o.Hover = -1;
         o.HoverTile = null;
-        // Room above and below the rows takes it into a new lane (and, for a window, room at the
-        // rows' ends to a new desktop): thin bars there come in.
+        // Room above and below the rows takes it into a new lane, room at the rows' ends to a new
+        // desktop there: thin bars there come in, on every side.
         Relayout(o);
     }
 
+    // What the dragged thing is over, and the place among the rows that opens for it: for a
+    // window, the room past a row's end or above or below the rows at once, the gap between two
+    // desktops once it has been held there a moment (until then the desktop under it takes it);
+    // for a desktop, wherever it would go.
     void Aim(OverviewState o, Drag d)
     {
         var t = o.Strip.Hit(d.X, d.Y);
-        if (d.Window >= 0) d.Target = t is { Kind: TileKind.Desktop } && t.Desktop == o.Page.Desktop || t is { Kind: TileKind.Trash } ? null : t;
+        DeskDrop? open = null;
+        if (d.Window >= 0)
+        {
+            bool slot = t is { Kind: TileKind.NewLane or TileKind.NewDesk };
+            var gap = slot ? null : o.Strip.Between(d.X, d.Y);
+            if (gap != d.Waiting) { d.Waiting = gap; d.WaitingSince = Now; }
+            if (slot) open = new DeskDrop(t!.Lane, t.Index, t.Kind == TileKind.NewLane);
+            else if (gap != null && Now - d.WaitingSince >= Wait) open = gap;
+            d.Target = t is { Kind: TileKind.Desktop } && t.Desktop == o.Page.Desktop || t is { Kind: TileKind.Trash } ? null : t;
+        }
         else if (t is { Kind: TileKind.Trash })
         {
             // Over the bin: let go, and the desktop closes.
@@ -847,8 +890,16 @@ sealed partial class Engine
         else
         {
             d.Target = null;
-            d.Drop = o.Strip.DropFor(d.X, d.Y, d.Desktop, _lanes);
+            d.Drop = open = o.Strip.DropFor(d.X, d.Y, d.Desktop, _lanes);
         }
+        if (open != d.Open)
+        {
+            if (open is { } place) d.Seed = o.Strip.Seed(place, d.Window < 0 ? d.Desktop : Guid.Empty, 4 * _overlay.Scale);
+            d.Open = open;
+            Relayout(o);
+            _redraw = true;
+        }
+        if (d.Window >= 0 && d.Open != null) d.Target = o.Strip.OpenedSlot;
     }
 
     void OnLeftUp(int x, int y)
@@ -1250,13 +1301,14 @@ sealed partial class Engine
         if (toward is Guid tw && DeskPicture(tw) is { } theirs) g.Image(theirs, px, py, g.Width, g.Height);
         g.Rect(0, 0, g.Width, g.Height, A(0xFF000000, 0.25f * pc));
 
-        // Where each window is at this moment.
+        // Where each window is at this moment, and the top of their places in the spread (not
+        // of one let go by the band on its way back).
         var boxes = new Box[page.Thumbs.Count];
         double highest = double.MaxValue;
         for (int i = 0; i < boxes.Length; i++)
         {
             boxes[i] = page.From[i].Lerp(page.Shown[i], Math.Clamp(p, -0.05, 1.08));
-            highest = Math.Min(highest, boxes[i].Y);
+            highest = Math.Min(highest, page.From[i].Lerp(page.To[i], Math.Clamp(p, -0.05, 1.08)).Y);
         }
 
         // Lane rows on a frosted band, the only blurred part. The band slides down whole from
@@ -1264,9 +1316,10 @@ sealed partial class Engine
         // does in Mission Control), and goes back up whole: it never fades, so what it covers
         // never shows through it. Under the band the desktops slide too, blurred.
         float sp = Math.Clamp(p / 0.6f, 0, 1), sq = 1 - MathF.Pow(1 - sp, 3);
-        float a = keep, dy = (1 - sq) * -((float)o.Strip.Bottom + 2 * s);
-        if (boxes.Length > 0) dy = Math.Min(dy, Math.Min(0, (float)highest - 30 * s - (float)o.Strip.Bottom));
-        float band = (float)o.Strip.Bottom + dy;
+        float bottom = (float)o.TileShown.GetValueOrDefault(BandKey, Band(o.Strip)).Y;
+        float a = keep, dy = (1 - sq) * -(bottom + 2 * s);
+        if (boxes.Length > 0) dy = Math.Min(dy, Math.Min(0, (float)highest - 30 * s - bottom));
+        float band = bottom + dy;
         if (a > 0.002f && band > 0)
         {
             g.Clip(0, 0, g.Width, band);
@@ -1352,13 +1405,14 @@ sealed partial class Engine
         // A sideways four-finger swipe slides your lane through the column.
         float shift = o.Swipe?.Axis == Axis.Horizontal ? f * (float)(strip.TileW + strip.Gap) : 0;
         // The column of current desktops as one object: what is above and below you.
-        g.RoundRect((float)strip.Column.X, (float)strip.Column.Y + dy, (float)strip.Column.W, (float)strip.Column.H, 12 * s, A(0x0DFFFFFF, a));
+        var column = o.TileShown.GetValueOrDefault(ColumnKey, strip.Column);
+        g.RoundRect((float)column.X, (float)column.Y + dy, (float)column.W, (float)column.H, 12 * s, A(0x0DFFFFFF, a));
         Box? ring = null, ringTo = null;
         foreach (var t in strip.Tiles)
         {
             var r = o.TileShown.GetValueOrDefault(Key(t), t.Rect);
             float x = (float)r.X + (t.Lane == lane && t.Kind == TileKind.Desktop ? shift : 0), y = (float)r.Y + dy, w = (float)r.W, h = (float)r.H;
-            bool targeted = drag?.Target == t || drag?.Drop is { NewLane: true } nd && t.Kind == TileKind.NewLane && t.Lane == nd.Lane;
+            bool targeted = drag?.Target == t;
             bool hover = o.HoverTile == t && o.Idle;
             if (t.Kind is TileKind.Plus or TileKind.Trash)
             {
@@ -1392,27 +1446,15 @@ sealed partial class Engine
             if (t.Kind is TileKind.NewLane or TileKind.NewDesk)
             {
                 // Where a new lane, or a new desktop at a row's end, would go: a thin bar that
-                // grows out from its middle as the drag starts, blue (and named, for a lane)
-                // when something is over it; a new desktop's place then shows past the row's end,
-                // as the window held there would hide the bar.
-                if (targeted && t.Kind == TileKind.NewDesk)
-                {
-                    var ghost = strip.Ghost(t);
-                    float gx = (float)ghost.X, gy = (float)ghost.Y + dy, gw = (float)ghost.W, gh = (float)ghost.H;
-                    g.RoundRect(gx, gy, gw, gh, 8 * s, A(0x264CC2FFu, a));
-                    g.RoundRectOutline(gx + 1, gy + 1, gw - 2, gh - 2, 8 * s, A(0xFF4CC2FF, a), 2 * s);
-                }
+                // grows out from its middle as the drag starts (the place held over is a block
+                // instead, drawn below).
+                if (t == strip.OpenedSlot) continue;
                 float grow = drag == null ? 1 : (float)Ease(Math.Clamp((Now - drag.Since) / SlotsIn, 0, 1));
-                var bar = strip.Bar(t, (targeted ? 6 : 4) * s);
+                var bar = strip.Bar(t with { Rect = r }, 4 * s);
                 float bx = (float)bar.X, by = (float)bar.Y + dy, bw = (float)bar.W, bh = (float)bar.H;
                 if (t.Kind == TileKind.NewLane) { bx += bw * (1 - grow) / 2; bw *= grow; }
                 else { by += bh * (1 - grow) / 2; bh *= grow; }
-                g.RoundRect(bx, by, bw, bh, Math.Min(bw, bh) / 2, A(targeted ? 0xFF4CC2FFu : 0x59FFFFFFu, a * grow));
-                if (targeted && t.Kind == TileKind.NewLane)
-                {
-                    float tw = g.TextWidth("New lane", capFont);
-                    g.Text("New lane", capFont, bx + bw + 10 * s, by + bh / 2 - 9 * s, tw, 18 * s, A(0xFFE6E6E6, a));
-                }
+                g.RoundRect(bx, by, bw, bh, Math.Min(bw, bh) / 2, A(0x59FFFFFFu, a * grow));
                 continue;
             }
             if (t.Desktop == _current) ring = new Box(x, y, w, h);
@@ -1453,13 +1495,24 @@ sealed partial class Engine
             g.RoundRectOutline((float)rb.X - 4 * s, (float)rb.Y - 4 * s, (float)rb.W + 8 * s, (float)rb.H + 8 * s, 11 * s, A(0xFF4CC2FF, a), 2 * s);
         }
 
+        // The place opened for what is held over it: a blue block where its new desktop (or the
+        // desktop itself) will be, grown out of the bar or the gap, named when it has grown.
+        if (drag?.Ghost is { } gb)
+        {
+            float full = (float)Math.Clamp(gb.W * gb.H / (strip.TileW * strip.TileH), 0, 1);
+            float gx = (float)gb.X, gy = (float)gb.Y + dy, gw = (float)gb.W, gh = (float)gb.H, gr = Math.Min(8 * s, Math.Min(gw, gh) / 2);
+            g.RoundRect(gx, gy, gw, gh, gr, A(0x334CC2FFu, a * (0.4f + 0.6f * full)));
+            g.RoundRectOutline(gx + s, gy + s, gw - 2 * s, gh - 2 * s, gr, A(0xFF4CC2FFu, a), 2 * s);
+            if (drag.Window >= 0 && full > 0.9f && strip.OpenedSlot is { } opened)
+            {
+                string what = opened.Kind == TileKind.NewLane ? "New lane" : "New desktop";
+                float tw = Math.Min(g.TextWidth(what, capFont), gw);
+                g.Text(what, capFont, gx + (gw - tw) / 2, gy + gh + 6 * s, tw, 18 * s, A(0xFFE6E6E6, a * (full - 0.9f) * 10));
+            }
+        }
+
         if (drag is { Window: < 0 } dd)
         {
-            if (dd.Drop is { NewLane: false } drop)
-            {
-                var m = strip.Marker(drop, dd.Desktop, s);
-                g.RoundRect((float)m.X, (float)m.Y + dy, (float)m.W, (float)m.H, 2 * s, A(0xFF4CC2FF, a));
-            }
             var b = DraggedTileBox(o, dd);
             float x = (float)b.X, y = (float)b.Y, w = (float)b.W, h = (float)b.H;
             g.Shadow(x, y, w, h, 8 * s, 28 * s, 10 * s, 0.55f);
