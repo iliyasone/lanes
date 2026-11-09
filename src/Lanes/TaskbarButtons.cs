@@ -109,7 +109,7 @@ sealed class TaskbarButtons
     {
         if (FindWindowEx(IntPtr.Zero, IntPtr.Zero, "Shell_TrayWnd", null) is var tray && tray == IntPtr.Zero) return;
         GetWindowThreadProcessId(tray, out uint shell);
-        foreach (var cls in new[] { "Xaml_WindowedPopupClass", "TaskListThumbnailWnd" })
+        foreach (var cls in new[] { "Xaml_WindowedPopupClass", "ThumbnailDeviceHelperWnd", "TaskListThumbnailWnd" })
             for (IntPtr h = IntPtr.Zero; (h = FindWindowEx(IntPtr.Zero, h, cls, null)) != IntPtr.Zero;)
                 if (IsWindowVisible(h) && GetWindowThreadProcessId(h, out uint pid) != 0 && pid == shell) ShowWindowAsync(h, 0 /* SW_HIDE */);
     }

@@ -312,12 +312,17 @@ static class Demo
         await Task.Delay(1500);
         var previews = TopWindows().Where(w => !before.Contains(w)).ToList();
         Log.Write($"app map: with the pointer on the button, Windows shows: {(previews.Count == 0 ? "nothing new" : string.Join(", ", previews.Select(Describe)))}");
+        // What is where the previews are (above the button), front to back.
+        var spot = new Native.POINT { X = cx, Y = r.Top - 80 };
+        string Over() => string.Join(", ", TopWindows().Where(h => Native.GetWindowRect(h, out var wr) && wr.Left <= spot.X && spot.X < wr.Right && wr.Top <= spot.Y && spot.Y < wr.Bottom)
+            .Take(6).Select(h => { Native.GetWindowRect(h, out var wr); Native.GetWindowThreadProcessId(h, out uint pid); string p = ""; try { p = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName; } catch { } return $"{Native.ClassName(h)} ({p}) {wr.Left},{wr.Top} {wr.Width}x{wr.Height}"; }));
+        Log.Write($"app map: over the previews' place: {Over()}; under the pointer there: {Describe(Native.GetAncestor(WindowFromPoint(spot), 2))}");
         engine.Screenshot(Path.Combine(dir, "18c-windows-previews.png"));
         mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
         await Task.Delay(60);
         mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
         await Task.Delay(1300);
-        Log.Write($"app map: Windows' previews after the click: {(previews.Count == 0 ? "there were none" : string.Join(", ", previews.Select(h => $"{Native.ClassName(h)} {(Native.IsWindowVisible(h) ? "STILL SHOWN" : "gone")}")))}");
+        Log.Write($"app map: Windows' previews after the click: {(previews.Count == 0 ? "there were none" : string.Join(", ", previews.Select(h => $"{Native.ClassName(h)} {(Native.IsWindowVisible(h) ? "STILL SHOWN" : "gone")}")))}; over their place: {Over()}");
         engine.Screenshot(Path.Combine(dir, "18-app-overview.png"));
         var (_, shown) = await engine.OverviewLayout();
         Log.Write("app map shows: " + string.Join(", ", shown.Select(w => $"{w.Title} {w.Rect.Width}x{w.Rect.Height}")));
