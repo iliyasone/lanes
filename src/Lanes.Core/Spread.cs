@@ -16,6 +16,22 @@ public readonly record struct Box(double X, double Y, double W, double H)
 // row. `gap` is kept free between windows.
 public static class Spread
 {
+    // Two windows change places, each keeping its size: each goes where the other was, against
+    // the edges of the screen the other touched (two windows side by side change sides and stay
+    // against the screen's edges), else centred on where the other was, and stays on the screen
+    // (`work`). `near`: how close to an edge counts as touching it.
+    public static (Box A, Box B) Trade(Box a, Box b, Box work, double near = 8) =>
+        (Into(a, b, work, near), Into(b, a, work, near));
+
+    static Box Into(Box w, Box place, Box work, double near) =>
+        new(Along(w.W, place.X, place.Right, work.X, work.Right, near), Along(w.H, place.Y, place.Bottom, work.Y, work.Bottom, near), w.W, w.H);
+
+    static double Along(double size, double from, double to, double min, double max, double near)
+    {
+        double at = from <= min + near ? from : to >= max - near ? to - size : (from + to - size) / 2;
+        return size >= max - min ? min : Math.Clamp(at, min, max - size);
+    }
+
     public static Box[] Layout(IReadOnlyList<Box> windows, Box area, double gap = 32)
     {
         int n = windows.Count;

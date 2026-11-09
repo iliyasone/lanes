@@ -61,6 +61,7 @@ sealed partial class Engine : IGestureSink
     // When the engine thread last went round its loop; the tray's watchdog reads it.
     public long Heartbeat;
     public IntPtr OverlayHandle => _overlay?.Handle ?? IntPtr.Zero;
+    public TaskbarButtons? Buttons { get; private set; }
     public event Action<string>? Status;
 
     public Engine(Settings settings, bool demo)
@@ -121,6 +122,7 @@ sealed partial class Engine : IGestureSink
                 Desktops.Listen(_msg.Handle, WM_DESKTOP_CHANGED);
                 SetUpLanes();
                 Ready = true;
+                Buttons = new TaskbarButtons(app => Post(() => ShowApp(app)));
             }
             else Status?.Invoke("This Windows version is not supported");
             PrepareWallpapers();
@@ -656,16 +658,22 @@ sealed partial class Engine : IGestureSink
     void RaiseTaskbar()
     {
         DropTaskbar();
+        if (TaskbarWindow() is not IntPtr h) return;
+        _taskbar = new Thumbnail(_overlay.Handle, h);
+        for (int i = 0; i < Shade.Length; i++) _taskbarShade.Add(new Thumbnail(_overlay.Handle, h));
+    }
+
+    // The taskbar on the overlay's monitor.
+    IntPtr? TaskbarWindow()
+    {
         var m = _overlay.Monitor;
         foreach (var cls in new[] { "Shell_TrayWnd", "Shell_SecondaryTrayWnd" })
             for (IntPtr h = IntPtr.Zero; (h = FindWindowEx(IntPtr.Zero, h, cls, null)) != IntPtr.Zero;)
             {
                 var f = Frame(h);
-                if (!IsWindowVisible(h) || f.Right <= m.Left || f.Left >= m.Right || f.Bottom <= m.Top || f.Top >= m.Bottom) continue;
-                _taskbar = new Thumbnail(_overlay.Handle, h);
-                for (int i = 0; i < Shade.Length; i++) _taskbarShade.Add(new Thumbnail(_overlay.Handle, h));
-                return;
+                if (IsWindowVisible(h) && f.Right > m.Left && f.Left < m.Right && f.Bottom > m.Top && f.Top < m.Bottom) return h;
             }
+        return null;
     }
 
     void DropTaskbar()
@@ -993,11 +1001,13 @@ sealed partial class Engine : IGestureSink
 
     public void OpenOverviewFromMenu() => Post(OpenOverview);
 
-    void OpenOverview()
+    void OpenOverview() => OpenOverview(null);
+
+    void OpenOverview(AppRef? app)
     {
         if (!Ready || _overview != null || _switch != null) return;
         _touchCaptureOf = _current;
-        BeginOverview();
+        BeginOverview(app);
         _overview!.Tracking = false;
         SettleOverview(1, 0);
     }

@@ -129,3 +129,50 @@ public class SpreadTests
         Apart(r);
     }
 }
+
+public class TradeTests
+{
+    static readonly Box Work = new(0, 0, 1536, 816);
+
+    [Fact]
+    public void TwoWindowsSideBySideChangeSidesAndKeepTheirSizes()
+    {
+        var (a, b) = Spread.Trade(new Box(0, 0, 500, 816), new Box(500, 0, 1036, 816), Work);
+        Assert.Equal(new Box(1036, 0, 500, 816), a);
+        Assert.Equal(new Box(0, 0, 1036, 816), b);
+    }
+
+    [Fact]
+    public void AWindowAwayFromTheEdgesIsCentredWhereTheOtherWas()
+    {
+        var (a, b) = Spread.Trade(new Box(100, 100, 300, 200), new Box(600, 300, 400, 300), Work);
+        Assert.Equal(new Box(650, 350, 300, 200), a);
+        Assert.Equal(new Box(50, 50, 400, 300), b);
+    }
+
+    [Fact]
+    public void ABigWindowStaysOnTheScreen()
+    {
+        var (a, _) = Spread.Trade(new Box(0, 0, 1200, 700), new Box(1100, 300, 300, 200), Work);
+        Assert.Equal(new Box(336, 50, 1200, 700), a);
+    }
+}
+
+public class TaskbarNameTests
+{
+    [Theory]
+    [InlineData("Google Chrome - 5 running windows pinned", "Google Chrome")]
+    [InlineData("T3 Code (Beta) - 1 running window", "T3 Code (Beta)")]
+    [InlineData("On-Screen Keyboard pinned", "On-Screen Keyboard")]
+    [InlineData("Notepad", "Notepad")]
+    public void TheAppsNameIsBeforeItsWindowCount(string button, string app) => Assert.Equal(app, TaskbarNames.App(button));
+
+    [Fact]
+    public void AProgramIsTheAppWhenOneNameStartsTheOther()
+    {
+        Assert.True(TaskbarNames.Same("Telegram", "Telegram Desktop"));
+        Assert.True(TaskbarNames.Same("Google Chrome", "Google Chrome"));
+        Assert.False(TaskbarNames.Same("Google Chrome", "Telegram Desktop"));
+        Assert.False(TaskbarNames.Same("", "Telegram Desktop"));
+    }
+}

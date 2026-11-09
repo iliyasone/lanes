@@ -29,11 +29,17 @@ sealed partial class Engine
         // drag); and how far it is lifted (0..1, under the pointer: a deeper shadow).
         public List<Box> From = new(), To = new(), Shown = new(), Speed = new();
         public List<double> Lift = new();
+        // With the overview opened for one app (its taskbar button): the desktop each window is
+        // on (one on another desktop comes out of that desktop in the rows), and whether it is
+        // another app's window here, which stays where it is and fades out.
+        public List<Guid> On = new();
+        public List<bool> Faded = new();
 
-        public void Add(AppWindow w, ShadowPictures shadow, Thumbnail t, Box from, Box to)
+        public void Add(AppWindow w, ShadowPictures shadow, Thumbnail t, Box from, Box to, Guid on, bool faded = false)
         {
             Windows.Add(w); Thumbs.Add(t); Shadows.Add(shadow);
             From.Add(from); To.Add(to); Shown.Add(to); Speed.Add(default); Lift.Add(0);
+            On.Add(on); Faded.Add(faded);
         }
 
         public void RemoveAt(int i) => Detach(i).Dispose();
@@ -45,6 +51,7 @@ sealed partial class Engine
             Shadows[i].Dispose();
             Windows.RemoveAt(i); Thumbs.RemoveAt(i); Shadows.RemoveAt(i);
             From.RemoveAt(i); To.RemoveAt(i); Shown.RemoveAt(i); Speed.RemoveAt(i); Lift.RemoveAt(i);
+            On.RemoveAt(i); Faded.RemoveAt(i);
             return t;
         }
 
@@ -171,18 +178,25 @@ sealed partial class Engine
         // A window dragged and let go on its own desktop: it was in front in the overview, so it
         // comes to the front when the overview closes there.
         public IntPtr? Raise;
+        // Opened from an app's taskbar button: that app.
+        public AppRef? App;
+        // Opened from the taskbar, the real taskbar shows through only once the pointer has left
+        // it (Windows would show the button's window previews over the overview).
+        public bool HoleWaits;
+        // A window picked on another desktop: it comes to the front once Lanes is there.
+        public IntPtr? Activate;
         public bool Open => !Tracking && Spring == null && Zoom == null && P > 0.99;
         public bool Idle => Open && Drag == null && Swipe == null && Going == null;
     }
 
-    void BeginOverview()
+    void BeginOverview(AppRef? app = null)
     {
         if (_overview is { } open)
         {
             if (open.Zoom != null || open.Swipe != null || open.Drag != null || open.Going != null) { _ignoring = true; return; }
             open.Tracking = true;
             open.Spring = null;
-            _overlay.Hole(null);
+            NoHole();
             open.Press = null;
             _gfx.Frames.Clear();
             open.Track = new OverviewTrack(open.P, _tuning);
@@ -194,9 +208,9 @@ sealed partial class Engine
         Remember(_current, TakeTouchCapture());
         RefreshTitles();
         UseArea();
-        var o = new OverviewState { Tracking = true, Track = new OverviewTrack(0, _tuning), LastStep = Now };
+        var o = new OverviewState { Tracking = true, Track = new OverviewTrack(0, _tuning), LastStep = Now, App = app };
         Relayout(o, snap: true);
-        o.Page = NewPage(_current, o.Strip);
+        o.Page = NewPage(_current, o.Strip, app);
         _overview = o;
         _gfx.Frames.Clear();
         _overlay.Place();
@@ -204,7 +218,8 @@ sealed partial class Engine
         _overlay.Show();
         // Lanes' pill, if it is still up, goes down as the overview opens (StepLingeringPill).
         if (_map.Shown) _map.Raise();
-        Log.Write($"overview: {o.Page.Windows.Count} windows; {CaptureNote}");
+        Log.Write(app == null ? $"overview: {o.Page.Windows.Count} windows; {CaptureNote}"
+            : $"overview of {app.Name}: {o.Page.Faded.Count(f => !f)} windows, {o.Page.On.Count(d => d != _current)} on other desktops; {CaptureNote}");
     }
 
     // A window's picture in the overlay with its shadow (the same as on the desktop, ShadowLook)
@@ -273,39 +288,65 @@ sealed partial class Engine
         return new Box(72 * s, strip.SpreadTop, _gfx.Width - 144 * s, WorkBottom - strip.SpreadTop - 20 * s);
     }
 
-    Page MakePage(Guid desktop, Strip strip)
+    Page MakePage(Guid desktop, Strip strip, AppRef? app = null)
+    {
+        var page = new Page { Desktop = desktop };
+        foreach (var (w, on, faded) in PageWindows(desktop, app))
+        {
+            var (shadow, thumb) = Pictures(w.Handle);
+            var from = FromOf(w);
+            page.Add(w, shadow, thumb, from, from, on, faded);
+        }
+        Lay(page, strip);
+        page.Shown = page.To.ToList();
+        return page;
+    }
+
+    Box FromOf(AppWindow w) => new(w.Frame.Left - _overlay.Area.Left, w.Frame.Top - _overlay.Area.Top, w.Frame.Width, w.Frame.Height);
+
+    // The windows a page shows, back to front: the desktop's; or, for one app, the other apps'
+    // windows here (to fade out), then the app's windows on other desktops, then its windows here.
+    List<(AppWindow W, Guid On, bool Faded)> PageWindows(Guid desktop, AppRef? app)
     {
         var area = _overlay.Area;
-        float s = _overlay.Scale;
-        var page = new Page { Desktop = desktop };
-        var windows = AppWindows.OnScreen(area, _overlay.Handle, desktop == _current ? null : desktop);
-        var from = windows.Select(w => new Box(w.Frame.Left - area.Left, w.Frame.Top - area.Top, w.Frame.Width, w.Frame.Height)).ToList();
-        var to = Spread.Layout(from, SpreadArea(strip), 40 * s);
-        for (int i = 0; i < windows.Count; i++)
-        {
-            var (shadow, thumb) = Pictures(windows[i].Handle);
-            page.Add(windows[i], shadow, thumb, from[i], to[i]);
-        }
-        return page;
+        var here = AppWindows.OnScreen(area, _overlay.Handle, desktop == _current ? null : desktop);
+        if (app == null) return here.Select(w => (w, desktop, false)).ToList();
+        bool Mine(AppWindow w) => AppIds.Is(w.Handle, app);
+        var list = here.Where(w => !Mine(w)).Select(w => (w, desktop, true)).ToList();
+        foreach (var (d, windows) in AppWindows.OnOtherDesktops(area, _overlay.Handle))
+            if (d != desktop) list.AddRange(windows.Where(Mine).Select(w => (w, d, false)));
+        list.AddRange(here.Where(Mine).Select(w => (w, desktop, false)));
+        return list;
+    }
+
+    // Each window's place in the spread; another app's window, with the overview opened for one
+    // app, stays where it is.
+    void Lay(Page page, Strip strip)
+    {
+        var spread = Enumerable.Range(0, page.From.Count).Where(i => !page.Faded[i]).ToList();
+        var to = Spread.Layout(spread.Select(i => page.From[i]).ToList(), SpreadArea(strip), 40 * _overlay.Scale);
+        page.To = page.From.ToList();
+        for (int k = 0; k < spread.Count; k++) page.To[spread[k]] = to[k];
     }
 
     // A page, and the taskbar's place among the window pictures: over them, as on the screen,
     // except on a desktop with a full-screen window, which lies over the taskbar; opening the
     // overview there, the taskbar comes out from under the window as it shrinks.
-    Page NewPage(Guid desktop, Strip strip)
+    Page NewPage(Guid desktop, Strip strip, AppRef? app = null)
     {
         bool under = FullScreen(desktop);
         if (under) RaiseTaskbar();
-        var page = MakePage(desktop, strip);
+        var page = MakePage(desktop, strip, app);
         if (!under) RaiseTaskbar();
         return page;
     }
 
     // The windows of another desktop, shown at once in place of these.
-    void ShowPage(OverviewState o, Guid desktop)
+    void ShowPage(OverviewState o, Guid desktop, AppRef? app = null)
     {
         var old = o.Page;
-        o.Page = NewPage(desktop, o.Strip);
+        o.App = app;
+        o.Page = NewPage(desktop, o.Strip, app);
         old.Dispose();
         o.Hover = -1;
         _redraw = true;
@@ -323,14 +364,59 @@ sealed partial class Engine
         _lanes.Visited(d);
         Settings.SaveLanes(_lanes);
         RetakeSoon();
-        UpdateHole(o);
         Log.Write($"overview: now on desktop {Desktops.IndexOf(d) + 1}");
     }
 
-    // While the overview is open, the real taskbar shows through it and takes clicks (the tray,
-    // the clock), except over a full-screen window, which lies over the real taskbar.
-    void UpdateHole(OverviewState o) =>
-        _overlay.Hole(o.Open && o.Zoom == null && !FullScreen(_current) ? TaskbarOn(_overlay.Monitor) : null);
+    // While the overview is open, the real taskbar shows through it and takes clicks (the apps,
+    // the tray, the clock). A full-screen window lies over the real taskbar: for that time Lanes
+    // lifts the taskbar over it, as Windows does for the Start menu, and puts it back under as
+    // the overview closes.
+    void UpdateHole(OverviewState o)
+    {
+        bool open = o.Open && o.Zoom == null;
+        LiftTaskbar(open && FullScreen(_current));
+        var bar = TaskbarOn(_overlay.Monitor);
+        o.HoleWaits = open && o.App != null && bar is RECT r && PointerIn(r);
+        _overlay.Hole(open && !o.HoleWaits ? bar : null);
+    }
+
+    void NoHole()
+    {
+        _overlay.Hole(null);
+        LiftTaskbar(false);
+    }
+
+    // Whether the pointer is in `r`, in the overlay's own coordinates.
+    bool PointerIn(RECT r)
+    {
+        GetCursorPos(out var pt);
+        int x = pt.X - _overlay.Area.Left, y = pt.Y - _overlay.Area.Top;
+        return x >= r.Left && x < r.Right && y >= r.Top && y < r.Bottom;
+    }
+
+    // The taskbar lifted over a full-screen window, and that window.
+    (IntPtr Bar, IntPtr Over)? _lifted;
+
+    void LiftTaskbar(bool up)
+    {
+        if (up)
+        {
+            if (TaskbarWindow() is not IntPtr bar) return;
+            if (_lifted == null) Log.Write("taskbar lifted over the full-screen window");
+            _lifted = (bar, _lifted?.Over ?? GetForegroundWindow());
+            SetWindowPos(bar, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            // The overlay stays over it, but where the hole is.
+            _overlay.Place();
+        }
+        else if (_lifted is var (bar, over))
+        {
+            _lifted = null;
+            // Back under the window, unless another has come to the front since (the taskbar was
+            // used, or Windows switched desktops): Windows then puts the taskbar where it goes.
+            if (GetForegroundWindow() == over) SetWindowPos(bar, over, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            Log.Write("taskbar back under the full-screen window");
+        }
+    }
 
     // ---------- two fingers over another lane ----------
 
@@ -386,17 +472,16 @@ sealed partial class Engine
     void LookAgain(OverviewState o)
     {
         var page = o.Page;
-        var area = _overlay.Area;
-        var now = AppWindows.OnScreen(area, _overlay.Handle, page.Desktop == _current ? null : page.Desktop);
+        var now = PageWindows(page.Desktop, o.App);
         bool changed = false;
         for (int i = page.Windows.Count - 1; i >= 0; i--)
-            if (!now.Any(w => w.Handle == page.Windows[i].Handle)) { page.RemoveAt(i); changed = true; }
-        foreach (var w in now)
+            if (!now.Any(w => w.W.Handle == page.Windows[i].Handle)) { page.RemoveAt(i); changed = true; }
+        foreach (var (w, on, faded) in now)
         {
             if (page.Windows.Any(x => x.Handle == w.Handle)) continue;
-            var from = new Box(w.Frame.Left - area.Left, w.Frame.Top - area.Top, w.Frame.Width, w.Frame.Height);
+            var from = FromOf(w);
             var (shadow, thumb) = Pictures(w.Handle);
-            page.Add(w, shadow, thumb, from, from);
+            page.Add(w, shadow, thumb, from, from, on, faded);
             changed = true;
         }
         if (!changed) return;
@@ -409,8 +494,7 @@ sealed partial class Engine
     // The windows left on the page take the room of one that went.
     void Respread(Page page, Strip strip, OverviewState? o = null)
     {
-        float s = _overlay.Scale;
-        page.To = Spread.Layout(page.From, SpreadArea(strip), 40 * s).ToList();
+        Lay(page, strip);
         (o ?? _overview!).Moving = true;
     }
 
@@ -435,11 +519,11 @@ sealed partial class Engine
     {
         var o = _overview!;
         if (o.Open) _gfx.Frames.Clear();
-        _overlay.Hole(null);
+        NoHole();
         if (target < 0.5)
         {
             Arrive(o);
-            if (o.Raise is IntPtr raise && o.Page.Windows.Any(w => w.Handle == raise)) AppWindows.Activate(raise);
+            if (o.Raise is IntPtr raise && o.Page.Windows.FindIndex(w => w.Handle == raise) is int ri and >= 0 && o.Page.On[ri] == _current) AppWindows.Activate(raise);
             o.Raise = null;
         }
         o.Tracking = false;
@@ -484,6 +568,7 @@ sealed partial class Engine
         {
             o.LastLook = now;
             LookAgain(o);
+            if (_lifted != null) LiftTaskbar(true);
         }
         if (o.Swipe != null) StepInnerSwipe(now);
         if (o.Going is Guid going && o.Zoom == null)
@@ -549,8 +634,8 @@ sealed partial class Engine
             if (Math.Abs(want - page.Lift[i]) < 0.01) page.Lift[i] = want; else moving = true;
             if (o.Drag?.Window == i) continue;
             // The window a dragged one is held over goes to the dragged one's place already, as
-            // it will once they change places.
-            var goal = swapping ? Fit(page.To[i], page.To[o.Drag!.Window]) : page.To[i];
+            // it will once they change places, keeping its size.
+            var goal = swapping ? Centred(page.To[i], page.To[o.Drag!.Window]) : page.To[i];
             var (at, v) = (page.Shown[i], page.Speed[i]);
             if (Pull(ref at, ref v, goal, dt, 17, 0.75)) moving = true;
             (page.Shown[i], page.Speed[i]) = (at, v);
@@ -600,12 +685,8 @@ sealed partial class Engine
         return true;
     }
 
-    // `b`'s shape, as large as fits in `into`, in its middle.
-    static Box Fit(Box b, Box into)
-    {
-        double k = Math.Min(into.W / Math.Max(1, b.W), into.H / Math.Max(1, b.H));
-        return new Box(into.X + (into.W - b.W * k) / 2, into.Y + (into.H - b.H * k) / 2, b.W * k, b.H * k);
-    }
+    // `b`, its size as it is, in the middle of `on`.
+    static Box Centred(Box b, Box on) => b with { X = on.X + (on.W - b.W) / 2, Y = on.Y + (on.H - b.H) / 2 };
 
     static Box Toward(Box from, Box to, double k, ref bool moving)
     {
@@ -619,7 +700,7 @@ sealed partial class Engine
         var o = _overview;
         if (o == null) return;
         _overview = null;
-        _overlay.Hole(null);
+        NoHole();
         _overlay.Hide();
         // A window may have been moved to another desktop: the next swipe shows it there.
         CheckOtherDesktops();
@@ -637,7 +718,7 @@ sealed partial class Engine
         var o = _overview!;
         _gfx.Frames.Clear();
         Hook(false);
-        _overlay.Hole(null);
+        NoHole();
         o.Zoom = new Zoom { Target = target, From = from, Spring = new Spring(0, 0, 1, _tuning.OverviewResponse), Start = Now };
     }
 
@@ -663,6 +744,7 @@ sealed partial class Engine
         var target = z.Target;
         _pillX = _pillAside = null;
         LingerPill(p => DrawPill(p, target, null, 0, 0, 1), z.SwitchedAt);
+        if (_overview!.Activate is IntPtr window && Desktops.WindowDesktop(window) == _current) AppWindows.Activate(window);
         CloseOverviewNow();
     }
 
@@ -715,6 +797,26 @@ sealed partial class Engine
         });
     }
 
+    // ---------- one app's windows, from its taskbar button ----------
+
+    // A click on an app's taskbar button (see TaskbarButtons): the overview with just its
+    // windows, from every desktop. The same button again closes it; another app's shows that
+    // app's windows instead.
+    void ShowApp(AppRef app)
+    {
+        if (!Ready || _switch != null) return;
+        if (_overview is not { } o)
+        {
+            OpenOverview(app);
+            return;
+        }
+        if (!o.Idle) return;
+        if (o.App?.Id == app.Id) { CloseOverview(); return; }
+        ShowPage(o, _current, app);
+        UpdateHole(o);
+        Log.Write($"overview of {app.Name} instead: {o.Page.Faded.Count(f => !f)} windows");
+    }
+
     // ---------- four fingers inside the overview ----------
 
     void BeginInnerSwipe(Axis axis)
@@ -724,6 +826,7 @@ sealed partial class Engine
         if (o.Page.Desktop != _current)
         {
             Arrive(o);
+            UpdateHole(o);
             Relayout(o);
         }
         long t0 = Environment.TickCount64;
@@ -794,6 +897,7 @@ sealed partial class Engine
             Settings.SaveLanes(_lanes);
             o.Page.Dispose();
             o.Page = arrived;
+            o.App = null;
             Relayout(o, snap: true);
             RetakeSoon();
             UpdateHole(o);
@@ -813,6 +917,7 @@ sealed partial class Engine
     {
         var o = _overview;
         if (o is not { Open: true } || o.Swipe != null) return;
+        if (o.HoleWaits && TaskbarOn(_overlay.Monitor) is RECT bar && !PointerIn(bar)) UpdateHole(o);
         if (o.MenuFor != null)
         {
             int item = MenuItemAt(o, x, y);
@@ -892,7 +997,7 @@ sealed partial class Engine
             if (gap != d.Waiting) { d.Waiting = gap; d.WaitingSince = Now; }
             if (slot) open = new DeskDrop(t!.Lane, t.Index, t.Kind == TileKind.NewLane);
             else if (gap != null && Now - d.WaitingSince >= Wait) open = gap;
-            d.Target = t is { Kind: TileKind.Desktop } && t.Desktop == o.Page.Desktop || t is { Kind: TileKind.Trash } ? null : t;
+            d.Target = t is { Kind: TileKind.Desktop } && t.Desktop == o.Page.On[d.Window] || t is { Kind: TileKind.Trash } ? null : t;
         }
         else if (t is { Kind: TileKind.Trash })
         {
@@ -918,7 +1023,7 @@ sealed partial class Engine
         int swap = -1;
         if (d.Window >= 0 && d.Target == null && t == null)
             for (int i = o.Page.To.Count - 1; i >= 0 && swap < 0; i--)
-                if (i != d.Window && Inside(o.Page.To[i], (int)d.X, (int)d.Y)) swap = i;
+                if (i != d.Window && !o.Page.Faded[i] && o.Page.On[i] == o.Page.On[d.Window] && Inside(o.Page.To[i], (int)d.X, (int)d.Y)) swap = i;
         if (swap != d.Swap) { d.Swap = swap; o.Moving = true; _redraw = true; }
     }
 
@@ -962,6 +1067,13 @@ sealed partial class Engine
         }
         int w = HitWindow(o, x, y);
         Log.Write($"overview click: {HitName(o, w, x, y)}");
+        if (w >= 0 && o.Page.On[w] != o.Page.Desktop)
+        {
+            // One app's window on another desktop: Lanes goes there, and it comes to the front.
+            o.Activate = o.Page.Windows[w].Handle;
+            GoTo(o, o.Page.On[w]);
+            return;
+        }
         if (w >= 0)
         {
             var hwnd = o.Page.Windows[w].Handle;
@@ -1206,6 +1318,7 @@ sealed partial class Engine
         if (show != o.Page.Desktop || to == show)
         {
             var old = o.Page;
+            o.App = null;
             o.Page = NewPage(show, o.Strip);
             old.Dispose();
         }
@@ -1218,6 +1331,7 @@ sealed partial class Engine
     {
         for (int i = o.Page.Shown.Count - 1; i >= 0; i--)
         {
+            if (o.Page.Faded[i]) continue;
             var b = o.Page.Shown[i];
             if (x >= b.X && x < b.Right && y >= b.Y && y < b.Bottom) return i;
         }
@@ -1303,7 +1417,8 @@ sealed partial class Engine
         var area = _overlay.Area;
         Rectangle On(Box b) => new(area.Left + (int)b.X, area.Top + (int)b.Y, (int)b.W, (int)b.H);
         foreach (var t in o.Strip.Tiles) tiles.Add((t.Kind, t.Lane, t.Desktop, On(t.Rect)));
-        for (int i = 0; i < o.Page.Windows.Count; i++) windows.Add((o.Page.Windows[i].Title, On(o.Page.Shown[i])));
+        for (int i = 0; i < o.Page.Windows.Count; i++)
+            if (!o.Page.Faded[i]) windows.Add((o.Page.Windows[i].Title, On(o.Page.Shown[i])));
         return (tiles, windows);
     });
 
@@ -1335,24 +1450,37 @@ sealed partial class Engine
         if (toward is Guid tw && DeskPicture(tw) is { } theirs) g.Image(theirs, px, py, g.Width, g.Height);
         g.Rect(0, 0, g.Width, g.Height, A(0xFF000000, 0.25f * pc));
 
-        // Where each window is at this moment, and the top of their places in the spread (not
-        // of one let go by the band on its way back).
-        var boxes = new Box[page.Thumbs.Count];
-        double highest = double.MaxValue;
-        for (int i = 0; i < boxes.Length; i++)
-        {
-            boxes[i] = page.From[i].Lerp(page.Shown[i], Math.Clamp(p, -0.05, 1.08));
-            highest = Math.Min(highest, page.From[i].Lerp(page.To[i], Math.Clamp(p, -0.05, 1.08)).Y);
-        }
-
         // Lane rows on a frosted band, the only blurred part. The band slides down whole from
         // above the screen just ahead of the windows, so it never overlaps them (as the Spaces bar
         // does in Mission Control), and goes back up whole: it never fades, so what it covers
         // never shows through it. Under the band the desktops slide too, blurred.
         float sp = Math.Clamp(p / 0.6f, 0, 1), sq = 1 - MathF.Pow(1 - sp, 3);
         float bottom = (float)o.TileShown.GetValueOrDefault(BandKey, Band(o.Strip)).Y;
-        float a = keep, dy = (1 - sq) * -(bottom + 2 * s);
-        if (boxes.Length > 0) dy = Math.Min(dy, Math.Min(0, (float)highest - 30 * s - bottom));
+        float slide = (1 - sq) * -(bottom + 2 * s);
+
+        // Where each window is at this moment and how clear, and the top of their places in the
+        // spread (not of one let go by the band on its way back). Opened for one app, its windows
+        // on other desktops come out of those desktops in the rows, and the other apps' windows
+        // here stay where they are and fade.
+        var boxes = new Box[page.Thumbs.Count];
+        var clear = new float[boxes.Length];
+        double highest = double.MaxValue, tp = Math.Clamp(p, -0.05, 1.08);
+        for (int i = 0; i < boxes.Length; i++)
+        {
+            var from = page.From[i];
+            clear[i] = 1;
+            if (page.Faded[i]) clear[i] = 1 - (float)Ease(Math.Clamp(p / 0.7, 0, 1));
+            else if (page.On[i] != page.Desktop)
+            {
+                from = InTile(o, page.On[i], from, slide) ?? page.To[i];
+                clear[i] = Math.Clamp(p / 0.3f, 0, 1);
+                highest = Math.Min(highest, page.To[i].Y);
+            }
+            else highest = Math.Min(highest, page.From[i].Lerp(page.To[i], tp).Y);
+            boxes[i] = from.Lerp(page.Shown[i], tp);
+        }
+        float a = keep, dy = slide;
+        if (highest < double.MaxValue) dy = Math.Min(dy, Math.Min(0, (float)highest - 30 * s - bottom));
         float band = bottom + dy;
         if (a > 0.002f && band > 0)
         {
@@ -1376,9 +1504,11 @@ sealed partial class Engine
         {
             if (o.Drag?.Window == i) { page.Shadows[i].Hide(); continue; }
             var b = boxes[i] with { X = boxes[i].X + ox, Y = boxes[i].Y + oy };
-            WindowEdge(b, sa);
-            page.Shadows[i].Place(b, page.Lift[i], sa, 1, clip);
-            page.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep, clip);
+            float wa = sa * clear[i];
+            double size = page.On[i] != page.Desktop ? Math.Min(1, b.W / Math.Max(1, page.To[i].W)) : 1;
+            WindowEdge(b, wa, size);
+            page.Shadows[i].Place(b, page.Lift[i], wa, size, clip);
+            page.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep * clear[i], clip);
         }
         foreach (var unused in new[] { sw?.PreviousPage, sw?.NextPage })
             if (unused != null && unused != other) unused.Hide();
@@ -1428,6 +1558,16 @@ sealed partial class Engine
         g.End();
     }
 
+    // A window's frame shrunk into its desktop's picture in the rows, where the band is now.
+    Box? InTile(OverviewState o, Guid desktop, Box frame, float slide)
+    {
+        var tile = o.Strip.Tiles.FirstOrDefault(t => t.Kind == TileKind.Desktop && t.Desktop == desktop);
+        if (tile == null) return null;
+        var r = o.TileShown.GetValueOrDefault(Key(tile), tile.Rect);
+        double kx = r.W / _gfx.Width, ky = r.H / _gfx.Height;
+        return new Box(r.X + frame.X * kx, r.Y + slide + frame.Y * ky, frame.W * kx, frame.H * ky);
+    }
+
     void DrawStrip(OverviewState o, float a, float dy, float f, Guid? toward, float p)
     {
         var g = _gfx;
@@ -1442,6 +1582,11 @@ sealed partial class Engine
         var column = o.TileShown.GetValueOrDefault(ColumnKey, strip.Column);
         g.RoundRect((float)column.X, (float)column.Y + dy, (float)column.W, (float)column.H, 12 * s, A(0x0DFFFFFF, a));
         Box? ring = null, ringTo = null;
+        // Opened for one app: the desktops it has windows on stand out, and the one of the window
+        // under the pointer is outlined.
+        var page = o.Page;
+        var withApp = o.App == null ? null : page.On.Where((_, i) => !page.Faded[i]).ToHashSet();
+        Guid? pointed = o.App != null && o.Hover >= 0 && o.Hover < page.On.Count ? page.On[o.Hover] : null;
         foreach (var t in strip.Tiles)
         {
             var r = o.TileShown.GetValueOrDefault(Key(t), t.Rect);
@@ -1495,12 +1640,13 @@ sealed partial class Engine
             if (t.Desktop == toward) ringTo = new Box(x, y, w, h);
             // A desktop being dragged leaves a faint place behind.
             float ta = drag != null && drag.Window < 0 && drag.Desktop == t.Desktop ? a * 0.3f : a;
+            if (withApp != null && !withApp.Contains(t.Desktop)) ta *= 0.45f;
             g.Shadow(x, y, w, h, 8 * s, 18 * s, 6 * s, 0.4f * ta);
             DrawTilePicture(t.Desktop, x, y, w, h, ta);
             g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, 8 * s, A(0x1FFFFFFF, ta), 1);
             if (targeted) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xFFFFFFFF, a), 2.5f * s);
             // White around the desktop whose windows are shown, when it is not the one you are on.
-            else if ((hover || t.Desktop == o.Page.Desktop) && t.Desktop != _current) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xD9FFFFFF, a), 2 * s);
+            else if ((hover || t.Desktop == o.Page.Desktop || t.Desktop == pointed) && t.Desktop != _current) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xD9FFFFFF, a), 2 * s);
             if (o.Added == t.Desktop && 1 - (float)((Now - o.AddedAt) / 0.6) is var lit and > 0)
                 g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xFFFFFFFF, a * lit), 2 * s);
             if (o.Renaming == t.Desktop)

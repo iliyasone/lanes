@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Drawing;
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using Lanes.Core;
 using static Lanes.Native;
 
 namespace Lanes;
@@ -15,7 +17,7 @@ static class AppWindows
     [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr hwnd, int msg, IntPtr wp, IntPtr lp, uint flags, uint timeout, out IntPtr result);
 
     static readonly HashSet<string> ShellClasses = new() { "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow" };
-    static readonly Dictionary<uint, string> AppNames = new();
+    static readonly ConcurrentDictionary<uint, string> AppNames = new();
 
     // The windows you see on the current desktop on this monitor area, back to front; or, with
     // `desktop`, the windows that are on that other desktop (Windows keeps them cloaked).
@@ -50,6 +52,18 @@ static class AppWindows
         }, IntPtr.Zero);
         foreach (var list in map.Values) list.Reverse();
         return map;
+    }
+
+    // The apps' windows on every desktop and monitor, not minimized ones.
+    public static List<IntPtr> Everywhere()
+    {
+        var list = new List<IntPtr>();
+        EnumWindows((h, p) =>
+        {
+            if (IsWindowVisible(h) && !IsIconic(h) && (!Cloaked(h) || CloakedByShell(h)) && IsApp(h, out _, out _)) list.Add(h);
+            return true;
+        }, IntPtr.Zero);
+        return list;
     }
 
     // The window as the overview lists it, or null for what is not an app's own window.
@@ -117,30 +131,27 @@ static class AppWindows
         if (joined) AttachThreadInput(me, front, false);
     }
 
-    // Two windows change places and sizes, as the overview's drag asks: a maximized one stays
-    // maximized and the other takes its place; otherwise each takes the other's frame.
+    // Two windows change places, each keeping its size (see Spread.Trade). A maximized one stays
+    // as it is, and the other goes to the middle of the screen.
     public static void Swap(IntPtr a, IntPtr b)
     {
-        if (IsZoomed(a) || IsZoomed(b))
-        {
-            var pa = new WINDOWPLACEMENT { Length = Marshal.SizeOf<WINDOWPLACEMENT>() };
-            var pb = pa;
-            if (!GetWindowPlacement(a, ref pa) || !GetWindowPlacement(b, ref pb)) return;
-            (pa.Flags, pb.Flags) = (0, 0);
-            (pa.ShowCmd, pb.ShowCmd) = (IsZoomed(b) ? 3 : 4, IsZoomed(a) ? 3 : 4); // SW_SHOWMAXIMIZED, SW_SHOWNOACTIVATE
-            (pa.NormalPosition, pb.NormalPosition) = (pb.NormalPosition, pa.NormalPosition);
-            SetWindowPlacement(a, ref pa);
-            SetWindowPlacement(b, ref pb);
-            return;
-        }
-        if (!GetWindowRect(a, out var ra) || !GetWindowRect(b, out var rb)) return;
-        const uint flags = 0x0004 | 0x0010; // SWP_NOZORDER | SWP_NOACTIVATE
-        SetWindowPos(a, IntPtr.Zero, rb.Left, rb.Top, rb.Width, rb.Height, flags);
-        SetWindowPos(b, IntPtr.Zero, ra.Left, ra.Top, ra.Width, ra.Height, flags);
+        var (fa, fb) = (Frame(a), Frame(b));
+        static Box BoxOf(RECT r) => new(r.Left, r.Top, r.Width, r.Height);
+        var (ta, _) = Spread.Trade(BoxOf(fa), BoxOf(fb), BoxOf(MonitorOf(MonitorFromWindow(b, MONITOR_DEFAULTTONEAREST)).Work));
+        var (tb, _) = Spread.Trade(BoxOf(fb), BoxOf(fa), BoxOf(MonitorOf(MonitorFromWindow(a, MONITOR_DEFAULTTONEAREST)).Work));
+        MoveFrame(a, fa, ta);
+        MoveFrame(b, fb, tb);
+    }
+
+    // Moves a window so that its visible frame `from` is at `to`, its size as it is.
+    static void MoveFrame(IntPtr hwnd, RECT from, Box to)
+    {
+        if (IsZoomed(hwnd) || !GetWindowRect(hwnd, out var r)) return;
+        const uint flags = 0x0001 | 0x0004 | 0x0010; // SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+        SetWindowPos(hwnd, IntPtr.Zero, (int)Math.Round(to.X) + r.Left - from.Left, (int)Math.Round(to.Y) + r.Top - from.Top, 0, 0, flags);
     }
 
     [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr hwnd);
-    [DllImport("user32.dll")] static extern bool GetWindowPlacement(IntPtr hwnd, ref WINDOWPLACEMENT placement);
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] static extern bool AttachThreadInput(uint from, uint to, bool attach);
     [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr hwnd);

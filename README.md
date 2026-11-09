@@ -76,7 +76,8 @@ they are), each about where it was, and the lanes come down above them. Smaller 
 shrink less than big ones, and a small one keeps its size where its row has room. Each window
 casts a shadow, the same as on the desktop, which grows and deepens under the pointer. Over a
 full-screen window the taskbar slides in from the screen's edge as the overview opens and back
-out as it closes. Each lane's row is shifted
+out as it closes; while it is open the real taskbar is lifted over the window, so it takes
+clicks as it does anywhere else. Each lane's row is shifted
 so that the desktop a swipe up or down would land on sits in one column with the desktop you
 are on, in the middle: what is above and below you reads at a glance.
 
@@ -95,7 +96,8 @@ are on, in the middle: what is above and below you reads at a glance.
   there for a new desktop (or lane) with it, the same way; held a moment by the gap between
   two desktops, it opens one between them. **+** also takes it, for a new desktop at the end
   of your lane. Held over another window of the same desktop, that window moves over to its
-  place; let go, and the two change places (and sizes) on the desktop. A window let go
+  place; let go, and the two change places on the desktop, each keeping its size (one against
+  an edge of the screen goes against the same edge in the other's place). A window let go
   anywhere else springs back to its place. The window you dragged comes to the front as the
   overview closes.
 - **Middle-click** a window to close it, or a desktop to close the desktop (its windows go to
@@ -103,6 +105,14 @@ are on, in the middle: what is above and below you reads at a glance.
 - **Click a window** to bring it to the front and close the overview; **click a desktop** to
   go there (the overview zooms into it); **click +** for a new desktop at the end of your lane.
 - **Esc**, a click on empty space or **three fingers down** close it.
+
+**Click an app on the taskbar** that has two windows or more (on any desktops) and the
+overview opens with just that app's windows, as a Mac shows an app's windows: those on other
+desktops come out of their desktops in the lanes, the other apps' windows fade away, and the
+desktops without the app's windows are dimmed. The pointer over a window outlines its desktop.
+Click a window to go to it (on another desktop, the overview zooms into that desktop first);
+the same button again closes the overview. An app with one window, a click with Shift, Ctrl
+or Alt held, the middle button and dragging a button along the taskbar work as in Windows.
 
 The icons on your desktop stay where they are as the fingers start and fade as the overview
 opens.

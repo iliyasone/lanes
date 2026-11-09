@@ -196,6 +196,8 @@ static class Demo
             Click(c.Left + c.Width / 2, c.Top + c.Height / 2);
             await Task.Delay(500);
             Log.Write(clicked ? "click reached the window under the overlay" : "CLICK BLOCKED by the overlay");
+            await AppOverview(engine, dir, editor, agent);
+            await FullScreenTaskbar(engine, dir);
             // With Windows' setting that Lanes turns on, the taskbar keeps the apps of other desktops.
             {
                 // A File Explorer window (another program than these test windows) moved to the
@@ -286,6 +288,79 @@ static class Demo
         mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
         mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
     }
+
+    // The test windows' taskbar button (they are all one program's) clicked: the overview shows
+    // them all, from every desktop; the one on the Agent desktop clicked, Lanes goes there and
+    // brings it to the front.
+    static async Task AppOverview(Engine engine, string dir, Guid editor, Guid agent)
+    {
+        Desktops.Switch(editor);
+        await Task.Delay(2500);
+        engine.Snapshot();
+        await Task.Delay(400);
+        var mine = Application.OpenForms.Cast<Form>().First(f => f.Text == "Editor").Handle;
+        var button = engine.Buttons == null ? null : await engine.Buttons.ButtonOf(mine);
+        if (button == null) { Log.Write("app overview: no taskbar button found for the test windows"); return; }
+        var r = button.Rect;
+        Log.Write($"app overview: the test windows' button is \"{button.App.Name}\" ({button.App.Id}) at {r.Left},{r.Top} {r.Width}x{r.Height}, {button.Windows} windows");
+        SetCursorPos((r.Left + r.Right) / 2, (r.Top + r.Bottom) / 2);
+        await Task.Delay(400);
+        mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
+        await Task.Delay(60);
+        mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
+        await Task.Delay(1300);
+        engine.Screenshot(Path.Combine(dir, "18-app-overview.png"));
+        var (_, shown) = await engine.OverviewLayout();
+        Log.Write("app overview shows: " + string.Join(", ", shown.Select(w => w.Title)));
+        var other = shown.FirstOrDefault(w => w.Title == "Agent").Rect;
+        if (other.Width == 0) return;
+        _pointer = new Point((r.Left + r.Right) / 2, (r.Top + r.Bottom) / 2);
+        await Glide(new Point(other.Left + other.Width / 2, other.Top + other.Height / 2));
+        await Task.Delay(600);
+        engine.Screenshot(Path.Combine(dir, "18a-app-overview-pointer.png"));
+        Click(other.Left + other.Width / 2, other.Top + other.Height / 2);
+        await Task.Delay(2500);
+        Log.Write($"after a click on Agent there: {(Desktops.Current == agent ? "on its desktop" : "on another desktop")}, \"{Native.WindowText(GetForegroundWindow())}\" in front");
+        engine.Screenshot(Path.Combine(dir, "18b-after-app-click.png"));
+    }
+
+    // A full-screen window lies over the taskbar; in the overview the real taskbar is lifted
+    // over it (what is under the pointer there is the taskbar), and back under it after.
+    static async Task FullScreenTaskbar(Engine engine, string dir)
+    {
+        var screen = Screen.PrimaryScreen!;
+        var full = new Form
+        {
+            Text = "Video",
+            BackColor = Color.FromArgb(0x20, 0x10, 0x30),
+            FormBorderStyle = FormBorderStyle.None,
+            StartPosition = FormStartPosition.Manual,
+            Bounds = screen.Bounds,
+            ShowInTaskbar = true,
+        };
+        full.Show();
+        full.Activate();
+        await Task.Delay(1500);
+        engine.Snapshot();
+        await Task.Delay(500);
+        var b = screen.Bounds; var w = screen.WorkingArea;
+        var bar = w.Bottom < b.Bottom ? Rectangle.FromLTRB(b.Left, w.Bottom, b.Right, b.Bottom) : Rectangle.FromLTRB(b.Left, b.Top, b.Right, w.Top);
+        var at = new Native.POINT { X = bar.Left + 8, Y = (bar.Top + bar.Bottom) / 2 };
+        string Under() => Native.ClassName(Native.GetAncestor(WindowFromPoint(at), 2));
+        Log.Write($"full screen: under the taskbar's place before the overview: {Under()}");
+        await Swipe(engine, 3, 0, -1, 0.28 * 0.7);
+        await Task.Delay(1500);
+        Log.Write($"full screen: in the overview: {Under()}");
+        engine.Screenshot(Path.Combine(dir, "19-full-screen-overview.png"));
+        await Swipe(engine, 3, 0, 1, 0.28 * 0.8);
+        await Task.Delay(1500);
+        Log.Write($"full screen: after the overview closed: {Under()}");
+        full.Close();
+        await Task.Delay(500);
+    }
+
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Native.POINT pt);
 
     static async Task<string> LanesNow(Engine engine) =>
         await engine.Ask(() => engine.LanesText());
