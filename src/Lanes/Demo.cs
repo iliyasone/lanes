@@ -304,11 +304,11 @@ static class Demo
         // the app's own windows.
         string? chrome = new[] { @"C:\Program Files\Google\Chrome\Application\chrome.exe", @"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" }.FirstOrDefault(File.Exists);
         System.Diagnostics.Process? browser = null;
+        IntPtr colours = IntPtr.Zero;
         if (chrome != null)
         {
             string profile = Path.Combine(Path.GetTempPath(), "lanes-demo-colours");
             browser = System.Diagnostics.Process.Start(chrome, $"--user-data-dir=\"{profile}\" --no-first-run --no-default-browser-check --window-position=40,600 --window-size=760,400 \"data:text/html,<title>Colours</title><body style='margin:0;background:linear-gradient(90deg,%23e84a5f,%23ffb400,%2337b24d,%233b82f6)'>\"");
-            IntPtr colours = IntPtr.Zero;
             for (int i = 0; i < 100 && colours == IntPtr.Zero; i++)
             {
                 await Task.Delay(100);
@@ -365,28 +365,36 @@ static class Demo
         Log.Write($"after a click on Agent there: {(Desktops.Current == agent ? "on its desktop" : "on another desktop")}, \"{Native.WindowText(GetForegroundWindow())}\" in front");
         engine.Screenshot(Path.Combine(dir, "18b-after-app-click.png"));
         // A click on Chrome's button through the map: the map goes and Chrome comes to the front,
-        // as it does with no map (tried first, to compare).
+        // as it does with no map (tried first, to compare). The buttons' places are read again,
+        // after the switch.
         Desktops.Switch(editor);
         await Task.Delay(2000);
-        var chromeAt = Enumerable.Range(0, Screen.PrimaryScreen!.Bounds.Width / 8)
-            .Select(i => new Native.POINT { X = i * 8, Y = cy })
-            .FirstOrDefault(p => engine.Buttons!.Under(p) is { } b && b.App.Name.Contains("Chrome") && b.Windows == 1);
-        if (chromeAt.X == 0) Log.Write("app map: no button of Chrome with one window on the taskbar");
-        var editorForm = Application.OpenForms.Cast<Form>().First(f => f.Text == "Editor");
-        editorForm.Activate();
-        await Task.Delay(800);
-        Click(chromeAt.X, chromeAt.Y);
-        await Task.Delay(1500);
-        Log.Write($"app map: with no map, a click on Chrome's button puts in front: {Describe(GetForegroundWindow())}");
-        editorForm.Activate();
-        await Task.Delay(800);
-        await Rest();
-        SetCursorPos(chromeAt.X, chromeAt.Y);
-        mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
-        await Task.Delay(150);
-        mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
-        await Task.Delay(1500);
-        Log.Write($"app map: after a click on Chrome's button through it, the map is {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STILL OPEN")}; in front: {Describe(GetForegroundWindow())}");
+        var chromeButton = colours == IntPtr.Zero ? null : await engine.Buttons!.ButtonOf(colours);
+        if (await engine.Buttons!.ButtonOf(mine) is { } again) r = again.Rect;
+        (cx, cy) = ((r.Left + r.Right) / 2, (r.Top + r.Bottom) / 2);
+        if (chromeButton == null) Log.Write("app map: no taskbar button of the Chrome window");
+        else
+        {
+            var b = chromeButton.Rect;
+            int bx = (b.Left + b.Right) / 2, by = (b.Top + b.Bottom) / 2;
+            // A click on the Editor's title bar puts it in front.
+            Click(700, 60);
+            await Task.Delay(800);
+            string before = Describe(GetForegroundWindow());
+            Click(bx, by);
+            await Task.Delay(1500);
+            Log.Write($"app map: with no map, a click on Chrome's button ({chromeButton.Windows} windows): in front {before}, then {Describe(GetForegroundWindow())}");
+            Click(700, 60);
+            await Task.Delay(800);
+            await Rest();
+            before = Describe(GetForegroundWindow());
+            SetCursorPos(bx, by);
+            mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
+            await Task.Delay(150);
+            mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
+            await Task.Delay(1500);
+            Log.Write($"app map: a click on Chrome's button through it: the map is {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STILL OPEN")}; in front {before}, then {Describe(GetForegroundWindow())}");
+        }
         engine.Screenshot(Path.Combine(dir, "18d-taskbar-click-through-map.png"));
         SendKeys.SendWait("{ESC}");
         await Task.Delay(800);
