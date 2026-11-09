@@ -315,6 +315,13 @@ sealed partial class Engine : IGestureSink
         // Lanes' own switches set _current first; any other (a taskbar button, Ctrl+Win+arrow)
         // leaves the open overview showing another desktop's windows: it closes.
         if (now != _current && _overview != null && _switch == null) CloseOverviewNow();
+        // A window on another desktop that comes to the front takes Windows there, even right
+        // after a swipe away from it: the log says which.
+        if (now != _current)
+        {
+            var front = GetForegroundWindow();
+            Log.Write($"Windows switched to desktop {Desktops.IndexOf(now) + 1} itself, {Now - _lastSwitchAt:0.0} s after the last switch; in front: {(front == IntPtr.Zero ? "nothing" : $"{AppWindows.AppName(front)} ({ClassName(front)})")}");
+        }
         _current = now;
         _lastSwitchAt = Now;
         _lanes.Reconcile(Desktops.All(), _current);
