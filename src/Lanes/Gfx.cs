@@ -233,14 +233,6 @@ sealed class Gfx : IDisposable
     public void RoundRectOutline(float x, float y, float w, float h, float r, uint argb, float stroke) =>
         Dc.DrawRoundedRectangle(new RoundedRectangle(new System.Drawing.RectangleF(x, y, w, h), r, r), Brush(argb), stroke);
 
-    ID2D1StrokeStyle? _dashes;
-
-    public void DashedRoundRectOutline(float x, float y, float w, float h, float r, uint argb, float stroke)
-    {
-        _dashes ??= _d2dFactory.CreateStrokeStyle(new StrokeStyleProperties { DashStyle = DashStyle.Dash, DashCap = CapStyle.Round });
-        Dc.DrawRoundedRectangle(new RoundedRectangle(new System.Drawing.RectangleF(x, y, w, h), r, r), Brush(argb), stroke, _dashes);
-    }
-
     public void Rect(float x, float y, float w, float h, uint argb) => Dc.FillRectangle(new Vortice.RawRectF(x, y, x + w, y + h), Brush(argb));
 
     // A soft shadow made of stacked translucent rounded rectangles; cheap and good enough at UI sizes.
@@ -254,45 +246,6 @@ sealed class Gfx : IDisposable
             uint argb = (uint)(Math.Clamp(a, 0, 1) * 255) << 24;
             RoundRect(x - g / 2, y + dy - g / 2, w + g, h + g, r + g / 2, argb);
         }
-    }
-
-    // A window's shadow, cheap at any size: the shadow of a rounded square with corners of
-    // radius `r`, blurred once (PrepareShadow, outside a frame; see ShadowShape), is cut into
-    // corners and sides that are stretched along the window's edges; the middle, under the
-    // window, is left out. `grow` draws it larger (a wider, softer shadow).
-    readonly Dictionary<(int R, int Sigma), ID2D1Bitmap1> _shadows = new();
-
-    public void PrepareShadow(float r, float sigma)
-    {
-        var key = ((int)MathF.Ceiling(r), Math.Max(1, (int)MathF.Ceiling(sigma)));
-        if (_shadows.ContainsKey(key)) return;
-        var shape = new Lanes.Core.ShadowShape(key.Item1, key.Item2);
-        int t = shape.Size;
-        using var p = new Pixels(t, t, opaque: false);
-        unsafe
-        {
-            var px = (uint*)p.Data;
-            for (int i = 0; i < t * t; i++) px[i] = (uint)Math.Clamp(shape.Alpha[i] * 255 + 0.5f, 0, 255) << 24;
-        }
-        _shadows[key] = Bitmap(p);
-    }
-
-    public void WindowShadow(float x, float y, float w, float h, float r, float sigma, float dy, float alpha, float grow = 1)
-    {
-        var key = ((int)MathF.Ceiling(r), Math.Max(1, (int)MathF.Ceiling(sigma)));
-        if (!_shadows.TryGetValue(key, out var bmp)) return;
-        float t = bmp.PixelSize.Width, m = 3 * key.Item2, k = 2 * m + key.Item1;
-        float mg = m * grow, x0 = x - mg, x1 = x + w + mg, y0 = y + dy - mg, y1 = y + h + dy + mg;
-        // A window smaller than the corners squeezes them.
-        float kg = Math.Min(k * grow, Math.Min(x1 - x0, y1 - y0) / 2);
-        float[] sx = { 0, k, t - k, t }, sy = sx, dx = { x0, x0 + kg, x1 - kg, x1 }, dyy = { y0, y0 + kg, y1 - kg, y1 };
-        for (int i = 0; i < 3; i++)
-            for (int j = 0; j < 3; j++)
-            {
-                if (i == 1 && j == 1) continue;
-                if (dx[i + 1] - dx[i] < 0.01f || dyy[j + 1] - dyy[j] < 0.01f) continue;
-                Image(bmp, dx[i], dyy[j], dx[i + 1] - dx[i], dyy[j + 1] - dyy[j], new Vortice.RawRectF(sx[i], sy[j], sx[i + 1], sy[j + 1]), alpha);
-            }
     }
 
     public void Image(ID2D1Bitmap1 bmp, float x, float y, float w, float h, float opacity = 1) =>

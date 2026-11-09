@@ -31,21 +31,23 @@ there is no desktop (the end of a lane, above the top lane) the picture stretche
 and springs back, lifted off a plain backdrop with a short shadow at its edge.
 
 A full-screen window lies over the taskbar, as on the screen: swiping away from it, the
-taskbar comes out from under the window with the window's shadow on it, which goes as the
-window's edge leaves the taskbar.
+taskbar comes out from under the window with the window's light shadow on it, which goes as
+the window's edge leaves the taskbar and as the desktops come to rest.
 
-At the bottom, Windows' own "Desktop N" pill stays the whole way: Lanes draws an exact copy
-of it in the same place until Windows switches and puts its own over it, which then goes
-away as it always does. Above it, a small map of the lanes moves with the fingers: the blue
+At the bottom, in the place of Windows' "Desktop N" pill (which Lanes keeps away), a small
+map of the lanes moves with the fingers and stays as long as Windows' pill would: the blue
 cell is where you are and your lane stands out from the others; a sideways swipe slides your
 lane under the blue cell, one up or down carries it to the next lane. The map, like Windows'
-pop-ups, is light or dark as Windows is (Settings → Personalization → Colors).
+pop-ups, is light or dark as Windows is (Settings → Personalization → Colors). When Windows'
+volume or brightness pop-up shows in the same place, the map glides aside, and back once the
+pop-up has gone.
 
 ### Window shadows
 
 App windows on the desktop cast a shadow as on a Mac: a soft one well below the window and a
-short dark one tight round its edges, deeper than Windows' own thin one. The overview draws
-the same shadow, so nothing changes about it as the overview opens. Lanes keeps four
+short dark one tight round its edges, deeper than Windows' own thin one. The overview shows
+the same shadow, over the windows behind too, so nothing changes about it as the overview
+opens. Lanes keeps four
 see-through windows of its own round each app window, just under it, which clicks pass
 through and which follow the window as it moves (while it is dragged the shadow can be a
 frame behind). Maximized and full-screen windows, and windows kept on top of the others,
@@ -69,8 +71,11 @@ If you change that setting later, Lanes leaves it as you set it.
 
 A three-finger swipe up opens it, again following the fingers: the windows travel from
 where they are into rows, as large as the room below the lanes allows (never larger than
-they are), each about where it was, and the lanes come down above them. Each window casts a
-shadow, the same as on the desktop, which deepens under the pointer. Each lane's row is shifted
+they are), each about where it was, and the lanes come down above them. Smaller windows
+shrink less than big ones, and a small one keeps its size where its row has room. Each window
+casts a shadow, the same as on the desktop, which grows and deepens under the pointer. Over a
+full-screen window the taskbar slides in from the screen's edge as the overview opens and back
+out as it closes. Each lane's row is shifted
 so that the desktop a swipe up or down would land on sits in one column with the desktop you
 are on, in the middle: what is above and below you reads at a glance.
 
@@ -80,16 +85,18 @@ are on, in the middle: what is above and below you reads at a glance.
   stays: the windows of the next desktop slide in with the fingers, your lane slides under
   the blue ring (or the ring moves to the next lane), and Windows switches when you let go.
 - **Drag a desktop** to another place in its lane or into another lane; a blue bar shows
-  where it goes. While you drag, a **New lane** opens above the lanes too, and dropping on
-  either one makes a lane for it. A lane left without desktops goes away.
+  where it goes. While you drag, thin bars come in above the top lane and below the bottom
+  one, and dropping there makes a **New lane** for it; nothing moves to make room. A lane
+  left without desktops goes away.
 - **Drag a window** onto a desktop to move it there (it shrinks into that desktop's
-  picture), onto the place that opens at either end of a lane's row for a new desktop there,
-  onto **+** for a new desktop at the end of your lane, or onto **New lane** for a new lane
-  with it. A window let go anywhere else springs back to its place.
+  picture), onto the thin bar at either end of a lane's row for a new desktop there, onto
+  **+** for a new desktop at the end of your lane, or above or below the lanes for a new lane
+  with it. A window let go anywhere else springs back to its place, and comes to the front
+  as the overview closes.
 - **Middle-click** a window to close it, or a desktop to close the desktop (its windows go to
   the desktop next to it), as in Task View.
 - **Click a window** to bring it to the front and close the overview; **click a desktop** to
-  go there (the overview zooms into it); **click +** or **New lane** for a new desktop there.
+  go there (the overview zooms into it); **click +** for a new desktop at the end of your lane.
 - **Esc**, a click on empty space or **three fingers down** close it.
 
 The icons on your desktop stay where they are as the fingers start and fade as the overview
@@ -165,7 +172,6 @@ click it.
   the same undocumented interface the Settings app uses. If a future Windows breaks that,
   open Settings → Touchpad once and Windows reloads them.
 - Windows' own Task View and Ctrl+Win+arrows still see one row of desktops.
-- Lanes' copy of Windows' "Desktop N" pill is drawn for the dark theme.
 - A window that is on every desktop ("Show this window on all desktops") gets its shadow back
   a moment after each switch.
 
@@ -184,7 +190,8 @@ click it.
   on a flip-model swap chain (`Gfx.cs`) in a topmost window shown on every desktop and
   shown in screenshots (`Overlay.cs`). When a swipe is let go toward another desktop, Lanes
   switches to it at once underneath the picture, and removes the picture once it has landed. The overview's
-  windows are live DWM thumbnails. Work that must happen in your own session without
+  windows are live DWM thumbnails, and so are their shadows (`ShadowSprite.cs`), so that a
+  shadow lies over the windows behind it. Work that must happen in your own session without
   elevation (telling Explorer to reload gesture settings, removing desktops on uninstall)
   runs through a second task, `Lanes session` (`SessionHelper.cs`). `Desktops.cs` talks to Windows' virtual desktops through
   [VirtualDesktopAccessor](https://github.com/Ciantic/VirtualDesktopAccessor) (embedded).

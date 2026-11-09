@@ -678,19 +678,23 @@ sealed partial class Engine : IGestureSink
 
     // Thin slices of the taskbar near the edge of a full-screen window lying over it, each over
     // black and a little less faded than the last: the window's shadow on the taskbar, as far as
-    // `ShadeReach` from the edge, darkest at it (`Shade` is how dark, 0..1). Only the taskbar takes
-    // it, so it is there while the window lies over part of the taskbar and fades within
-    // `ShadeGap` of it leaving (or before it comes): a shadow further off would lie on the
-    // taskbar alone, a dark band with nothing above it.
+    // `ShadeReach` from the edge, darkest at it (`Shade` is how dark, 0..1), light and soft. Only
+    // the taskbar takes it, so it is there while the window lies over part of the taskbar and
+    // fades within `ShadeGap` of it leaving (or before it comes): a shadow further off would lie
+    // on the taskbar alone, a dark band with nothing above it.
     readonly List<Thumbnail> _taskbarShade = new();
-    static readonly float[] Shade = Enumerable.Range(0, 16).Select(i => 0.5f * MathF.Pow(1 - (i + 0.5f) / 16, 2)).ToArray();
-    const float ShadeReach = 72, ShadeGap = 24;
+    static readonly float[] Shade = Enumerable.Range(0, 16).Select(i => 0.3f * MathF.Pow(1 - (i + 0.5f) / 16, 2)).ToArray();
+    const float ShadeReach = 56, ShadeGap = 24;
 
-    void PlaceTaskbar(float opacity)
+    // The taskbar where it is; `away` (0..1) slides it off the screen past its edge by as much of
+    // its height, as Windows hides it behind a full-screen window.
+    void PlaceTaskbar(float opacity, float away = 0)
     {
         if (_taskbar is not { } t) return;
         var f = Frame(t.Window);
-        t.Place(f.Left - _overlay.Area.Left, f.Top - _overlay.Area.Top, f.Width, f.Height, opacity);
+        var m = _overlay.Monitor;
+        float shift = away * f.Height * (f.Top <= m.Top && f.Bottom < m.Bottom ? -1 : 1);
+        t.Place(f.Left - _overlay.Area.Left, f.Top - _overlay.Area.Top + shift, f.Width, f.Height, away >= 0.999f ? 0 : opacity);
         foreach (var slice in _taskbarShade) slice.Place(0, 0, 1, 1, 0);
     }
 

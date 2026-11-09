@@ -44,6 +44,33 @@ public class SpreadTests
     }
 
     [Fact]
+    public void ASmallWindowBesideABigOneKeepsItsSize()
+    {
+        // A maximized window and a small one in front of it (a VPN app's window).
+        var wins = new[] { new Box(0, 40, 1920, 1040), new Box(130, 220, 230, 400) };
+        var area = new Box(72, 420, 1776, 600);
+        var r = Spread.Layout(wins, area);
+        Inside(r, area);
+        Apart(r);
+        Assert.True(r[0].W < 1920 * 0.6, $"{r[0]}");
+        Assert.Equal(230, r[1].W, 3);
+        Assert.Equal(400, r[1].H, 3);
+    }
+
+    [Fact]
+    public void SmallerWindowsShrinkLessButStaySmaller()
+    {
+        var wins = new[] { new Box(0, 0, 1600, 1000), new Box(200, 200, 800, 500) };
+        var area = new Box(0, 0, 1800, 400);
+        var r = Spread.Layout(wins, area);
+        Inside(r, area);
+        Apart(r);
+        Assert.True(r[1].W / 800 > r[0].W / 1600 + 0.05, string.Join(" ", r));
+        Assert.True(r[1].W < r[0].W && r[1].H < r[0].H, string.Join(" ", r));
+        Assert.Equal(800.0 / 500, r[1].W / r[1].H, 3);
+    }
+
+    [Fact]
     public void SmallWindowsAreNotEnlarged()
     {
         var wins = new[] { new Box(100, 200, 400, 300), new Box(900, 120, 400, 300) };

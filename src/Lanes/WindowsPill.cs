@@ -78,11 +78,19 @@ static class WindowsPill
     }
 
     // Shows the window where Explorer put it, with what Explorer shows in it now (the volume).
+    // Once Explorer has hidden it, it is only shown if Explorer showed it again: a program
+    // changing the volume (Windows shows nothing then) would otherwise bring back what was last
+    // in it, Windows' pill, and it would stay, as Explorer thinks it hidden.
     public static void Reveal()
     {
         if (!Hidden) return;
-        Hidden = false;
         var w = _window;
+        if (_pillOver && w != IntPtr.Zero && IsWindow(w) && !IsWindowVisible(w))
+        {
+            Restore();
+            return;
+        }
+        Hidden = false;
         if (w == IntPtr.Zero || !IsWindow(w)) return;
         SetWindowLongPtr(w, GWL_EXSTYLE, (IntPtr)(_exStyle & ~(long)(WS_EX_LAYERED | WS_EX_TRANSPARENT)));
         ShowWindow(w, SW_SHOWNOACTIVATE);

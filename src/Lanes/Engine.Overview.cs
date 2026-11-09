@@ -22,25 +22,28 @@ sealed partial class Engine
         public Guid Desktop;
         public List<AppWindow> Windows = new();
         public List<Thumbnail> Thumbs = new();
+        // Each window's shadow, as live pictures just under its own (see ShadowSprite).
+        public List<ShadowPictures> Shadows = new();
         // Where each window is on the screen, its place in the spread, and where it is drawn
         // now, with its speed (it springs to a new place after a window leaves, or back after a
         // drag); and how far it is lifted (0..1, under the pointer: a deeper shadow).
         public List<Box> From = new(), To = new(), Shown = new(), Speed = new();
         public List<double> Lift = new();
 
-        public void Add(AppWindow w, Thumbnail t, Box from, Box to)
+        public void Add(AppWindow w, ShadowPictures shadow, Thumbnail t, Box from, Box to)
         {
-            Windows.Add(w); Thumbs.Add(t);
+            Windows.Add(w); Thumbs.Add(t); Shadows.Add(shadow);
             From.Add(from); To.Add(to); Shown.Add(to); Speed.Add(default); Lift.Add(0);
         }
 
         public void RemoveAt(int i) => Detach(i).Dispose();
 
-        // Takes a window off the page and hands back its picture, still shown.
+        // Takes a window off the page and hands back its picture, still shown (its shadow goes).
         public Thumbnail Detach(int i)
         {
             var t = Thumbs[i];
-            Windows.RemoveAt(i); Thumbs.RemoveAt(i);
+            Shadows[i].Dispose();
+            Windows.RemoveAt(i); Thumbs.RemoveAt(i); Shadows.RemoveAt(i);
             From.RemoveAt(i); To.RemoveAt(i); Shown.RemoveAt(i); Speed.RemoveAt(i); Lift.RemoveAt(i);
             return t;
         }
@@ -48,11 +51,13 @@ sealed partial class Engine
         public void Hide()
         {
             foreach (var t in Thumbs) t.Place(0, 0, 1, 1, 0);
+            foreach (var sh in Shadows) sh.Hide();
         }
 
         public void Dispose()
         {
             foreach (var t in Thumbs) t.Dispose();
+            foreach (var sh in Shadows) sh.Dispose();
         }
     }
 
@@ -154,6 +159,9 @@ sealed partial class Engine
         public readonly List<Leaving> Leaving = new();
         // When to look at the other desktops' windows again (a window was moved to one).
         public double CheckAt;
+        // A window dragged and let go on its own desktop: it was in front in the overview, so it
+        // comes to the front when the overview closes there.
+        public IntPtr? Raise;
         public bool Open => !Tracking && Spring == null && Zoom == null && P > 0.99;
         public bool Idle => Open && Drag == null && Swipe == null && Going == null;
     }
@@ -182,7 +190,6 @@ sealed partial class Engine
         o.Page = NewPage(_current, o.Strip);
         _overview = o;
         _gfx.Frames.Clear();
-        PrepareShadows();
         _overlay.Place();
         RenderOverview();
         _overlay.Show();
@@ -190,27 +197,36 @@ sealed partial class Engine
         Log.Write($"overview: {o.Page.Windows.Count} windows; {CaptureNote}");
     }
 
-    // A window's shadow, the same as on the desktop (ShadowLook) where it is there: deeper when
-    // the window is lifted (`lift` 1 under the pointer, 2 picked up), the soft one further below
-    // and wider; a fine dark line along the edges, where Windows draws its border. A window made
-    // smaller than it is in the overview (`size` below 1: dragged over the rows) casts a shadow
-    // as much smaller.
-    void PrepareShadows()
+    // A window's picture in the overlay with its shadow (the same as on the desktop, ShadowLook)
+    // registered just before it, so the shadow lies over the windows behind it from the first
+    // moment of the gesture, as on the desktop.
+    (ShadowPictures Shadow, Thumbnail Thumb) Pictures(IntPtr window)
     {
-        float s = _overlay.Scale;
-        _gfx.PrepareShadow((float)ShadowLook.Corner * s, (float)ShadowLook.SoftSigma * s);
-        _gfx.PrepareShadow((float)ShadowLook.Corner * s, (float)ShadowLook.TightSigma * s);
+        if (_sprite == null || Math.Abs(_sprite.Scale - _overlay.Scale) > 0.001)
+        {
+            _sprite?.Dispose();
+            _sprite = new ShadowSprite(_overlay.Scale);
+        }
+        var shadow = new ShadowPictures(_overlay.Handle, _sprite);
+        return (shadow, new Thumbnail(_overlay.Handle, window));
     }
 
-    void WindowShadow(Box b, double lift, float alpha, double size = 1)
+    ShadowSprite? _sprite;
+
+    // A window's picture, with its shadow, goes in front of the others.
+    void ToFront(Page page, int i)
+    {
+        page.Shadows[i].Dispose();
+        page.Thumbs[i].Dispose();
+        (page.Shadows[i], page.Thumbs[i]) = Pictures(page.Windows[i].Handle);
+    }
+
+    // A fine dark line along a window's edges, where Windows draws its border.
+    void WindowEdge(Box b, float alpha, double size = 1)
     {
         if (alpha < 0.002f) return;
-        var g = _gfx;
-        float s = _overlay.Scale, x = (float)b.X, y = (float)b.Y, w = (float)b.W, h = (float)b.H, l = (float)lift, k = (float)Math.Clamp(size, 0.15, 1);
-        float corner = (float)ShadowLook.Corner * s, soft = (float)ShadowLook.SoftSigma * s, tight = (float)ShadowLook.TightSigma * s;
-        g.WindowShadow(x, y, w, h, corner, soft, ((float)ShadowLook.SoftDrop + 7 * l) * s * k, ((float)ShadowLook.SoftAlpha + 0.1f * Math.Min(l, 1.5f)) * alpha, (1 + 0.22f * l) * k);
-        g.WindowShadow(x, y, w, h, corner, tight, (float)ShadowLook.TightDrop * s * k, (float)ShadowLook.TightAlpha * alpha, k);
-        g.RoundRectOutline(x - 0.5f, y - 0.5f, w + 1, h + 1, 4 * s * k, A(0x59000000, alpha), 1);
+        float s = _overlay.Scale, k = (float)Math.Clamp(size, 0.15, 1);
+        _gfx.RoundRectOutline((float)b.X - 0.5f, (float)b.Y - 0.5f, (float)b.W + 1, (float)b.H + 1, 4 * s * k, A(0x59000000, alpha), 1);
     }
 
     static string Key(StripTile t) => t.Kind switch
@@ -249,7 +265,11 @@ sealed partial class Engine
         var windows = AppWindows.OnScreen(area, _overlay.Handle, desktop == _current ? null : desktop);
         var from = windows.Select(w => new Box(w.Frame.Left - area.Left, w.Frame.Top - area.Top, w.Frame.Width, w.Frame.Height)).ToList();
         var to = Spread.Layout(from, SpreadArea(strip), 40 * s);
-        for (int i = 0; i < windows.Count; i++) page.Add(windows[i], new Thumbnail(_overlay.Handle, windows[i].Handle), from[i], to[i]);
+        for (int i = 0; i < windows.Count; i++)
+        {
+            var (shadow, thumb) = Pictures(windows[i].Handle);
+            page.Add(windows[i], shadow, thumb, from[i], to[i]);
+        }
         return page;
     }
 
@@ -359,7 +379,8 @@ sealed partial class Engine
         {
             if (page.Windows.Any(x => x.Handle == w.Handle)) continue;
             var from = new Box(w.Frame.Left - area.Left, w.Frame.Top - area.Top, w.Frame.Width, w.Frame.Height);
-            page.Add(w, new Thumbnail(_overlay.Handle, w.Handle), from, from);
+            var (shadow, thumb) = Pictures(w.Handle);
+            page.Add(w, shadow, thumb, from, from);
             changed = true;
         }
         if (!changed) return;
@@ -399,7 +420,12 @@ sealed partial class Engine
         var o = _overview!;
         if (o.Open) _gfx.Frames.Clear();
         _overlay.Hole(null);
-        if (target < 0.5) Arrive(o);
+        if (target < 0.5)
+        {
+            Arrive(o);
+            if (o.Raise is IntPtr raise && o.Page.Windows.Any(w => w.Handle == raise)) AppWindows.Activate(raise);
+            o.Raise = null;
+        }
         o.Tracking = false;
         o.Press = null;
         o.Spring = new Spring(o.P, speed, target, _tuning.OverviewResponse);
@@ -510,10 +536,12 @@ sealed partial class Engine
             if (Pull(ref d.Box, ref d.Speed, DragTarget(o, d), dt, 45, 1)) moving = true;
             if (now - d.Since < PickUp) moving = true;
         }
+        // The slots' bars are still growing in.
+        if (o.Drag != null && now - o.Drag.Since < SlotsIn) moving = true;
         o.Moving = moving;
     }
 
-    const double PickUp = 0.15, LeaveTime = 0.3;
+    const double PickUp = 0.15, LeaveTime = 0.3, SlotsIn = 0.2;
 
     // One step of a spring pulling each side of `at` toward `to`, `v` its speed: `omega` how
     // fast it swings, `zeta` how soon it stops (1: no bounce). False once it is there.
@@ -794,15 +822,15 @@ sealed partial class Engine
             var b = o.Page.Shown[w];
             o.Drag = new Drag { Window = w, GrabX = (x - b.X) / b.W, GrabY = (y - b.Y) / b.H, Box = b, Speed = o.Page.Speed[w], Since = Now };
             // Its picture goes in front of the others.
-            o.Page.Thumbs[w].Dispose();
-            o.Page.Thumbs[w] = new Thumbnail(_overlay.Handle, o.Page.Windows[w].Handle);
+            ToFront(o.Page, w);
         }
         else if (o.Strip.Hit(x, y) is { Kind: TileKind.Desktop } t)
-            o.Drag = new Drag { Desktop = t.Desktop, GrabX = (x - t.Rect.X) / t.Rect.W, GrabY = (y - t.Rect.Y) / t.Rect.H };
+            o.Drag = new Drag { Desktop = t.Desktop, GrabX = (x - t.Rect.X) / t.Rect.W, GrabY = (y - t.Rect.Y) / t.Rect.H, Since = Now };
         else return;
         o.Hover = -1;
         o.HoverTile = null;
-        // Places for a new lane open above and below the rows while something is dragged.
+        // Room above and below the rows takes it into a new lane (and, for a window, room at the
+        // rows' ends to a new desktop): thin bars there come in.
         Relayout(o);
     }
 
@@ -868,9 +896,9 @@ sealed partial class Engine
             var hwnd = o.Page.Windows[w].Handle;
             Arrive(o);
             AppWindows.Activate(hwnd);
+            o.Raise = null;
             // Its picture goes in front of the others, as the window itself just did.
-            o.Page.Thumbs[w].Dispose();
-            o.Page.Thumbs[w] = new Thumbnail(_overlay.Handle, hwnd);
+            ToFront(o.Page, w);
             CloseOverview();
             return;
         }
@@ -932,6 +960,7 @@ sealed partial class Engine
                 return;
             }
             // Back to its place from where it was let go, at the speed it had.
+            o.Raise = hwnd;
             o.Page.Shown[d.Window] = d.Box;
             o.Page.Speed[d.Window] = d.Speed;
             o.Moving = true;
@@ -1253,15 +1282,15 @@ sealed partial class Engine
         // its shadow, from the first moment of the gesture. No names: the windows speak for
         // themselves.
         float sa = keep;
-        void Lift(Box b, double lift = 0) => WindowShadow(b, lift, sa);
         // Going up or down, windows pass under the band.
         float clip = vertical ? band : float.NegativeInfinity;
         if (vertical) g.Clip(0, clip, g.Width, g.Height - clip);
         for (int i = 0; i < boxes.Length; i++)
         {
-            if (o.Drag?.Window == i) continue;
+            if (o.Drag?.Window == i) { page.Shadows[i].Hide(); continue; }
             var b = boxes[i] with { X = boxes[i].X + ox, Y = boxes[i].Y + oy };
-            Lift(b, page.Lift[i]);
+            WindowEdge(b, sa);
+            page.Shadows[i].Place(b, page.Lift[i], sa, 1, clip);
             page.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep, clip);
         }
         foreach (var unused in new[] { sw?.PreviousPage, sw?.NextPage })
@@ -1271,7 +1300,8 @@ sealed partial class Engine
             for (int i = 0; i < other.Thumbs.Count; i++)
             {
                 var b = other.To[i] with { X = other.To[i].X + ox + (vertical ? 0 : step), Y = other.To[i].Y + oy + (vertical ? step : 0) };
-                Lift(b);
+                WindowEdge(b, sa);
+                other.Shadows[i].Place(b, 0, sa, 1, clip);
                 other.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep, clip);
             }
         }
@@ -1282,7 +1312,9 @@ sealed partial class Engine
             // Picked up: it rises above the others, its shadow deeper and further below; over the
             // rows, where it shrinks, its shadow shrinks with it.
             var b = dw.Box;
-            WindowShadow(b, 1 + Ease(Math.Min(1, (Now - dw.Since) / PickUp)), sa, b.W / Math.Max(1, page.To[dw.Window].W));
+            double size = b.W / Math.Max(1, page.To[dw.Window].W);
+            WindowEdge(b, sa, size);
+            page.Shadows[dw.Window].Place(b, 1 + Ease(Math.Min(1, (Now - dw.Since) / PickUp)), sa, size);
             page.Thumbs[dw.Window].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H);
         }
         foreach (var l in o.Leaving)
@@ -1293,9 +1325,13 @@ sealed partial class Engine
         }
 
         if (o.MenuFor != null && o.Idle) DrawMenu(o);
-        float bar = 1;
-        if (o.Zoom is { } zz && FullScreen(zz.Target)) bar *= 1 - Math.Clamp(z, 0, 1);
-        PlaceTaskbar(bar);
+        // Over a full-screen window the taskbar is not on the screen: it slides in from past its
+        // edge as the window makes room for the overview, and back out as the overview closes
+        // there or zooms into such a desktop.
+        float away = 0;
+        if (o.Zoom is { } zz) away = FullScreen(zz.Target) ? Math.Clamp(z, 0, 1) : 0;
+        else if (FullScreen(page.Desktop)) away = 1 - pc;
+        PlaceTaskbar(1, away);
 
         if (o.Zoom is { } zoom && Picture(zoom.Target) is { } target)
         {
@@ -1355,14 +1391,20 @@ sealed partial class Engine
             }
             if (t.Kind is TileKind.NewLane or TileKind.NewDesk)
             {
-                // Where a new lane, or a new desktop at a row's end, would go: a dashed place,
-                // blue when something is over it.
-                if (targeted)
+                // Where a new lane, or a new desktop at a row's end, would go: a thin bar that
+                // grows out from its middle as the drag starts, blue (and named, for a lane)
+                // when something is over it.
+                float grow = drag == null ? 1 : (float)Ease(Math.Clamp((Now - drag.Since) / SlotsIn, 0, 1));
+                var bar = strip.Bar(t, (targeted ? 6 : 4) * s);
+                float bx = (float)bar.X, by = (float)bar.Y + dy, bw = (float)bar.W, bh = (float)bar.H;
+                if (t.Kind == TileKind.NewLane) { bx += bw * (1 - grow) / 2; bw *= grow; }
+                else { by += bh * (1 - grow) / 2; bh *= grow; }
+                g.RoundRect(bx, by, bw, bh, Math.Min(bw, bh) / 2, A(targeted ? 0xFF4CC2FFu : 0x59FFFFFFu, a * grow));
+                if (targeted && t.Kind == TileKind.NewLane)
                 {
-                    g.RoundRect(x, y, w, h, 8 * s, A(0x264CC2FFu, a));
-                    g.RoundRectOutline(x + 1, y + 1, w - 2, h - 2, 8 * s, A(0xFF4CC2FF, a), 2 * s);
+                    float tw = g.TextWidth("New lane", capFont);
+                    g.Text("New lane", capFont, bx + bw + 10 * s, by + bh / 2 - 9 * s, tw, 18 * s, A(0xFFE6E6E6, a));
                 }
-                else g.DashedRoundRectOutline(x + 0.75f, y + 0.75f, w - 1.5f, h - 1.5f, 8 * s, A(0x59FFFFFFu, a), 1.5f * s);
                 continue;
             }
             if (t.Desktop == _current) ring = new Box(x, y, w, h);

@@ -17,9 +17,10 @@ public readonly record struct DeskDrop(int Lane, int Index, bool NewLane);
 // the desktop you are on, in the middle: what is above and below you reads at a glance. Rows
 // run off the screen's sides when long. One "+" in the top right corner adds a desktop at the
 // end of your lane; a bin just below it (`bin`: there is more than one desktop) takes a
-// desktop dropped on it and closes it. While something is dragged, a slot for a new lane opens
-// above the rows and one below them; while a window is dragged, each row also has a slot for a
-// new desktop at its left end and one at its right end.
+// desktop dropped on it and closes it. While something is dragged, the room above the rows and
+// the room below them take it into a new lane there; while a window is dragged, the room at
+// each end of a row takes it to a new desktop there. Nothing moves to make that room: it shows
+// as a thin bar (Bar) where the new lane or desktop would go.
 public sealed class Strip
 {
     public List<StripTile> Tiles { get; } = new();
@@ -33,6 +34,7 @@ public sealed class Strip
     public double RowGap { get; private set; }
     public double Caption { get; private set; }
     readonly List<double> _rowY = new();
+    double _column, _pad;
 
     public double RowY(int lane) => _rowY[lane];
 
@@ -43,20 +45,18 @@ public sealed class Strip
     {
         var strip = new Strip();
         int n = map.Lanes.Count;
-        double gap = 16 * s, rowGap = 14 * s, pad = 18 * s, top = offset + pad, slotH = 32 * s, caption = 20 * s, plus = 32 * s;
+        double gap = 16 * s, rowGap = 14 * s, pad = 18 * s, top = offset + pad, slot = 32 * s, caption = 20 * s, plus = 32 * s;
         double tw = 160 * s, aspect = height / width, limit = (room ?? height) * 0.36;
-        // The rows and, while dragging, the two slots.
-        double Height(double w) => n * (w * aspect + caption) + (n - 1) * rowGap + 2 * (slotH + rowGap);
+        double Height(double w) => n * (w * aspect + caption) + (n - 1) * rowGap;
         while (tw > 96 * s && pad + Height(tw) > limit) tw -= 4 * s;
         double th = tw * aspect, rowH = th + caption;
         double column = (width - tw) / 2;
         strip.TileW = tw; strip.TileH = th; strip.Gap = gap; strip.RowGap = rowGap; strip.Caption = caption;
+        strip._column = column;
+        strip._pad = pad;
         double y0 = top;
-        if (dragging)
-        {
-            strip.Tiles.Add(new StripTile(TileKind.NewLane, 0, 0, Guid.Empty, new Box(column, top, tw, slotH)));
-            y0 += slotH + rowGap;
-        }
+        // Above the rows, up to the top of the screen.
+        if (dragging) strip.Tiles.Add(new StripTile(TileKind.NewLane, 0, 0, Guid.Empty, new Box(0, 0, width, top)));
         for (int l = 0; l < n; l++)
         {
             var lane = map.Lanes[l];
@@ -64,22 +64,31 @@ public sealed class Strip
             int c = Math.Max(0, lane.Desktops.IndexOf(anchor));
             double y = y0 + l * (rowH + rowGap), x = column - c * (tw + gap);
             strip._rowY.Add(y);
-            if (dragging && window) strip.Tiles.Add(new StripTile(TileKind.NewDesk, l, 0, Guid.Empty, new Box(x - gap - slotH, y, slotH, th)));
+            if (dragging && window) strip.Tiles.Add(new StripTile(TileKind.NewDesk, l, 0, Guid.Empty, new Box(x - gap - slot, y, slot, th)));
             for (int i = 0; i < lane.Desktops.Count; i++, x += tw + gap)
                 strip.Tiles.Add(new StripTile(TileKind.Desktop, l, i, lane.Desktops[i], new Box(x, y, tw, th)));
-            if (dragging && window) strip.Tiles.Add(new StripTile(TileKind.NewDesk, l, lane.Desktops.Count, Guid.Empty, new Box(x, y, slotH, th)));
+            if (dragging && window) strip.Tiles.Add(new StripTile(TileKind.NewDesk, l, lane.Desktops.Count, Guid.Empty, new Box(x, y, slot, th)));
         }
         double rowsEnd = y0 + n * (rowH + rowGap) - rowGap;
-        if (dragging) strip.Tiles.Add(new StripTile(TileKind.NewLane, n, 0, Guid.Empty, new Box(column, rowsEnd + rowGap, tw, slotH)));
+        // Below the last row's desktops, past their names to the band's edge.
+        if (dragging) strip.Tiles.Add(new StripTile(TileKind.NewLane, n, 0, Guid.Empty, new Box(0, rowsEnd - caption, width, caption + pad)));
         strip.Tiles.Add(new StripTile(TileKind.Plus, map.Locate(current)?.Lane ?? 0, 0, Guid.Empty, new Box(width - 28 * s - plus, top, plus, plus)));
         if (bin) strip.Tiles.Add(new StripTile(TileKind.Trash, 0, 0, Guid.Empty, new Box(width - 28 * s - plus, top + plus + 12 * s, plus, plus)));
-        strip.Bottom = (dragging ? rowsEnd + rowGap + slotH : rowsEnd) + pad;
+        strip.Bottom = rowsEnd + pad;
         strip.Column = new Box(column - 16 * s, y0 - 8 * s, tw + 32 * s, rowsEnd - y0 + 16 * s);
-        // The spread starts below where the rows reach while dragging, so a drag does not move it.
-        double dragEnd = top + n * (rowH + rowGap) - rowGap + 2 * (slotH + rowGap);
-        strip.SpreadTop = dragEnd + 56 * s;
+        // Room under the band for a window dragged up to the rows to shrink in.
+        strip.SpreadTop = strip.Bottom + 56 * s;
         return strip;
     }
+
+    // Where a slot shows, `thick` across: a new lane as a bar along the middle column in the room
+    // above or below the rows, a new desktop as one upright in the gap at a row's end.
+    public Box Bar(StripTile t, double thick) => t.Kind switch
+    {
+        TileKind.NewLane => new Box(_column, t.Rect.Bottom - _pad / 2 - thick / 2, TileW, thick),
+        TileKind.NewDesk => new Box((t.Index == 0 ? t.Rect.Right + Gap / 2 : t.Rect.X - Gap / 2) - thick / 2, t.Rect.Y, thick, t.Rect.H),
+        _ => t.Rect,
+    };
 
     // The lane whose row is at height y, if any.
     public int? LaneAt(double y)
@@ -97,7 +106,7 @@ public sealed class Strip
     public DeskDrop? DropFor(double x, double y, Guid dragged, LaneMap map)
     {
         foreach (var t in Tiles.Where(t => t.Kind == TileKind.NewLane))
-            if (x >= t.Rect.X - Gap && x < t.Rect.Right + Gap && y >= t.Rect.Y - RowGap / 2 && y < t.Rect.Bottom + RowGap / 2)
+            if (x >= t.Rect.X && x < t.Rect.Right && y >= t.Rect.Y && y < t.Rect.Bottom)
             {
                 // A desktop alone in its lane moved into a new lane next to it would not change anything.
                 if (map.Locate(dragged) is var (l, _) && map.Lanes[l].Desktops.Count == 1 && (t.Lane == l || t.Lane == l + 1)) return null;

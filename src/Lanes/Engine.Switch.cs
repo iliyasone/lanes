@@ -232,8 +232,9 @@ sealed partial class Engine
         if (FullScreen(s.From)) covers.Add((o, o + page));
         Guid? otherDesktop = o < 0 ? s.Next : o > 0 ? s.Previous : null;
         if (other != null && FullScreen(otherDesktop)) covers.Add((otherAt, otherAt + page));
-        // The shadow comes as the desktops move, not at once at the first touch.
-        PlaceTaskbar(horizontal, covers, Math.Clamp(Math.Abs(o) / (0.1f * page), 0, 1));
+        // The shadow comes as the desktops move, not at once at the first touch, and goes as they
+        // come to rest, so there is none on the desktop the swipe lands on.
+        PlaceTaskbar(horizontal, covers, Math.Clamp(Math.Min(Math.Abs(o), page - Math.Abs(o)) / (0.1f * page), 0, 1));
         g.End();
         // Lanes' pill stays put over both desktops, in its own window above the live pictures.
         float hud = HudAlpha(s);
@@ -286,10 +287,9 @@ sealed partial class Engine
     // blue cell; one up or down carries the blue cell, and the lighter row, straight to the next
     // lane, and your lane's light goes with it: a light row slides from one lane's cells to the
     // other's, seen only inside the cells. The pill is as wide as the longest lane could need
-    // either way, so it keeps its size
-    // and place. Windows' volume
-    // or brightness pop-up shows in the same place: the pill then stands beside it. Should Windows'
-    // pill come up anyway (Lanes could not find its window), Lanes' one goes above it.
+    // either way, so it keeps its size and place. Windows' volume or brightness pop-up shows in
+    // the same place: the pill glides aside while it shows and back once it has gone. Should
+    // Windows' pill come up anyway (Lanes could not find its window), Lanes' one goes above it.
     sealed record Pill(float X, float Y, float W, float H);
 
     const float Cell = 14, CellH = 9, CellGap = 3, PillPad = 12;
@@ -305,12 +305,11 @@ sealed partial class Engine
         float h = MathF.Round((n * CellH + (n - 1) * CellGap + 2 * PillPad) * s);
         float bottom = WorkBottom - (WindowsPill.Available ? 13 : 77) * s;
         float home = MathF.Round((_gfx.Width - w) / 2), x = home;
-        // Beside Windows' pop-up, from when it shows until this pill goes, so the two do not shift
-        // against each other.
+        // Beside Windows' pop-up while it shows.
         var osd = WindowsPill.ShownAt();
-        if (osd is { } o && o.Left - _overlay.Area.Left < home + w && o.Right - _overlay.Area.Left > home) _pillAside = o.Left - _overlay.Area.Left - 12 * s - w;
+        _pillAside = osd is { } o && o.Left - _overlay.Area.Left < home + w && o.Right - _overlay.Area.Left > home ? o.Left - _overlay.Area.Left - 12 * s - w : null;
         if (_pillAside is float aside) x = aside;
-        _pillX = _pillX is float was && Math.Abs(was - x) > 0.5f ? was + (x - was) * 0.35f : x;
+        _pillX = _pillX is float was && Math.Abs(was - x) > 0.5f ? was + (x - was) * 0.2f : x;
         return new Pill(MathF.Round(_pillX.Value), MathF.Round(bottom - h), w, h);
     }
 

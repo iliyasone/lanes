@@ -10,8 +10,10 @@ public readonly record struct Box(double X, double Y, double W, double H)
 // Lays the windows of a desktop out for the overview as large as the area allows, in rows, none
 // over another: windows higher on the screen go in the upper rows, and each row keeps their
 // order from left to right, so every window is about where you left it. Every number of rows
-// is tried and the one that leaves the windows biggest wins. One scale for all, so the biggest
-// stays the biggest, and never above their real size. `gap` is kept free between windows.
+// is tried and the one that leaves the windows biggest wins: the biggest window takes the scale
+// that allows. Smaller ones shrink less, a small one beside a big one not at all where its row
+// has room, so the biggest still looks the biggest; none goes above its real size or out of its
+// row. `gap` is kept free between windows.
 public static class Spread
 {
     public static Box[] Layout(IReadOnlyList<Box> windows, Box area, double gap = 32)
@@ -34,14 +36,24 @@ public static class Spread
         var chosen = best!;
         double height = chosen.Sum(r => r.Max(i => windows[i].H)) * s + gap * (chosen.Count - 1);
         double y = area.Y + (area.H - height) / 2;
+        double most = windows.Max(w => w.W * w.H);
+        var k = new double[n];
         foreach (var row in chosen)
         {
             row.Sort((a, b) => (windows[a].X + windows[a].W / 2).CompareTo(windows[b].X + windows[b].W / 2));
             double rowH = row.Max(i => windows[i].H) * s;
-            double x = area.X + (area.W - (row.Sum(i => windows[i].W) * s + gap * (row.Count - 1))) / 2;
+            // A window a quarter the size (in area) of the biggest shrinks half as much, and so on;
+            // never taller than its row.
+            foreach (int i in row)
+                k[i] = Math.Max(s, Math.Min(Math.Min(1, s * Math.Pow(most / Math.Max(1, windows[i].W * windows[i].H), 0.25)), rowH / windows[i].H));
+            // Back toward the one scale as far as the row needs to fit across.
+            double room = area.W - gap * (row.Count - 1) - row.Sum(i => windows[i].W * s), more = row.Sum(i => windows[i].W * (k[i] - s));
+            if (more > room)
+                foreach (int i in row) k[i] = s + (k[i] - s) * Math.Max(0, room) / more;
+            double x = area.X + (area.W - (row.Sum(i => windows[i].W * k[i]) + gap * (row.Count - 1))) / 2;
             foreach (int i in row)
             {
-                double w = windows[i].W * s, h = windows[i].H * s;
+                double w = windows[i].W * k[i], h = windows[i].H * k[i];
                 result[i] = new Box(x, y + (rowH - h) / 2, w, h);
                 x += w + gap;
             }

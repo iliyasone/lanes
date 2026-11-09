@@ -31,15 +31,26 @@ public class StripTests
     }
 
     [Fact]
-    public void ADragOpensNewLaneSlotsAboveAndBelowAndKeepsTheWindowsWhereTheyWere()
+    public void ADragOpensNewLaneSlotsAboveAndBelowWithoutMovingAnything()
     {
-        var idle = Strip.Layout(Sample(), B, 1920, 1080, 1);
-        var drag = Strip.Layout(Sample(), B, 1920, 1080, 1, dragging: true);
+        var idle = Strip.Layout(Sample(), B, 1920, 1080, 1, offset: 48);
+        var drag = Strip.Layout(Sample(), B, 1920, 1080, 1, dragging: true, offset: 48);
         Assert.DoesNotContain(idle.Tiles, t => t.Kind == TileKind.NewLane);
-        Assert.Equal(2, drag.Tiles.Count(t => t.Kind == TileKind.NewLane));
-        Assert.True(Of(drag, Msg).Y > Of(idle, Msg).Y);
+        var slots = drag.Tiles.Where(t => t.Kind == TileKind.NewLane).ToList();
+        Assert.Equal(2, slots.Count);
+        Assert.Equal(Of(idle, Msg), Of(drag, Msg));
+        Assert.Equal(Of(idle, Video), Of(drag, Video));
         Assert.Equal(idle.SpreadTop, drag.SpreadTop, 3);
-        Assert.True(drag.Bottom < drag.SpreadTop);
+        Assert.Equal(idle.Bottom, drag.Bottom, 3);
+        // Room above the top row and below the bottom one, over no desktop; a thin bar in each.
+        Assert.True(slots[0].Rect.Bottom <= Of(drag, Msg).Y && slots[1].Rect.Y >= Of(drag, Video).Bottom);
+        Assert.True(slots[1].Rect.Bottom <= drag.Bottom);
+        foreach (var slot in slots)
+        {
+            var bar = drag.Bar(slot, 4);
+            Assert.Equal(4, bar.H, 3);
+            Assert.True(bar.Y >= slot.Rect.Y && bar.Bottom <= slot.Rect.Bottom, $"{bar} in {slot.Rect}");
+        }
     }
 
     [Fact]
@@ -55,6 +66,9 @@ public class StripTests
         Assert.Equal(m.Lanes[1].Desktops.Count, middle[1].Index);
         Assert.True(middle[0].Rect.Right < Of(s, A).X && middle[1].Rect.X > Of(s, C).Right);
         Assert.Equal(middle[0], s.Hit(middle[0].Rect.X + 2, middle[0].Rect.Y + 2));
+        // Shown as a bar in the gap beside the row's end.
+        var bar = s.Bar(middle[1], 4);
+        Assert.InRange(bar.X + bar.W / 2, Of(s, C).Right, middle[1].Rect.X);
     }
 
     [Fact]
