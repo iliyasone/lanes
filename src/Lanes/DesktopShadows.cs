@@ -149,7 +149,12 @@ sealed class DesktopShadows : IDisposable
                 case EVENT_OBJECT_LOCATIONCHANGE:
                     // The one that comes many times a second while a window is dragged: answered at once.
                     if (known) Follow(sh!);
-                    else if (TopLevel(hwnd)) Soon(0.05);
+                    else if (TopLevel(hwnd))
+                    {
+                        // Perhaps one coming back from maximized: its shadow comes in after it.
+                        _arriving[hwnd] = Now;
+                        Soon(0.05);
+                    }
                     break;
                 case EVENT_SYSTEM_MINIMIZESTART:
                     if (known) Hide(sh!);
