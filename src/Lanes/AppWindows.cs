@@ -54,18 +54,6 @@ static class AppWindows
         return map;
     }
 
-    // The apps' windows on every desktop and monitor, not minimized ones.
-    public static List<IntPtr> Everywhere()
-    {
-        var list = new List<IntPtr>();
-        EnumWindows((h, p) =>
-        {
-            if (IsWindowVisible(h) && !IsIconic(h) && (!Cloaked(h) || CloakedByShell(h)) && IsApp(h, out _, out _)) list.Add(h);
-            return true;
-        }, IntPtr.Zero);
-        return list;
-    }
-
     // The window as the overview lists it, or null for what is not an app's own window.
     static AppWindow? App(IntPtr h, RECT area)
     {

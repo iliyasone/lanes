@@ -197,7 +197,6 @@ static class Demo
             await Task.Delay(500);
             Log.Write(clicked ? "click reached the window under the overlay" : "CLICK BLOCKED by the overlay");
             await WindowButtons(engine, dir, editor);
-            await AppOverview(engine, dir, editor, agent);
             await FullScreenTaskbar(engine, dir);
             // With Windows' setting that Lanes turns on, the taskbar keeps the apps of other desktops.
             {
@@ -288,115 +287,6 @@ static class Demo
         SetCursorPos(x, y);
         mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
         mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
-    }
-
-    // The test windows' taskbar button (they are all one program's): the pointer resting on it
-    // brings up Lanes' map of the desktops, with the windows where they are, before Windows' own
-    // previews would come (the log says whether they did), and the map goes once the pointer
-    // leaves it. The one on the Agent desktop clicked, Lanes goes there and brings it to the front.
-    static async Task AppOverview(Engine engine, string dir, Guid editor, Guid agent)
-    {
-        Desktops.Switch(editor);
-        await Task.Delay(2500);
-        engine.Snapshot();
-        await Task.Delay(400);
-        // Another app's window on this desktop: it is not among the app's own, which are all
-        // that is shown.
-        string? chrome = new[] { @"C:\Program Files\Google\Chrome\Application\chrome.exe", @"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" }.FirstOrDefault(File.Exists);
-        System.Diagnostics.Process? browser = null;
-        IntPtr colours = IntPtr.Zero;
-        if (chrome != null)
-        {
-            string profile = Path.Combine(Path.GetTempPath(), "lanes-demo-colours");
-            browser = System.Diagnostics.Process.Start(chrome, $"--user-data-dir=\"{profile}\" --no-first-run --no-default-browser-check --window-position=40,600 --window-size=760,400 \"data:text/html,<title>Colours</title><body style='margin:0;background:linear-gradient(90deg,%23e84a5f,%23ffb400,%2337b24d,%233b82f6)'>\"");
-            for (int i = 0; i < 100 && colours == IntPtr.Zero; i++)
-            {
-                await Task.Delay(100);
-                colours = TopWindows().FirstOrDefault(h => Native.ClassName(h) == "Chrome_WidgetWin_1" && Native.WindowText(h).StartsWith("Colours"));
-            }
-            await Task.Delay(1500);
-            engine.Snapshot();
-            await Task.Delay(400);
-            Log.Write($"app map: a Chrome window {(colours == IntPtr.Zero ? "NOT FOUND" : "open here")}");
-        }
-        var mine = Application.OpenForms.Cast<Form>().First(f => f.Text == "Editor").Handle;
-        var button = engine.Buttons == null ? null : await engine.Buttons.ButtonOf(mine);
-        if (button == null) { Log.Write("app map: no taskbar button found for the test windows"); return; }
-        var r = button.Rect;
-        Log.Write($"app map: the test windows' button is \"{button.App.Name}\" ({button.App.Id}) at {r.Left},{r.Top} {r.Width}x{r.Height}, {button.Windows} windows");
-        int cx = (r.Left + r.Right) / 2, cy = (r.Top + r.Bottom) / 2;
-        // Rests on the button: when Windows starts its previews, if it does, and when Lanes' map is up.
-        async Task Rest()
-        {
-            var before = TopWindows();
-            SetCursorPos(cx - 20, cy);
-            long t0 = Environment.TickCount64;
-            long? previews = null, map = null;
-            for (int i = 0; Environment.TickCount64 - t0 < 1800; i++)
-            {
-                if (i < 20) mouse_event(0x1, 1, 0, 0, IntPtr.Zero);
-                if (previews == null && TopWindows().Any(w => !before.Contains(w) && Native.ClassName(w) is "Xaml_WindowedPopupClass" or "ThumbnailDeviceHelperWnd")) previews = Environment.TickCount64 - t0;
-                if (map == null && (await engine.OverviewLayout()).Windows.Count > 0) map = Environment.TickCount64 - t0;
-                await Task.Delay(20);
-            }
-            Log.Write($"app map: resting on the button, Windows' previews {(previews == null ? "never started" : $"STARTED after {previews} ms")}; Lanes' map {(map == null ? "NOT OPEN" : $"up after {map} ms")}");
-        }
-        await Rest();
-        engine.Screenshot(Path.Combine(dir, "18c-map-on-hover.png"));
-        await Task.Delay(300);
-        // The pointer goes off the taskbar to where there is no window.
-        SetCursorPos(20, 620);
-        mouse_event(0x1, 0, 1, 0, IntPtr.Zero);
-        await Task.Delay(1800);
-        Log.Write($"app map: after the pointer left it, it is {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STILL OPEN")}");
-        await Rest();
-        engine.Screenshot(Path.Combine(dir, "18-app-overview.png"));
-        var (_, windows) = await engine.OverviewLayout();
-        var other = windows.FirstOrDefault(w => w.Title == "Agent").Rect;
-        if (other.Width == 0) return;
-        _pointer = new Point(cx, cy);
-        await Glide(new Point(other.Left + other.Width / 2, other.Top + other.Height / 2));
-        await Task.Delay(600);
-        engine.Screenshot(Path.Combine(dir, "18a-app-overview-pointer.png"));
-        Click(other.Left + other.Width / 2, other.Top + other.Height / 2);
-        await Task.Delay(2500);
-        Log.Write($"after a click on Agent there: {(Desktops.Current == agent ? "on its desktop" : "on another desktop")}, \"{Native.WindowText(GetForegroundWindow())}\" in front");
-        engine.Screenshot(Path.Combine(dir, "18b-after-app-click.png"));
-        // A click on Chrome's button through the map: the map goes and Chrome comes to the front,
-        // as it does with no map (tried first, to compare). The buttons' places are read again,
-        // after the switch.
-        Desktops.Switch(editor);
-        await Task.Delay(2000);
-        var chromeButton = colours == IntPtr.Zero ? null : await engine.Buttons!.ButtonOf(colours);
-        if (await engine.Buttons!.ButtonOf(mine) is { } again) r = again.Rect;
-        (cx, cy) = ((r.Left + r.Right) / 2, (r.Top + r.Bottom) / 2);
-        if (chromeButton == null) Log.Write("app map: no taskbar button of the Chrome window");
-        else
-        {
-            var b = chromeButton.Rect;
-            int bx = (b.Left + b.Right) / 2, by = (b.Top + b.Bottom) / 2;
-            // A click on the Editor's title bar puts it in front.
-            Click(700, 60);
-            await Task.Delay(800);
-            string before = Describe(GetForegroundWindow());
-            Click(bx, by);
-            await Task.Delay(1500);
-            Log.Write($"app map: with no map, a click on Chrome's button ({chromeButton.Windows} windows): in front {before}, then {Describe(GetForegroundWindow())}");
-            Click(700, 60);
-            await Task.Delay(800);
-            await Rest();
-            before = Describe(GetForegroundWindow());
-            SetCursorPos(bx, by);
-            mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
-            await Task.Delay(150);
-            mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
-            await Task.Delay(1500);
-            Log.Write($"app map: a click on Chrome's button through it: the map is {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STILL OPEN")}; in front {before}, then {Describe(GetForegroundWindow())}");
-        }
-        engine.Screenshot(Path.Combine(dir, "18d-taskbar-click-through-map.png"));
-        SendKeys.SendWait("{ESC}");
-        await Task.Delay(800);
-        try { browser?.Kill(entireProcessTree: true); } catch { }
     }
 
     // The top-level windows shown now.

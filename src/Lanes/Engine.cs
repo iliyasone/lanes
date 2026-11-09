@@ -122,8 +122,7 @@ sealed partial class Engine : IGestureSink
                 Desktops.Listen(_msg.Handle, WM_DESKTOP_CHANGED);
                 SetUpLanes();
                 Ready = true;
-                Buttons = new TaskbarButtons((app, taken) => Post(() => TaskbarClicked(app, taken)), app => Post(() => Hovered(app)),
-                    pt => Post(() => TaskbarClick(pt)));
+                Buttons = new TaskbarButtons();
             }
             else Status?.Invoke("This Windows version is not supported");
             PrepareWallpapers();
@@ -156,7 +155,7 @@ sealed partial class Engine : IGestureSink
                 else
                 {
                     // Faster while Lanes' pill is fading after a switch.
-                    MessageLoop.Wait(_map.Shown || _revealAt > 0 || WindowsPill.Hidden || _hover != null || _overview is { App: not null } ? 15u : 200u);
+                    MessageLoop.Wait(_map.Shown || _revealAt > 0 || WindowsPill.Hidden ? 15u : 200u);
                     if (!MessageLoop.Pump()) break;
                     Tick();
                     Idle();
@@ -195,7 +194,6 @@ sealed partial class Engine : IGestureSink
         double now = Now;
         if (_switch != null) StepSwitch(now);
         if (_overview != null) StepOverview(now);
-        StepHover(now);
         if (_retakeAt > 0 && now >= _retakeAt) Retake();
         if (_map.Shown && _switch == null) StepLingeringPill(now);
         // Explorer's pop-up window goes back once Windows' pill would be gone (it stays 2 to 2.5
@@ -957,8 +955,7 @@ sealed partial class Engine : IGestureSink
         if (kind == GestureKind.Switch)
         {
             // Four fingers in the open overview move between desktops without leaving it.
-            // Not on an app's map, which is there only to pick one of its windows.
-            if (_overview is { Open: true, Drag: null, Going: null, App: null }) { BeginInnerSwipe(axis); return; }
+            if (_overview is { Open: true, Drag: null, Going: null }) { BeginInnerSwipe(axis); return; }
             if (_overview != null || _switch is { Spring: null }) { _ignoring = true; return; }
             BeginSwitch(axis);
         }
@@ -1045,13 +1042,11 @@ sealed partial class Engine : IGestureSink
 
     public void OpenOverviewFromMenu() => Post(OpenOverview);
 
-    void OpenOverview() => OpenOverview(null);
-
-    void OpenOverview(AppRef? app)
+    void OpenOverview()
     {
         if (!Ready || _overview != null || _switch != null) return;
         _touchCaptureOf = _current;
-        BeginOverview(app);
+        BeginOverview();
         _overview!.Tracking = false;
         SettleOverview(1, 0);
     }
