@@ -262,6 +262,7 @@ sealed partial class Engine : IGestureSink
     {
         try
         {
+            Thumbnail.Release();
             _switch = null;
             CloseOverviewNow();
             _overlay.Hide();

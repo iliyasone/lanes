@@ -304,12 +304,32 @@ sealed class Thumbnail : IDisposable
             Opacity = (byte)Math.Clamp(opacity * 255, 0, 255),
             Visible = opacity > 0.003 ? 1 : 0,
         };
-        DwmUpdateThumbnailProperties(_id, ref p);
+        if (_holding) Pending[_id] = p;
+        else DwmUpdateThumbnailProperties(_id, ref p);
     }
 
     public void Dispose()
     {
-        if (Valid) DwmUnregisterThumbnail(_id);
+        if (!Valid) return;
+        Pending.Remove(_id);
+        DwmUnregisterThumbnail(_id);
+    }
+
+    // While Lanes draws a frame, changes to the live pictures wait for it to be drawn (see Gfx.End).
+    static readonly Dictionary<IntPtr, DWM_THUMBNAIL_PROPERTIES> Pending = new();
+    static bool _holding;
+
+    public static void Hold() => _holding = true;
+
+    public static void Release()
+    {
+        _holding = false;
+        foreach (var (id, p) in Pending)
+        {
+            var q = p;
+            DwmUpdateThumbnailProperties(id, ref q);
+        }
+        Pending.Clear();
     }
 }
 
