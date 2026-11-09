@@ -300,23 +300,24 @@ static class Demo
         await Task.Delay(2500);
         engine.Snapshot();
         await Task.Delay(400);
-        // Another app's window, in colour, on the Agent desktop: the map shows it in grey, as all
-        // but the app's own windows.
+        // Another app's window, in colour, on this desktop: the map shows it in grey, as all but
+        // the app's own windows.
         string? chrome = new[] { @"C:\Program Files\Google\Chrome\Application\chrome.exe", @"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" }.FirstOrDefault(File.Exists);
         System.Diagnostics.Process? browser = null;
         if (chrome != null)
         {
             string profile = Path.Combine(Path.GetTempPath(), "lanes-demo-colours");
-            browser = System.Diagnostics.Process.Start(chrome, $"--user-data-dir=\"{profile}\" --no-first-run --no-default-browser-check --window-position=760,120 --window-size=1000,640 \"data:text/html,<title>Colours</title><body style='margin:0;background:linear-gradient(90deg,%23e84a5f,%23ffb400,%2337b24d,%233b82f6)'>\"");
+            browser = System.Diagnostics.Process.Start(chrome, $"--user-data-dir=\"{profile}\" --no-first-run --no-default-browser-check --window-position=40,600 --window-size=760,400 \"data:text/html,<title>Colours</title><body style='margin:0;background:linear-gradient(90deg,%23e84a5f,%23ffb400,%2337b24d,%233b82f6)'>\"");
             IntPtr colours = IntPtr.Zero;
             for (int i = 0; i < 100 && colours == IntPtr.Zero; i++)
             {
                 await Task.Delay(100);
                 colours = TopWindows().FirstOrDefault(h => Native.ClassName(h) == "Chrome_WidgetWin_1" && Native.WindowText(h).StartsWith("Colours"));
             }
-            if (colours != IntPtr.Zero) Desktops.MoveWindow(colours, agent);
-            await Task.Delay(2500);
-            Log.Write($"app map: a Chrome window {(colours == IntPtr.Zero ? "NOT FOUND" : "moved to the Agent desktop")}");
+            await Task.Delay(1500);
+            engine.Snapshot();
+            await Task.Delay(400);
+            Log.Write($"app map: a Chrome window {(colours == IntPtr.Zero ? "NOT FOUND" : "open here")}");
         }
         var mine = Application.OpenForms.Cast<Form>().First(f => f.Text == "Editor").Handle;
         var button = engine.Buttons == null ? null : await engine.Buttons.ButtonOf(mine);
@@ -368,7 +369,7 @@ static class Demo
         await Task.Delay(2000);
         await Rest();
         var start = TopWindows();
-        SetCursorPos(r.Left - 400, cy);
+        SetCursorPos(r.Left - 300, cy);
         mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
         await Task.Delay(150);
         mouse_event(0x4, 0, 0, 0, IntPtr.Zero);

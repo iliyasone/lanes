@@ -160,12 +160,14 @@ sealed class Gfx : IDisposable
         return Through(blur, w, h);
     }
 
-    // A grey copy, `light` as bright (0..1). Call between frames only.
-    public ID2D1Bitmap1 Grey(ID2D1Bitmap1 src, float light)
+    // A grey copy, `light` as bright (0..1), blurred by `blur` pixels. Call between frames only.
+    public ID2D1Bitmap1 Grey(ID2D1Bitmap1 src, float light, float blur)
     {
         float r = 0.2126f * light, g = 0.7152f * light, b = 0.0722f * light;
+        using var soft = new Vortice.Direct2D1.Effects.GaussianBlur(Dc) { StandardDeviation = blur, BorderMode = BorderMode.Hard };
+        soft.SetInput(0, src, true);
         using var grey = new Vortice.Direct2D1.Effects.ColorMatrix(Dc) { Matrix = new Matrix5x4(r, r, r, 0, g, g, g, 0, b, b, b, 0, 0, 0, 0, 1, 0, 0, 0, 0) };
-        grey.SetInput(0, src, true);
+        grey.SetInputEffect(0, soft, true);
         return Through(grey, src.PixelSize.Width, src.PixelSize.Height);
     }
 

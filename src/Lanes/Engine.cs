@@ -791,7 +791,8 @@ sealed partial class Engine : IGestureSink
         return _tilePictures[desktop] = _gfx.Scaled(full, (int)w, (int)h, 8 * _overlay.Scale);
     }
 
-    // A desktop's picture in grey at a tile's size, for an app's map. Made between frames
+    // A desktop's picture at a tile's size for an app's map: grey, darker and a little soft, so
+    // the app's windows over it, live and sharp, stand out. Made between frames
     // (MakeMapTile, as the tiles get their places): drawing it takes the drawing context.
     readonly Dictionary<Guid, (ID2D1Bitmap1 From, ID2D1Bitmap1 Small)> _mapTiles = new();
 
@@ -800,10 +801,8 @@ sealed partial class Engine : IGestureSink
         if (Picture(desktop) is not { } full || MapTile(desktop, w) != null) return;
         if (_mapTiles.Remove(desktop, out var old)) old.Small.Dispose();
         using var small = _gfx.Scaled(full, (int)w, (int)h, 8 * _overlay.Scale);
-        _mapTiles[desktop] = (full, _gfx.Grey(small, MapGrey));
+        _mapTiles[desktop] = (full, _gfx.Grey(small, 0.45f, 1.5f * _overlay.Scale));
     }
-
-    const float MapGrey = 0.75f;
 
     // The one made, if it is still of that desktop's picture and of this size.
     ID2D1Bitmap1? MapTile(Guid desktop, float w) =>

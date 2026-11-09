@@ -1465,18 +1465,18 @@ sealed partial class Engine
         var buttons = WindowButtons(b);
         for (int k = 0; k < buttons.Length; k++)
         {
-            float x = (float)buttons[k].X, y = (float)buttons[k].Y, d = (float)buttons[k].W, r = d / 2, cx = x + r, cy = y + r, arm = 4.5f * s;
-            uint fill = k == under ? (k == 2 ? 0xFFC42B1Cu : 0x66FFFFFFu) : 0x38FFFFFFu;
+            float x = (float)buttons[k].X, y = (float)buttons[k].Y, d = (float)buttons[k].W, r = d / 2, cx = x + r, cy = y + r, arm = (k == 1 ? 6 : 5) * s;
+            uint fill = k == under ? (k == 2 ? 0xFFE81123u : 0x66FFFFFFu) : 0x38FFFFFFu;
             g.Shadow(x, y, d, d, r, 8 * s, 2 * s, 0.4f * alpha);
             g.RoundRect(x, y, d, d, r, A(fill, alpha));
             g.RoundRectOutline(x + 0.5f, y + 0.5f, d - 1, d - 1, r, A(0x66FFFFFFu, alpha), 1);
             uint ink = A(0xFFFFFFFFu, alpha);
-            float t = 1.25f * s;
+            float t = 1.5f * s;
             if (k == 0) g.Rect(cx - arm, cy - t / 2, 2 * arm, t, ink);
             else if (k == 1)
             {
                 // Full screen: four corners, pointing out; back from it, pointing in.
-                float l = 3 * s, c = full ? arm - l : arm, way = full ? -1 : 1;
+                float l = 4 * s, c = full ? arm - l + 1 * s : arm, way = full ? -1 : 1;
                 foreach (var (dx, dy) in new[] { (-1, -1), (1, -1), (-1, 1), (1, 1) })
                 {
                     float x0 = cx + dx * c, y0 = cy + dy * c;
@@ -1817,9 +1817,17 @@ sealed partial class Engine
         }
         foreach (var l in o.Leaving)
         {
-            double u = Math.Clamp((Now - l.Start) / l.Time, 0, 1);
-            double t = l.Minimized ? (u < 0.5 ? 4 * u * u * u : 1 - Math.Pow(2 - 2 * u, 3) / 2) : Ease(u);
+            double u = Math.Clamp((Now - l.Start) / l.Time, 0, 1), t = Ease(u);
             var b = l.From.Lerp(l.To, t);
+            if (l.Minimized)
+            {
+                // It shrinks at once and travels as it does, into the button.
+                double go = u < 0.5 ? 4 * u * u * u : 1 - Math.Pow(2 - 2 * u, 3) / 2;
+                double cx = l.From.X + l.From.W / 2 + (l.To.X + l.To.W / 2 - l.From.X - l.From.W / 2) * go;
+                double cy = l.From.Y + l.From.H / 2 + (l.To.Y + l.To.H / 2 - l.From.Y - l.From.H / 2) * go;
+                double w = l.From.W + (l.To.W - l.From.W) * t, h = l.From.H + (l.To.H - l.From.H) * t;
+                b = new Box(cx - w / 2, cy - h / 2, w, h);
+            }
             l.Thumb.Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, (float)(l.Minimized ? Math.Clamp((1 - u) / 0.3, 0, 1) : 1 - t));
         }
 
@@ -1856,7 +1864,7 @@ sealed partial class Engine
         var page = o.Page;
         g.Begin(Gfx.Color(0xFF000000));
         if (Picture(_current) is { } screen) g.Image(screen, 0, 0, g.Width, g.Height);
-        g.Rect(0, 0, g.Width, g.Height, A(0xFF000000, 0.2f * pc));
+        g.Rect(0, 0, g.Width, g.Height, A(0xFF000000, 0.45f * pc));
         float sp = Math.Clamp(p / 0.6f, 0, 1), sq = 1 - MathF.Pow(1 - sp, 3);
         float slide = MathF.Round((1 - sq) * (float)(o.Panel.Bottom - o.Panel.Top) * (o.Below ? 1 : -1));
         float top = (float)o.Panel.Top + slide, bottom = (float)o.Panel.Bottom + slide;
@@ -1867,7 +1875,14 @@ sealed partial class Engine
             if (_mapBlur != null) g.Image(_mapBlur, 0, 0, g.Width, g.Height);
             g.Rect(0, top, g.Width, bottom - top, A(0xFF000000, 0.35f));
             g.Unclip();
-            g.Rect(0, o.Below ? top : bottom - 1, g.Width, 1, 0x1FFFFFFF);
+            // Its edge catches the light, and it casts a soft shadow on the screen past it.
+            float edge = o.Below ? top : bottom, way = o.Below ? -1 : 1, reach = 24 * s;
+            for (int k = 0; k < 12; k++)
+            {
+                float d0 = reach * k / 12, d1 = reach * (k + 1) / 12;
+                g.Rect(0, way > 0 ? edge + d0 : edge - d1, g.Width, d1 - d0, A(0xFF000000, 0.4f * MathF.Pow(1 - (k + 0.5f) / 12, 2)));
+            }
+            g.Rect(0, o.Below ? top : bottom - 1, g.Width, 1, 0x33FFFFFF);
         }
         if (keep > 0.002f) DrawStrip(o, keep, slide, 0, null, p);
         for (int i = 0; i < page.Thumbs.Count; i++)
@@ -1877,8 +1892,13 @@ sealed partial class Engine
             double up = 0.06 * page.Lift[i];
             b = new Box(b.X - b.W * up / 2, b.Y - b.H * up / 2, b.W * (1 + up), b.H * (1 + up));
             page.Shown[i] = b;
-            if (i == o.Hover && o.Idle) g.RoundRectOutline((float)b.X - 2 * s, (float)b.Y - 2 * s, (float)b.W + 4 * s, (float)b.H + 4 * s, 3 * s, A(0xFFFFFFFF, keep), 2 * s);
-            page.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep);
+            // The app's windows lie on the grey desktop, lit at their edge; the one under the
+            // pointer brighter.
+            float x = (float)b.X, y = (float)b.Y, w = (float)b.W, h = (float)b.H;
+            g.Shadow(x, y, w, h, 2 * s, 12 * s, 2 * s, 0.5f * keep);
+            if (i == o.Hover && o.Idle) g.RoundRectOutline(x - 2 * s, y - 2 * s, w + 4 * s, h + 4 * s, 3 * s, A(0xFFFFFFFF, keep), 2 * s);
+            else g.RoundRectOutline(x - 1.25f * s, y - 1.25f * s, w + 2.5f * s, h + 2.5f * s, 2 * s, A(0xB3FFFFFF, keep), 1.5f * s);
+            page.Thumbs[i].Place(x, y, w, h, keep);
         }
         // Over a full-screen window the taskbar comes in from past its edge, as in the overview.
         float away = o.Zoom is { } zz ? (FullScreen(zz.Target) ? Math.Clamp(z, 0, 1) : 0) : FullScreen(_current) ? 1 - pc : 0;
@@ -1922,8 +1942,10 @@ sealed partial class Engine
         var column = o.TileShown.GetValueOrDefault(ColumnKey, strip.Column);
         if (!o.Page.Map) g.RoundRect((float)column.X, (float)column.Y + dy, (float)column.W, (float)column.H, 12 * s, A(0x0DFFFFFF, a));
         Box? ring = null, ringTo = null;
-        // On an app's map the window under the pointer gives its title in place of its desktop's name.
+        // On an app's map the window under the pointer gives its title in place of its desktop's
+        // name, and the names of desktops without the app's windows are faint.
         var page = o.Page;
+        var withApp = page.Map ? page.On.ToHashSet() : null;
         Guid? pointed = page.Map && o.Hover >= 0 && o.Hover < page.On.Count ? page.On[o.Hover] : null;
         foreach (var t in strip.Tiles)
         {
@@ -1984,6 +2006,7 @@ sealed partial class Engine
             g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, 8 * s, A(page.Map ? 0x2EFFFFFFu : 0x1FFFFFFFu, ta), 1);
             if (targeted) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xFFFFFFFF, a), 2.5f * s);
             // White around the desktop whose windows are shown, when it is not the one you are on.
+            else if (page.Map && hover && t.Desktop != _current) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0x99FFFFFF, a), 1.5f * s);
             else if ((hover || t.Desktop == o.Page.Desktop) && t.Desktop != _current) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xD9FFFFFF, a), 2 * s);
             if (o.Added == t.Desktop && 1 - (float)((Now - o.AddedAt) / 0.6) is var lit and > 0)
                 g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xFFFFFFFF, a * lit), 2 * s);
@@ -2001,7 +2024,8 @@ sealed partial class Engine
             }
             string title = t.Desktop == pointed ? page.Windows[o.Hover].Title : Title(t.Desktop);
             float cw = Math.Min(g.TextWidth(title, capFont), w);
-            g.Text(title, capFont, x + (w - cw) / 2, y + h + 6 * s, cw, 18 * s, A(0xFFE6E6E6, ta));
+            uint capInk = withApp == null ? 0xFFE6E6E6 : withApp.Contains(t.Desktop) ? 0xFFFFFFFF : 0x73FFFFFF;
+            g.Text(title, capFont, x + (w - cw) / 2, y + h + 6 * s, cw, 18 * s, A(capInk, ta));
         }
 
         // Where you are. A sideways swipe slides the lane under it; one up or down moves it to the next lane.
