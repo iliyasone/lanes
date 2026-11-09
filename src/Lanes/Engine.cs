@@ -365,6 +365,7 @@ sealed partial class Engine : IGestureSink
             _lastWindowCheck = now;
             CheckOtherDesktops();
             ForgetClosed();
+            CloseEmptiedFullScreen();
             LookAtTheme();
         }
         if (now - _lastSnapshot < 5000) return;
@@ -384,6 +385,36 @@ sealed partial class Engine : IGestureSink
     void Retire(Pixels p)
     {
         lock (_retired) _retired.Add((p, Environment.TickCount64));
+    }
+
+    // A full-screen window that closed leaves the desktop made for it empty: that desktop goes,
+    // and from there Windows goes back to the one the window came from.
+    void CloseEmptiedFullScreen()
+    {
+        if (_overview != null || _switch != null || _overlay.Shown) return;
+        foreach (var (window, home, desk) in AppWindows.FullScreenGone())
+        {
+            AppWindows.Forget(window);
+            var all = Desktops.All();
+            if (desk == Guid.Empty || all.Count <= 1 || !all.Contains(desk)) continue;
+            var monitor = PointerMonitor().Monitor;
+            bool here = desk == Desktops.Current;
+            var left = here ? AppWindows.OnScreen(monitor, _overlay.Handle) : AppWindows.OnOtherDesktops(monitor, _overlay.Handle).GetValueOrDefault(desk);
+            if (left is { Count: > 0 }) continue;
+            Guid? to = all.Contains(home) ? home : _lanes.Neighbor(desk, Direction.Left) ?? _lanes.Neighbor(desk, Direction.Right)
+                ?? _lanes.Neighbor(desk, Direction.Up) ?? _lanes.Neighbor(desk, Direction.Down);
+            if (to is not Guid back) continue;
+            if (here) { WindowsPill.Hide(); _lastSwitchAt = Now; }
+            Desktops.Remove(desk, back);
+            Log.Write("a full-screen window closed: its desktop went");
+            if (here)
+            {
+                _current = Desktops.Current is var now && now != desk ? now : back;
+                _overlay.Place();
+            }
+            LanesChanged();
+            RetakeSoon();
+        }
     }
 
     void ForgetClosed()
@@ -653,8 +684,7 @@ sealed partial class Engine : IGestureSink
         foreach (var b in _tilePictures.Values) b.Dispose();
         foreach (var (a, b) in _wallpapers.Values) { a.Dispose(); b.Dispose(); }
         foreach (var b in _deskBitmaps.Values) b.Dispose();
-        foreach (var t in _mapTiles.Values) t.Small.Dispose();
-        _bitmaps.Clear(); _tilePictures.Clear(); _wallpapers.Clear(); _deskBitmaps.Clear(); _mapTiles.Clear();
+        _bitmaps.Clear(); _tilePictures.Clear(); _wallpapers.Clear(); _deskBitmaps.Clear();
         _picturesFor = area;
         _gfx.Attach(_overlay.Handle, area.Width, area.Height);
     }
@@ -791,26 +821,6 @@ sealed partial class Engine : IGestureSink
         if (full == null) return null;
         return _tilePictures[desktop] = _gfx.Scaled(full, (int)w, (int)h, 8 * _overlay.Scale);
     }
-
-    // A desktop's picture at a tile's size for an app's map: grey, darker and a little soft, so
-    // the app's windows over it, live and sharp, stand out. Made between frames
-    // (MakeMapTile, as the tiles get their places): drawing it takes the drawing context.
-    readonly Dictionary<Guid, (ID2D1Bitmap1 From, ID2D1Bitmap1 Small)> _mapTiles = new();
-
-    void MakeMapTile(Guid desktop, float w, float h)
-    {
-        if (Picture(desktop) is not { } full || MapTile(desktop, w) != null) return;
-        if (_mapTiles.Remove(desktop, out var old)) old.Small.Dispose();
-        using var small = _gfx.Scaled(full, (int)w, (int)h, 8 * _overlay.Scale);
-        _mapTiles[desktop] = (full, _gfx.Grey(small, 0.45f, 1.5f * _overlay.Scale));
-    }
-
-    // The one made, if it is still of that desktop's picture and of this size.
-    ID2D1Bitmap1? MapTile(Guid desktop, float w) =>
-        _mapTiles.TryGetValue(desktop, out var t) && t.From == Picture(desktop) && Math.Abs(t.Small.PixelSize.Width - (int)w) <= 1 ? t.Small : null;
-
-    // The screen as it was, blurred, behind an app's map; made as the map opens.
-    ID2D1Bitmap1? _mapBlur;
 
     (ID2D1Bitmap1 Sharp, ID2D1Bitmap1 Blurred)? Wallpaper(Guid desktop)
     {

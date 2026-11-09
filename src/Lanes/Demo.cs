@@ -300,8 +300,8 @@ static class Demo
         await Task.Delay(2500);
         engine.Snapshot();
         await Task.Delay(400);
-        // Another app's window, in colour, on this desktop: the map shows it in grey, as all but
-        // the app's own windows.
+        // Another app's window on this desktop: it is not among the app's own, which are all
+        // that is shown.
         string? chrome = new[] { @"C:\Program Files\Google\Chrome\Application\chrome.exe", @"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" }.FirstOrDefault(File.Exists);
         System.Diagnostics.Process? browser = null;
         IntPtr colours = IntPtr.Zero;
@@ -344,19 +344,17 @@ static class Demo
         await Rest();
         engine.Screenshot(Path.Combine(dir, "18c-map-on-hover.png"));
         await Task.Delay(300);
-        // The pointer goes up the screen, away from the map and the taskbar.
-        SetCursorPos(cx, 120);
+        // The pointer goes off the taskbar to where there is no window.
+        SetCursorPos(20, 620);
         mouse_event(0x1, 0, 1, 0, IntPtr.Zero);
-        await Task.Delay(1200);
+        await Task.Delay(1800);
         Log.Write($"app map: after the pointer left it, it is {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STILL OPEN")}");
         await Rest();
         engine.Screenshot(Path.Combine(dir, "18-app-overview.png"));
         var (_, windows) = await engine.OverviewLayout();
         var other = windows.FirstOrDefault(w => w.Title == "Agent").Rect;
         if (other.Width == 0) return;
-        // Up off the taskbar first, as a hand goes, then over to the window.
         _pointer = new Point(cx, cy);
-        await Glide(new Point(cx, cy - 120));
         await Glide(new Point(other.Left + other.Width / 2, other.Top + other.Height / 2));
         await Task.Delay(600);
         engine.Screenshot(Path.Combine(dir, "18a-app-overview-pointer.png"));
@@ -425,6 +423,7 @@ static class Demo
         await Task.Delay(400);
         var notes = Application.OpenForms.Cast<Form>().First(f => f.Text == "Notes");
         var was = notes.Bounds;
+        int desktops = Desktops.Count;
         await Swipe(engine, 3, 0, -1, 0.28 * 0.7);
         await Task.Delay(1500);
         async Task<List<Rectangle>> Hover()
@@ -450,11 +449,17 @@ static class Demo
         engine.Screenshot(Path.Combine(dir, "4d-window-buttons.png"));
         await Press(buttons, 1);
         var screen = Screen.FromHandle(notes.Handle).Bounds;
-        Log.Write($"window buttons: after full screen, Notes is at {notes.Bounds} ({(notes.Bounds == screen ? "the whole screen" : "NOT THE WHOLE SCREEN")}), {(AppWindows.InFullScreen(notes.Handle) ? "in" : "NOT IN")} full screen");
-        buttons = await Hover();
+        Log.Write($"window buttons: after full screen, Notes is at {notes.Bounds} ({(notes.Bounds == screen ? "the whole screen" : "NOT THE WHOLE SCREEN")}), {(AppWindows.InFullScreen(notes.Handle) ? "in" : "NOT IN")} full screen; "
+            + $"{(Desktops.Count == desktops + 1 && Desktops.Current != editor && Desktops.WindowDesktop(notes.Handle) == Desktops.Current ? "on a desktop of its own, shown now" : "NOT ON A DESKTOP OF ITS OWN")}; the overview is {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STILL OPEN")}; lanes {await LanesNow(engine)}");
         engine.Screenshot(Path.Combine(dir, "4e-full-screen.png"));
-        if (buttons.Count == 3) await Press(buttons, 1);
-        Log.Write($"window buttons: back from full screen, Notes is at {notes.Bounds} ({(notes.Bounds == was ? "where it was" : $"NOT WHERE IT WAS, {was}")})");
+        await Swipe(engine, 3, 0, -1, 0.28 * 0.7);
+        await Task.Delay(1500);
+        buttons = await Hover();
+        engine.Screenshot(Path.Combine(dir, "4g-full-screen-overview.png"));
+        if (buttons.Count == 3) await Press(buttons, 1, 2500);
+        Log.Write($"window buttons: back from full screen, Notes is at {notes.Bounds} ({(notes.Bounds == was ? "where it was" : $"NOT WHERE IT WAS, {was}")}); "
+            + $"{(Desktops.Count == desktops && Desktops.Current == editor && Desktops.WindowDesktop(notes.Handle) == editor ? "on its old desktop, shown now, and the one made for it is gone" : "NOT BACK ON ITS OLD DESKTOP")}");
+        engine.Screenshot(Path.Combine(dir, "4h-back-from-full-screen.png"));
         buttons = await Hover();
         if (buttons.Count == 3)
         {

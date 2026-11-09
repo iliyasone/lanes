@@ -133,12 +133,14 @@ static class AppWindows
 
     // Windows put in full screen with the overview's button, as with the green button on a Mac:
     // without their frame, over the whole monitor and the taskbar, the way Chrome goes full
-    // screen. What each had before (styles, place, maximized) is kept in a file, so it comes back
+    // screen. Each goes to a desktop of its own next to the one it was on (`Desk`, made by the
+    // engine; `Home` is where it was), as a full-screen app has a Space of its own on a Mac. What
+    // each had before (styles, place, maximized) is kept in a file with those, so it comes back
     // even after Lanes restarted.
     static readonly string FullFile = Path.Combine(Log.Dir, "full-screen.txt");
-    static Dictionary<IntPtr, (long Style, long Ex, RECT Rect, bool Max)>? _full;
+    static Dictionary<IntPtr, (long Style, long Ex, RECT Rect, bool Max, Guid Home, Guid Desk)>? _full;
 
-    static Dictionary<IntPtr, (long Style, long Ex, RECT Rect, bool Max)> Full
+    static Dictionary<IntPtr, (long Style, long Ex, RECT Rect, bool Max, Guid Home, Guid Desk)> Full
     {
         get
         {
@@ -149,8 +151,10 @@ static class AppWindows
                 if (File.Exists(FullFile))
                     foreach (var line in File.ReadAllLines(FullFile))
                     {
-                        var v = line.Split(' ').Select(long.Parse).ToArray();
-                        if (IsWindow((IntPtr)v[0])) _full[(IntPtr)v[0]] = (v[1], v[2], new RECT((int)v[3], (int)v[4], (int)v[5], (int)v[6]), v[7] != 0);
+                        var f = line.Split(' ');
+                        var v = f.Take(8).Select(long.Parse).ToArray();
+                        _full[(IntPtr)v[0]] = (v[1], v[2], new RECT((int)v[3], (int)v[4], (int)v[5], (int)v[6]), v[7] != 0,
+                            f.Length > 9 ? Guid.Parse(f[8]) : Guid.Empty, f.Length > 9 ? Guid.Parse(f[9]) : Guid.Empty);
                     }
             }
             catch (Exception e) { Log.Write($"full-screen windows: {e.Message}"); }
@@ -160,7 +164,7 @@ static class AppWindows
 
     static void SaveFull()
     {
-        try { File.WriteAllLines(FullFile, Full.Select(f => $"{(long)f.Key} {f.Value.Style} {f.Value.Ex} {f.Value.Rect.Left} {f.Value.Rect.Top} {f.Value.Rect.Right} {f.Value.Rect.Bottom} {(f.Value.Max ? 1 : 0)}")); }
+        try { File.WriteAllLines(FullFile, Full.Select(f => $"{(long)f.Key} {f.Value.Style} {f.Value.Ex} {f.Value.Rect.Left} {f.Value.Rect.Top} {f.Value.Rect.Right} {f.Value.Rect.Bottom} {(f.Value.Max ? 1 : 0)} {f.Value.Home} {f.Value.Desk}")); }
         catch (Exception e) { Log.Write($"full-screen windows: {e.Message}"); }
     }
 
@@ -169,13 +173,23 @@ static class AppWindows
     const long WS_CAPTION = 0x00C00000, WS_THICKFRAME = 0x00040000, FrameEx = 0x1 | 0x100 | 0x200 | 0x20000; // dialog, window, client and static edges
     const uint SWP_FRAMECHANGED = 0x20, SMTO_ABORTIFHUNG = 2;
 
-    public static void FullScreen(IntPtr hwnd)
+    // The full-screen windows that have closed, with where each was and the desktop made for it;
+    // `Forget` once that desktop is dealt with.
+    public static List<(IntPtr Window, Guid Home, Guid Desk)> FullScreenGone() =>
+        Full.Where(f => !IsWindow(f.Key)).Select(f => (f.Key, f.Value.Home, f.Value.Desk)).ToList();
+
+    public static void Forget(IntPtr hwnd)
+    {
+        if (Full.Remove(hwnd)) SaveFull();
+    }
+
+    public static void FullScreen(IntPtr hwnd, Guid home = default, Guid desk = default)
     {
         bool max = IsZoomed(hwnd);
         if (max) SendMessageTimeout(hwnd, WM_SYSCOMMAND, (IntPtr)SC_RESTORE, IntPtr.Zero, SMTO_ABORTIFHUNG, 1000, out _);
         GetWindowRect(hwnd, out var r);
         long style = GetWindowLongPtr(hwnd, GWL_STYLE).ToInt64(), ex = GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64();
-        Full[hwnd] = (style, ex, r, max);
+        Full[hwnd] = (style, ex, r, max, home, desk);
         SaveFull();
         SetWindowLongPtr(hwnd, GWL_STYLE, (IntPtr)(style & ~(WS_CAPTION | WS_THICKFRAME)));
         SetWindowLongPtr(hwnd, GWL_EXSTYLE, (IntPtr)(ex & ~FrameEx));
@@ -183,14 +197,16 @@ static class AppWindows
         SetWindowPos(hwnd, IntPtr.Zero, m.Left, m.Top, m.Width, m.Height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
 
-    public static void LeaveFullScreen(IntPtr hwnd)
+    // Back as it was; hands back where it was before and the desktop made for it.
+    public static (Guid Home, Guid Desk) LeaveFullScreen(IntPtr hwnd)
     {
-        if (!Full.Remove(hwnd, out var was)) return;
+        if (!Full.Remove(hwnd, out var was)) return default;
         SaveFull();
         SetWindowLongPtr(hwnd, GWL_STYLE, (IntPtr)was.Style);
         SetWindowLongPtr(hwnd, GWL_EXSTYLE, (IntPtr)was.Ex);
         SetWindowPos(hwnd, IntPtr.Zero, was.Rect.Left, was.Rect.Top, was.Rect.Width, was.Rect.Height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
         if (was.Max) SendMessageTimeout(hwnd, WM_SYSCOMMAND, (IntPtr)SC_MAXIMIZE, IntPtr.Zero, SMTO_ABORTIFHUNG, 1000, out _);
+        return (was.Home, was.Desk);
     }
 
     // Two windows change places, each keeping its size (see Spread.Trade). A maximized one stays

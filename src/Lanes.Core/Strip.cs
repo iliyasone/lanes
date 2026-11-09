@@ -48,16 +48,14 @@ public sealed class Strip
     // Tiles have the screen's shape (`width` x `height`); the rows start `offset` down from its
     // top and take about a third of the `room` below that (by default the whole height), as the
     // Spaces bar does in Mission Control, leaving the rest to the windows. `open` is counted as
-    // DropFor counts it, without the `dragged` desktop. For one app's map (`app`) the rows are
-    // all there is: tiles about twice as big, up to six tenths of the room, rows further apart
-    // (a name under each tile), and no "+" or bin.
+    // DropFor counts it, without the `dragged` desktop.
     public static Strip Layout(LaneMap map, Guid current, double width, double height, double s, bool dragging = false,
-        double offset = 0, double? room = null, bool bin = false, DeskDrop? open = null, Guid dragged = default, bool app = false)
+        double offset = 0, double? room = null, bool bin = false, DeskDrop? open = null, Guid dragged = default)
     {
         var strip = new Strip();
         int n = map.Lanes.Count;
-        double gap = 16 * s, rowGap = (app ? 26 : 14) * s, pad = 18 * s, top = offset + pad, slot = 32 * s, caption = 20 * s, plus = 32 * s;
-        double tw = app ? Math.Min(300 * s, width / 6.5) : 160 * s, aspect = height / width, limit = (room ?? height) * (app ? 0.6 : 0.36);
+        double gap = 16 * s, rowGap = 14 * s, pad = 18 * s, top = offset + pad, slot = 32 * s, caption = 20 * s, plus = 32 * s;
+        double tw = 160 * s, aspect = height / width, limit = (room ?? height) * 0.36;
         double Height(double w) => n * (w * aspect + caption) + (n - 1) * rowGap;
         while (tw > 96 * s && pad + Height(tw) > limit) tw -= 4 * s;
         double th = tw * aspect, rowH = th + caption, step = tw + gap, rowStep = rowH + rowGap;
@@ -113,8 +111,8 @@ public sealed class Strip
         }
         // Below the last row's desktops, past their names to the band's edge.
         if (dragging) strip.Tiles.Add(newLane == n ? strip.OpenedSlot! : new StripTile(TileKind.NewLane, n, 0, Guid.Empty, new Box(0, rowsEnd - caption, width, caption + pad)));
-        if (!app) strip.Tiles.Add(new StripTile(TileKind.Plus, map.Locate(current)?.Lane ?? 0, 0, Guid.Empty, new Box(width - 28 * s - plus, top, plus, plus)));
-        if (bin && !app) strip.Tiles.Add(new StripTile(TileKind.Trash, 0, 0, Guid.Empty, new Box(width - 28 * s - plus, top + plus + 12 * s, plus, plus)));
+        strip.Tiles.Add(new StripTile(TileKind.Plus, map.Locate(current)?.Lane ?? 0, 0, Guid.Empty, new Box(width - 28 * s - plus, top, plus, plus)));
+        if (bin) strip.Tiles.Add(new StripTile(TileKind.Trash, 0, 0, Guid.Empty, new Box(width - 28 * s - plus, top + plus + 12 * s, plus, plus)));
         strip.Bottom = rowsEnd + pad;
         strip.Column = new Box(column - 16 * s, y0 - 8 * s, tw + 32 * s, rowsEnd - y0 + 16 * s);
         // Room under the band for a window dragged up to the rows to shrink in.
