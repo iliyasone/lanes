@@ -211,7 +211,9 @@ sealed partial class Engine
     // As there, each lane lies with the desktop it would take you to in the middle column, where
     // the blue cell is, and your lane is lighter. A sideways swipe slides your lane under the
     // blue cell; one up or down carries the blue cell, and the lighter row, straight to the next
-    // lane. The pill is as wide as the longest lane could need either way, so it keeps its size
+    // lane, and your lane's light goes with it: a light row slides from one lane's cells to the
+    // other's, seen only inside the cells. The pill is as wide as the longest lane could need
+    // either way, so it keeps its size
     // and place. Windows' volume
     // or brightness pop-up shows in the same place: the pill then stands beside it. Should Windows'
     // pill come up anyway (Lanes could not find its window), Lanes' one goes above it.
@@ -268,16 +270,22 @@ sealed partial class Engine
         float middle = (PillColumns - 1) / 2f;
         // Your lane's shift, in columns: toward the next desktop along it, or the give at its end.
         float slide = toward == null ? -stretch : toLane == fromLane ? -(toIndex - fromIndex) * k : 0;
+        // The light row's top, between your lane's row and the next one's.
+        float lightY = CellAt(p, fromLane, 0).Y + (CellAt(p, toLane, 0).Y - CellAt(p, fromLane, 0).Y) * k;
         for (int l = 0; l < _lanes.Lanes.Count; l++)
         {
             var desks = _lanes.Lanes[l].Desktops;
             int anchor = l == fromLane ? fromIndex : Math.Max(0, desks.IndexOf(_lanes.CurrentOf(l) ?? Guid.Empty));
-            float light = toLane == fromLane ? (l == fromLane ? 1 : 0) : l == fromLane ? 1 - k : l == toLane ? k : 0;
-            uint colour = A(0xFFFFFFFF, (0x24 + (0x59 - 0x24) * light) / 255f);
             for (int i = 0; i < desks.Count; i++)
             {
                 var (x, y) = CellAt(p, l, middle + i - anchor + (l == fromLane ? slide : 0));
-                g.RoundRect(x, y, cell, cellH, 2.5f * s, A(colour, alpha));
+                g.RoundRect(x, y, cell, cellH, 2.5f * s, A(0x24FFFFFF, alpha));
+                // White at 0x3E over the cell's 0x24 makes the light cells' 0x59.
+                float top = Math.Max(y, lightY), bottom = Math.Min(y + cellH, lightY + cellH);
+                if (bottom - top < 0.05f) continue;
+                g.Clip(x, top, cell, bottom - top);
+                g.RoundRect(x, y, cell, cellH, 2.5f * s, A(0x3EFFFFFF, alpha));
+                g.Unclip();
             }
         }
         var a = CellAt(p, fromLane, middle);
