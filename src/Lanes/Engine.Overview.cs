@@ -8,11 +8,12 @@ using static Lanes.Native;
 namespace Lanes;
 
 // The overview on a three-finger swipe up, as Mission Control: the lanes at the top on a
-// frosted band, the current desktop's windows spread out below over the desktop itself (sharp,
-// with its icons). The windows are live DWM thumbnails that travel from where they are to
-// their place in the spread as the fingers move. Once it is open, desktops and windows can be
-// dragged with the mouse, a middle click closes either, and four fingers move to another
-// desktop without leaving it.
+// frosted band that slides down from above, the current desktop's windows spread out below over
+// the desktop itself (sharp, with its icons). The windows are live DWM thumbnails that travel
+// from where they are to their place in the spread as the fingers move. Once it is open, the
+// pointer over a desktop shows that desktop's windows at once (a click, or closing the overview,
+// then lands there), desktops and windows can be dragged with the mouse, a middle click closes
+// either, and four fingers (or two) move to another desktop without leaving it.
 sealed partial class Engine
 {
     // The windows of one desktop as the overview shows them.
@@ -83,7 +84,7 @@ sealed partial class Engine
 
     sealed class OverviewState
     {
-        public bool TaskbarFades;
+        // The windows shown: of the desktop you are on, or of the one the pointer showed.
         public Page Page = null!;
         public Strip Strip = null!;
         public readonly Dictionary<string, Box> TileShown = new();
@@ -109,6 +110,12 @@ sealed partial class Engine
         public Guid? MenuFor;
         public Box MenuBox;
         public bool MenuHover;
+        // A desktop just made with the "+", lit up for a moment.
+        public Guid? Added;
+        public double AddedAt;
+        // When the windows were last looked at again, and where the taskbar is.
+        public double LastLook;
+        public RECT? Bar;
         public bool Open => !Tracking && Spring == null && Zoom == null && P > 0.99;
         public bool Idle => Open && Drag == null && Swipe == null && Going == null;
     }
@@ -130,12 +137,9 @@ sealed partial class Engine
         Remember(_current, TakeTouchCapture());
         RefreshTitles();
         UseArea();
-        var o = new OverviewState { Tracking = true, Track = new OverviewTrack(0, _tuning), LastStep = Now };
+        var o = new OverviewState { Tracking = true, Track = new OverviewTrack(0, _tuning), LastStep = Now, Bar = TaskbarOn(_overlay.Monitor) };
         Relayout(o, snap: true);
-        o.Page = MakePage(_current, o.Strip);
-        RaiseTaskbar();
-        // Behind a full-screen window the taskbar was hidden: it comes in as the overview opens.
-        o.TaskbarFades = FullScreen(_current);
+        o.Page = NewPage(_current, o.Strip);
         _overview = o;
         _gfx.Frames.Clear();
         _overlay.Place();
@@ -145,7 +149,12 @@ sealed partial class Engine
         Log.Write($"overview: {o.Page.Windows.Count} windows; {CaptureNote}");
     }
 
-    static string Key(StripTile t) => t.Kind == TileKind.Desktop ? t.Desktop.ToString() : $"{t.Kind}{t.Lane}";
+    static string Key(StripTile t) => t.Kind switch
+    {
+        TileKind.Desktop => t.Desktop.ToString(),
+        TileKind.Plus => "Plus",
+        _ => $"{t.Kind}{t.Lane}",
+    };
 
     // Lays the rows out again after the lanes changed; tiles glide to their new places unless `snap`.
     void Relayout(OverviewState o, bool snap = false)
@@ -187,6 +196,73 @@ sealed partial class Engine
         return page;
     }
 
+    // A page, and the taskbar's place among the window pictures: over them, as on the screen,
+    // except on a desktop with a full-screen window, which lies over the taskbar; opening the
+    // overview there, the taskbar comes out from under the window as it shrinks.
+    Page NewPage(Guid desktop, Strip strip)
+    {
+        bool under = FullScreen(desktop);
+        if (under) RaiseTaskbar();
+        var page = MakePage(desktop, strip);
+        if (!under) RaiseTaskbar();
+        return page;
+    }
+
+    // The windows of another desktop, shown at once in place of these.
+    void ShowPage(OverviewState o, Guid desktop)
+    {
+        var old = o.Page;
+        o.Page = NewPage(desktop, o.Strip);
+        old.Dispose();
+        o.Hover = -1;
+        _redraw = true;
+    }
+
+    // The desktop whose windows are shown becomes the one you are on: Windows switches under the
+    // overview, before it closes there or a swipe goes on from there.
+    void Arrive(OverviewState o)
+    {
+        var d = o.Page.Desktop;
+        if (d == _current) return;
+        SwitchTo(d);
+        _overlay.Place();
+        _current = d;
+        _lanes.Visited(d);
+        Settings.SaveLanes(_lanes);
+        RetakeSoon();
+        Log.Write($"overview: now on desktop {Desktops.IndexOf(d) + 1}");
+    }
+
+    // Windows that opened, came up or closed while the overview is open join or leave the
+    // spread; a new one comes from where it is on the screen to its place among the others.
+    void LookAgain(OverviewState o)
+    {
+        var page = o.Page;
+        var area = _overlay.Area;
+        var now = AppWindows.OnScreen(area, _overlay.Handle, page.Desktop == _current ? null : page.Desktop);
+        bool changed = false;
+        for (int i = page.Windows.Count - 1; i >= 0; i--)
+            if (!now.Any(w => w.Handle == page.Windows[i].Handle)) { page.RemoveAt(i); changed = true; }
+        float s = _overlay.Scale;
+        foreach (var w in now)
+        {
+            if (page.Windows.Any(x => x.Handle == w.Handle)) continue;
+            var from = new Box(w.Frame.Left - area.Left, w.Frame.Top - area.Top, w.Frame.Width, w.Frame.Height);
+            page.Windows.Add(w);
+            page.From.Add(from); page.To.Add(from); page.Shown.Add(from);
+            page.Thumbs.Add(new Thumbnail(_overlay.Handle, w.Handle));
+            var icon = AppWindows.Icon(w.Handle, (int)(16 * s));
+            page.Icons.Add(icon == null ? null : _gfx.Bitmap(icon));
+            icon?.Dispose();
+            changed = true;
+        }
+        if (!changed) return;
+        if (!FullScreen(page.Desktop)) RaiseTaskbar();
+        o.Hover = -1;
+        Respread(page, o.Strip, o);
+        Log.Write($"overview: {page.Windows.Count} windows now");
+    }
+
     // The windows left on the page take the room of one that went.
     void Respread(Page page, Strip strip, OverviewState? o = null)
     {
@@ -216,6 +292,7 @@ sealed partial class Engine
     {
         var o = _overview!;
         if (o.Open) _gfx.Frames.Clear();
+        if (target < 0.5) Arrive(o);
         o.Tracking = false;
         o.Press = null;
         o.Spring = new Spring(o.P, speed, target, _tuning.OverviewResponse);
@@ -231,6 +308,12 @@ sealed partial class Engine
     {
         var o = _overview!;
         Glide(o, now);
+        if (o.Added != null && now - o.AddedAt > 0.6) { o.Added = null; _redraw = true; }
+        if (o.Idle && now - o.LastLook > 0.5)
+        {
+            o.LastLook = now;
+            LookAgain(o);
+        }
         if (o.Swipe != null) StepInnerSwipe(now);
         if (o.Going is Guid going && o.Zoom == null)
         {
@@ -390,6 +473,11 @@ sealed partial class Engine
     {
         var o = _overview!;
         if (o.Swipe != null) FinishInnerSwipe();
+        if (o.Page.Desktop != _current)
+        {
+            Arrive(o);
+            Relayout(o);
+        }
         long t0 = Environment.TickCount64;
         o.Press = null;
         o.Hover = -1;
@@ -505,6 +593,13 @@ sealed partial class Engine
         }
         int hover = HitWindow(o, x, y);
         var tile = hover >= 0 ? null : o.Strip.Hit(x, y);
+        // A desktop under the pointer shows its windows at once, as if you were there; they stay
+        // while the pointer goes on down to them.
+        if (tile is { Kind: TileKind.Desktop } && tile.Desktop != o.Page.Desktop && o.Idle)
+        {
+            ShowPage(o, tile.Desktop);
+            hover = -1;
+        }
         if (hover != o.Hover || tile != o.HoverTile)
         {
             o.Hover = hover;
@@ -529,7 +624,7 @@ sealed partial class Engine
         else return;
         o.Hover = -1;
         o.HoverTile = null;
-        // A "New lane" opens above the rows while something is dragged.
+        // Places for a new lane open above and below the rows while something is dragged.
         Relayout(o);
     }
 
@@ -538,7 +633,7 @@ sealed partial class Engine
         if (d.Window >= 0)
         {
             var t = o.Strip.Hit(d.X, d.Y);
-            d.Target = t is { Kind: TileKind.Desktop } && t.Desktop == _current ? null : t;
+            d.Target = t is { Kind: TileKind.Desktop } && t.Desktop == o.Page.Desktop ? null : t;
         }
         else d.Drop = o.Strip.DropFor(d.X, d.Y, d.Desktop, _lanes);
     }
@@ -573,6 +668,7 @@ sealed partial class Engine
         if (w >= 0)
         {
             var hwnd = o.Page.Windows[w].Handle;
+            Arrive(o);
             AppWindows.Activate(hwnd);
             // Its picture goes in front of the others, as the window itself just did.
             o.Page.Thumbs[w].Dispose();
@@ -583,15 +679,21 @@ sealed partial class Engine
         switch (o.Strip.Hit(x, y))
         {
             case { Kind: TileKind.Desktop } t:
-                if (t.Desktop == _current) CloseOverview();
+                // Its windows are shown already (the pointer passed over it): the overview closes there.
+                if (t.Desktop == o.Page.Desktop) CloseOverview();
                 else GoTo(o, t.Desktop);
                 return;
-            case { } t:
-                if (NewDesktop(t.Lane, t.Kind == TileKind.NewLane) is Guid made)
+            case { Kind: TileKind.Plus } t:
+                if (NewDesktop(t.Lane, false) is Guid made)
                 {
-                    // The new desktop grows out of the "+" (or "New lane") it was made with.
-                    o.TileShown[made.ToString()] = t.Rect with { W = Math.Min(t.Rect.W, o.Strip.TileW), H = o.Strip.TileH };
-                    GoTo(o, made, OwnWallpaper(made));
+                    // It flies out of the "+" to the end of your lane and lights up a moment; you
+                    // stay where you are.
+                    o.TileShown[made.ToString()] = t.Rect;
+                    o.Added = made;
+                    o.AddedAt = Now;
+                    _ = OwnWallpaper(made);
+                    Relayout(o);
+                    _redraw = true;
                 }
                 return;
         }
@@ -727,12 +829,13 @@ sealed partial class Engine
         }
         LanesChanged();
         Relayout(o);
-        if (here || to == _current)
+        // The windows shown were that desktop's, or have just come to the one shown.
+        var show = o.Page.Desktop == desktop ? _current : o.Page.Desktop;
+        if (show != o.Page.Desktop || to == show)
         {
             var old = o.Page;
-            o.Page = MakePage(_current, o.Strip);
+            o.Page = NewPage(show, o.Strip);
             old.Dispose();
-            RaiseTaskbar();
         }
         o.HoverTile = null;
         _redraw = true;
@@ -828,6 +931,7 @@ sealed partial class Engine
         Guid? toward = f < 0 ? sw?.Next : f > 0 ? sw?.Previous : null;
         Page? other = f < 0 ? sw?.NextPage : f > 0 ? sw?.PreviousPage : null;
         bool vertical = sw?.Axis == Axis.Vertical;
+        var page = o.Page;
         g.Begin(Gfx.Color(0xFF000000));
 
         // The desktop itself under the windows, sharp and with its icons, a little darker. A
@@ -836,12 +940,11 @@ sealed partial class Engine
         double ox = sw == null || vertical ? 0 : sw.Offset, oy = vertical ? sw!.Offset : 0;
         double step = sw == null ? 0 : sw.Track.Page * (f < 0 ? 1 : -1);
         float px = (float)ox + (vertical ? 0 : (float)step), py = (float)oy + (vertical ? (float)step : 0);
-        if (DeskPicture(_current) is { } desk) g.Image(desk, (float)ox, (float)oy, g.Width, g.Height);
+        if (DeskPicture(page.Desktop) is { } desk) g.Image(desk, (float)ox, (float)oy, g.Width, g.Height);
         if (toward is Guid tw && DeskPicture(tw) is { } theirs) g.Image(theirs, px, py, g.Width, g.Height);
         g.Rect(0, 0, g.Width, g.Height, A(0xFF000000, 0.25f * pc));
 
         // Where each window is at this moment.
-        var page = o.Page;
         var boxes = new Box[page.Thumbs.Count];
         double highest = double.MaxValue;
         for (int i = 0; i < boxes.Length; i++)
@@ -850,36 +953,43 @@ sealed partial class Engine
             highest = Math.Min(highest, boxes[i].Y);
         }
 
-        // Lane rows on a frosted band, the only blurred part. They come down from above the
-        // screen just ahead of the windows, so they never overlap them (as the Spaces bar does in
-        // Mission Control). Under the band the desktops slide too, blurred.
+        // Lane rows on a frosted band, the only blurred part. The band slides down whole from
+        // above the screen just ahead of the windows, so it never overlaps them (as the Spaces bar
+        // does in Mission Control), and goes back up whole: it never fades, so what it covers
+        // never shows through it. Under the band the desktops slide too, blurred.
         float sp = Math.Clamp(p / 0.6f, 0, 1), sq = 1 - MathF.Pow(1 - sp, 3);
-        float a = sq * keep, dy = (1 - sq) * -40 * s;
+        float a = keep, dy = (1 - sq) * -((float)o.Strip.Bottom + 2 * s);
         if (boxes.Length > 0) dy = Math.Min(dy, Math.Min(0, (float)highest - 30 * s - (float)o.Strip.Bottom));
         float band = (float)o.Strip.Bottom + dy;
         if (a > 0.002f && band > 0)
         {
             g.Clip(0, 0, g.Width, band);
-            if (Wallpaper(_current) is var (_, blurred)) g.Image(blurred, (float)ox, (float)oy, g.Width, g.Height, a);
+            if (Wallpaper(page.Desktop) is var (_, blurred)) g.Image(blurred, (float)ox, (float)oy, g.Width, g.Height, a);
             if (toward is Guid tb && Wallpaper(tb) is var (_, theirsBlurred)) g.Image(theirsBlurred, px, py, g.Width, g.Height, a);
             g.Rect(0, 0, g.Width, band, A(0xFF000000, 0.3f * a));
             g.Unclip();
             g.Rect(0, band - 1, g.Width, 1, A(0x1FFFFFFF, a));
         }
+        // Each desktop has the taskbar's plain bar in its place and carries it as it slides, as in
+        // a swipe; the live taskbar stays over the one in place.
+        if (o.Bar is RECT plain)
+        {
+            g.Rect(plain.Left + (float)ox, plain.Top + (float)oy, plain.Width, plain.Height, _barColour);
+            if (toward != null) g.Rect(plain.Left + px, plain.Top + py, plain.Width, plain.Height, _barColour);
+        }
         if (a > 0.002f) DrawStrip(o, a, dy, f, toward, p);
 
         // The windows of this desktop, and of the one a four-finger swipe brings in.
         float la = Math.Clamp((p - 0.7f) / 0.3f, 0, 1) * keep;
+        // Going up or down, windows pass under the band.
         float clip = vertical ? band : float.NegativeInfinity;
-        // A window going up under the lane rows fades as it goes, instead of being cut off.
-        float Fade(Box b) => vertical ? 1 - Math.Clamp((clip + 40 * s - (float)b.Y) / Math.Max(1, (float)b.H * 0.6f), 0, 1) : 1;
         if (vertical) g.Clip(0, clip, g.Width, g.Height - clip);
         for (int i = 0; i < boxes.Length; i++)
         {
             if (o.Drag?.Window == i) continue;
             var b = boxes[i] with { X = boxes[i].X + ox, Y = boxes[i].Y + oy };
-            page.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep * Fade(b), clip);
-            if (la > 0.002f) WindowTitle(page, i, b, la * Fade(b));
+            page.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep, clip);
+            if (la > 0.002f) WindowTitle(page, i, b, la);
             if (o.Hover == i && o.Idle)
                 g.RoundRectOutline((float)b.X - 5 * s, (float)b.Y - 5 * s, (float)b.W + 10 * s, (float)b.H + 10 * s, 11 * s, 0xD9FFFFFF, 2 * s);
         }
@@ -890,8 +1000,8 @@ sealed partial class Engine
             for (int i = 0; i < other.Thumbs.Count; i++)
             {
                 var b = other.To[i] with { X = other.To[i].X + ox + (vertical ? 0 : step), Y = other.To[i].Y + oy + (vertical ? step : 0) };
-                other.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep * Fade(b), clip);
-                WindowTitle(other, i, b, la * Fade(b));
+                other.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep, clip);
+                WindowTitle(other, i, b, la);
             }
         }
         if (vertical) g.Unclip();
@@ -903,7 +1013,7 @@ sealed partial class Engine
         }
 
         if (o.MenuFor != null && o.Idle) DrawMenu(o);
-        float bar = o.TaskbarFades ? Math.Clamp(p / 0.35f, 0, 1) : 1;
+        float bar = 1;
         if (o.Zoom is { } zz && FullScreen(zz.Target)) bar *= 1 - Math.Clamp(z, 0, 1);
         PlaceTaskbar(bar);
 
@@ -920,7 +1030,6 @@ sealed partial class Engine
         var g = _gfx;
         float s = _overlay.Scale;
         var capFont = g.Font(14 * s, FontWeight.Normal, centred: true);
-        var newLaneFont = g.Font(13 * s);
         var strip = o.Strip;
         var drag = o.Drag;
         int lane = _lanes.Locate(_current)?.Lane ?? -1;
@@ -932,28 +1041,34 @@ sealed partial class Engine
         foreach (var t in strip.Tiles)
         {
             var r = o.TileShown.GetValueOrDefault(Key(t), t.Rect);
-            float x = (float)r.X + (t.Lane == lane && t.Kind != TileKind.NewLane ? shift : 0), y = (float)r.Y + dy, w = (float)r.W, h = (float)r.H;
+            float x = (float)r.X + (t.Lane == lane && t.Kind == TileKind.Desktop ? shift : 0), y = (float)r.Y + dy, w = (float)r.W, h = (float)r.H;
             bool targeted = drag?.Target == t || drag?.Drop is { NewLane: true } nd && t.Kind == TileKind.NewLane && t.Lane == nd.Lane;
             bool hover = o.HoverTile == t && o.Idle;
-            if (t.Kind != TileKind.Desktop)
+            if (t.Kind == TileKind.Plus)
             {
-                bool newLane = t.Kind == TileKind.NewLane;
-                // The "New lane" under the rows comes in last, like the window names.
-                float pa = newLane && drag == null ? a * Math.Clamp((p - 0.7f) / 0.3f, 0, 1) : a;
-                if (pa <= 0.002f) continue;
-                g.RoundRect(x, y, w, h, 8 * s, A(targeted ? 0x334CC2FFu : hover ? 0x1AFFFFFFu : 0x0AFFFFFFu, pa));
-                g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, 8 * s, targeted ? A(0xFF4CC2FF, pa) : A(hover ? 0x59FFFFFFu : 0x29FFFFFFu, pa), targeted ? 2 * s : 1);
-                float label = newLane ? g.TextWidth("New lane", newLaneFont) + 10 * s : 0;
-                float cx = x + (w - label) / 2, cy = y + h / 2, arm = (newLane ? 5 : 9) * s;
-                uint ink = A(hover || targeted ? 0xE6FFFFFFu : 0x80FFFFFFu, pa);
-                g.Rect(cx - arm, cy - 0.8f * s, 2 * arm, 1.6f * s, ink);
-                g.Rect(cx - 0.8f * s, cy - arm, 1.6f * s, 2 * arm, ink);
-                if (newLane) g.Text("New lane", newLaneFont, cx + arm + 10 * s, y, label, h, A(0xA6FFFFFF, pa));
-                else if (hover || targeted)
+                // A round "+" in the corner; it lights up under the pointer and says what it does.
+                float rr = w / 2, cx = x + rr, cy = y + rr, arm = 7 * s;
+                if (hover || targeted) g.RoundRect(x, y, w, h, rr, A(targeted ? 0x334CC2FFu : 0x1FFFFFFFu, a));
+                g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, rr, targeted ? A(0xFF4CC2FF, a) : A(hover ? 0x59FFFFFFu : 0x33FFFFFFu, a), targeted ? 2 * s : 1);
+                uint ink = A(hover || targeted ? 0xFFFFFFFFu : 0x8CFFFFFFu, a);
+                g.Rect(cx - arm, cy - 0.75f * s, 2 * arm, 1.5f * s, ink);
+                g.Rect(cx - 0.75f * s, cy - arm, 1.5f * s, 2 * arm, ink);
+                if (hover || targeted)
                 {
                     float tw = g.TextWidth("New desktop", capFont);
-                    g.Text("New desktop", capFont, x + (w - tw) / 2, y + h + 6 * s, tw, 18 * s, A(0xFFE6E6E6, pa));
+                    g.Text("New desktop", capFont, Math.Min(cx - tw / 2, g.Width - tw - 8 * s), y + h + 6 * s, tw, 18 * s, A(0xFFE6E6E6, a));
                 }
+                continue;
+            }
+            if (t.Kind == TileKind.NewLane)
+            {
+                // Where a new lane would go: a dashed place, blue when something is over it.
+                if (targeted)
+                {
+                    g.RoundRect(x, y, w, h, 8 * s, A(0x264CC2FFu, a));
+                    g.RoundRectOutline(x + 1, y + 1, w - 2, h - 2, 8 * s, A(0xFF4CC2FF, a), 2 * s);
+                }
+                else g.DashedRoundRectOutline(x + 0.75f, y + 0.75f, w - 1.5f, h - 1.5f, 8 * s, A(0x59FFFFFFu, a), 1.5f * s);
                 continue;
             }
             if (t.Desktop == _current) ring = new Box(x, y, w, h);
@@ -964,9 +1079,12 @@ sealed partial class Engine
             DrawTilePicture(t.Desktop, x, y, w, h, ta);
             g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, 8 * s, A(0x1FFFFFFF, ta), 1);
             if (targeted) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xFFFFFFFF, a), 2.5f * s);
-            else if (hover && t.Desktop != _current) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xD9FFFFFF, a), 2 * s);
+            // White around the desktop whose windows are shown, when it is not the one you are on.
+            else if ((hover || t.Desktop == o.Page.Desktop) && t.Desktop != _current) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xD9FFFFFF, a), 2 * s);
+            if (o.Added == t.Desktop && 1 - (float)((Now - o.AddedAt) / 0.6) is var lit and > 0)
+                g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xFFFFFFFF, a * lit), 2 * s);
             string title = Title(t.Desktop);
-            float cw = Math.Min(g.TextWidth(title, capFont), w + 16 * s);
+            float cw = Math.Min(g.TextWidth(title, capFont), w);
             g.Text(title, capFont, x + (w - cw) / 2, y + h + 6 * s, cw, 18 * s, A(0xFFE6E6E6, ta));
         }
 

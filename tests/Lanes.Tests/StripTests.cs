@@ -31,15 +31,25 @@ public class StripTests
     }
 
     [Fact]
-    public void ADragOpensANewLaneAboveAndKeepsTheWindowsWhereTheyWere()
+    public void ADragOpensNewLaneSlotsAboveAndBelowAndKeepsTheWindowsWhereTheyWere()
     {
         var idle = Strip.Layout(Sample(), B, 1920, 1080, 1);
         var drag = Strip.Layout(Sample(), B, 1920, 1080, 1, dragging: true);
-        Assert.Single(idle.Tiles, t => t.Kind == TileKind.NewLane);
+        Assert.DoesNotContain(idle.Tiles, t => t.Kind == TileKind.NewLane);
         Assert.Equal(2, drag.Tiles.Count(t => t.Kind == TileKind.NewLane));
         Assert.True(Of(drag, Msg).Y > Of(idle, Msg).Y);
         Assert.Equal(idle.SpreadTop, drag.SpreadTop, 3);
         Assert.True(drag.Bottom < drag.SpreadTop);
+    }
+
+    [Fact]
+    public void OnePlusInTheTopRightCornerAddsToYourLane()
+    {
+        var s = Strip.Layout(Sample(), B, 1920, 1080, 1);
+        var plus = Assert.Single(s.Tiles, t => t.Kind == TileKind.Plus);
+        Assert.Equal(1, plus.Lane);
+        Assert.True(plus.Rect.Right <= 1920 && plus.Rect.X > 1920 - 100, $"{plus.Rect}");
+        Assert.Equal(s.RowY(0), plus.Rect.Y, 3);
     }
 
     [Fact]

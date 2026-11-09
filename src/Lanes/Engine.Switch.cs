@@ -184,13 +184,14 @@ sealed partial class Engine
         float hud = HudAlpha(s);
         if (hud > 0.002f) DrawPill(s, PillFor(), hud);
         // One taskbar, the live one, stays put over all desktops; their pictures have an empty bar
-        // in its place. A desktop with a full-screen window has none: the taskbar comes in over
-        // the first fifth of the way from it, and goes over the last fifth of the way to it.
-        float bar = 1, fade = 0.2f * (page + gap);
-        if (FullScreen(s.From)) bar = Math.Min(bar, Math.Clamp(Math.Abs(o) / fade, 0, 1));
+        // in its place. A full-screen window lies over the taskbar, as on the screen: the taskbar
+        // comes out from under it, at full strength, where it moves off, and goes under one that
+        // comes in.
+        var covers = new List<(float, float)>();
+        if (FullScreen(s.From)) covers.Add((o, o + page));
         Guid? otherDesktop = o < 0 ? s.Next : o > 0 ? s.Previous : null;
-        if (other != null && FullScreen(otherDesktop)) bar = Math.Min(bar, Math.Clamp((page + gap - Math.Abs(o)) / fade, 0, 1));
-        PlaceTaskbar(bar);
+        if (other != null && FullScreen(otherDesktop)) covers.Add((otherAt, otherAt + page));
+        PlaceTaskbar(horizontal, covers);
         g.End();
 
         void Draw(ID2D1Bitmap1 bmp, float at)

@@ -110,6 +110,7 @@ sealed partial class Engine : IGestureSink
             _overlay.OverviewAsked += ToggleOverview;
             _touchpad = new Touchpad(OnFrame);
             _touchpad.Register(_msg.Handle);
+            _awake = new Awake();
             if (Desktops.Load())
             {
                 Desktops.Pin(_overlay.Handle);
@@ -164,12 +165,14 @@ sealed partial class Engine : IGestureSink
                 Reset();
             }
         }
+        _awake?.Dispose();
         _overlay.Hide();
         _map.Hide();
         WindowsPill.Restore();
     }
 
-    bool Animating => _switch != null || _overview is { } o && (o.Tracking || o.Spring != null || o.Zoom != null || o.Swipe != null || o.Moving) || _redraw;
+    bool Animating => _switch != null || _overview is { } o && (o.Tracking || o.Spring != null || o.Zoom != null || o.Swipe != null || o.Moving || o.Added != null) || _redraw;
+    Awake? _awake;
     bool _redraw;
 
     void Tick()
@@ -349,6 +352,7 @@ sealed partial class Engine : IGestureSink
         }
         if (now - _lastSnapshot < 5000) return;
         _lastSnapshot = now;
+        _awake?.Renew();
         // As at touch time, windows that leave themselves out of Lanes' pictures (Ciao) do.
         Remember(_current, Capture.ScreenWithout(PointerMonitor().Monitor, _overlay.Handle, out _));
         Warm();
@@ -613,6 +617,25 @@ sealed partial class Engine : IGestureSink
         t.Place(f.Left - _overlay.Area.Left, f.Top - _overlay.Area.Top, f.Width, f.Height, opacity);
     }
 
+    // The taskbar without the parts under full-screen windows, which lie over it as on the
+    // screen: `covers` are the spans those windows take now (along x when `horizontal`, else y).
+    void PlaceTaskbar(bool horizontal, IEnumerable<(float From, float To)> covers)
+    {
+        if (_taskbar is not { } t) return;
+        var f = Frame(t.Window);
+        float x = f.Left - _overlay.Area.Left, y = f.Top - _overlay.Area.Top;
+        float a0 = horizontal ? x : y, a1 = a0 + (horizontal ? f.Width : f.Height);
+        foreach (var (c0, c1) in covers)
+        {
+            if (c1 <= a0 || c0 >= a1) continue;
+            if (c0 <= a0) a0 = Math.Max(a0, c1);
+            else if (c1 >= a1) a1 = Math.Min(a1, c0);
+            else if (c0 - a0 >= a1 - c1) a1 = c0;
+            else a0 = c1;
+        }
+        t.PlaceCut(x, y, f.Width, f.Height, a0, a1, horizontal);
+    }
+
     // The top of the screen below the taskbar, in the overlay's own coordinates.
     float WorkTop => _overlay.Work.Top - _overlay.Area.Top;
 
@@ -764,6 +787,8 @@ sealed partial class Engine : IGestureSink
         if (!_recognizers.TryGetValue(device, out var r)) _recognizers[device] = r = new GestureRecognizer(this);
         if (_activeDevice != IntPtr.Zero && _activeDevice != device && !r.Tracking) return;
         _activeDevice = device;
+        // In the open overview two fingers move between desktops too; elsewhere they scroll.
+        r.TwoFingers = _overview is { Open: true };
         r.OnFrame(frame);
         if (!r.Tracking && fingers == 0) _activeDevice = IntPtr.Zero;
     }
@@ -774,6 +799,12 @@ sealed partial class Engine : IGestureSink
     public void Begin(GestureKind kind, Axis axis)
     {
         _ignoring = false;
+        if (kind == GestureKind.Scroll)
+        {
+            if (_overview is { Open: true, Drag: null, Going: null }) BeginInnerSwipe(axis);
+            else _ignoring = true;
+            return;
+        }
         if (kind == GestureKind.Switch)
         {
             // Four fingers in the open overview move between desktops without leaving it.

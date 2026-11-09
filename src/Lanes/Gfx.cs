@@ -206,14 +206,24 @@ sealed class Gfx : IDisposable
         return _widths[(text, format)] = layout.Metrics.WidthIncludingTrailingWhitespace;
     }
 
+    // A pixel to spare: text given exactly its own width would sometimes end in "…" as it moves,
+    // the box's width coming out a hair shorter at some places on the screen.
     public void Text(string text, IDWriteTextFormat format, float x, float y, float w, float h, uint argb) =>
-        Dc.DrawText(text, format, new Rect(x, y, w, h), Brush(argb), DrawTextOptions.Clip);
+        Dc.DrawText(text, format, new Rect(x - 0.5f, y, w + 1, h), Brush(argb), DrawTextOptions.Clip);
 
     public void RoundRect(float x, float y, float w, float h, float r, uint argb) =>
         Dc.FillRoundedRectangle(new RoundedRectangle(new System.Drawing.RectangleF(x, y, w, h), r, r), Brush(argb));
 
     public void RoundRectOutline(float x, float y, float w, float h, float r, uint argb, float stroke) =>
         Dc.DrawRoundedRectangle(new RoundedRectangle(new System.Drawing.RectangleF(x, y, w, h), r, r), Brush(argb), stroke);
+
+    ID2D1StrokeStyle? _dashes;
+
+    public void DashedRoundRectOutline(float x, float y, float w, float h, float r, uint argb, float stroke)
+    {
+        _dashes ??= _d2dFactory.CreateStrokeStyle(new StrokeStyleProperties { DashStyle = DashStyle.Dash, DashCap = CapStyle.Round });
+        Dc.DrawRoundedRectangle(new RoundedRectangle(new System.Drawing.RectangleF(x, y, w, h), r, r), Brush(argb), stroke, _dashes);
+    }
 
     public void Rect(float x, float y, float w, float h, uint argb) => Dc.FillRectangle(new Vortice.RawRectF(x, y, x + w, y + h), Brush(argb));
 

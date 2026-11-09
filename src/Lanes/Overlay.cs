@@ -256,6 +256,26 @@ sealed class Thumbnail : IDisposable
             y = clipTop;
             if (h <= 1 || src.Top >= src.Bottom) opacity = 0;
         }
+        Set(x, y, w, h, src, opacity);
+    }
+
+    // Draws the window into this box, but only between `from` and `to` (along x when
+    // `horizontal`, else along y): the rest lies under something Lanes draws as if above it.
+    public void PlaceCut(float x, float y, float w, float h, float from, float to, bool horizontal)
+    {
+        if (!Valid) return;
+        float a = horizontal ? x : y, len = Math.Max(1, horizontal ? w : h);
+        float c0 = Math.Clamp(from, a, a + len), c1 = Math.Clamp(to, a, a + len);
+        var src = _source;
+        int n = horizontal ? _source.Right - _source.Left : _source.Bottom - _source.Top;
+        int s0 = (int)MathF.Round((c0 - a) / len * n), s1 = (int)MathF.Round((c1 - a) / len * n);
+        if (horizontal) { src.Left = _source.Left + s0; src.Right = _source.Left + s1; x = c0; w = c1 - c0; }
+        else { src.Top = _source.Top + s0; src.Bottom = _source.Top + s1; y = c0; h = c1 - c0; }
+        Set(x, y, w, h, src, c1 - c0 >= 1 && s1 > s0 ? 1 : 0);
+    }
+
+    void Set(float x, float y, float w, float h, RECT src, float opacity)
+    {
         var p = new DWM_THUMBNAIL_PROPERTIES
         {
             Flags = DWM_TNP_RECTDESTINATION | DWM_TNP_RECTSOURCE | DWM_TNP_VISIBLE | DWM_TNP_OPACITY,
