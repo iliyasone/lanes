@@ -53,13 +53,13 @@ public class StripTests
     }
 
     [Fact]
-    public void TheBinSitsInTheTopLeftCornerOppositeThePlus()
+    public void TheBinSitsJustBelowThePlus()
     {
         var drag = Strip.Layout(Sample(), B, 1920, 1080, 1, dragging: true, bin: true);
         var plus = drag.Tiles.Single(t => t.Kind == TileKind.Plus).Rect;
         var bin = drag.Tiles.Single(t => t.Kind == TileKind.Trash).Rect;
-        Assert.Equal(plus.Y, bin.Y, 3);
-        Assert.Equal(1920 - plus.Right, bin.X, 3);
+        Assert.Equal(plus.X, bin.X, 3);
+        Assert.InRange(bin.Y - plus.Bottom, 1, 20);
         Assert.DoesNotContain(Strip.Layout(Sample(), B, 1920, 1080, 1).Tiles, t => t.Kind == TileKind.Trash);
         Assert.Equal(2, drag.LaneAt(drag.RowY(2) + 5));
         Assert.Null(drag.LaneAt(drag.SpreadTop));

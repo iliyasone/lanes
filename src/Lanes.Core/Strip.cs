@@ -15,8 +15,8 @@ public readonly record struct DeskDrop(int Lane, int Index, bool NewLane);
 // shifted so that its current desktop (where a swipe up or down lands) sits in one column with
 // the desktop you are on, in the middle: what is above and below you reads at a glance. Rows
 // run off the screen's sides when long. One "+" in the top right corner adds a desktop at the
-// end of your lane; a bin in the top left corner (`bin`: there is more than one desktop) takes
-// a desktop dropped on it and closes it. While something is dragged, a slot for a new lane opens
+// end of your lane; a bin just below it (`bin`: there is more than one desktop) takes a
+// desktop dropped on it and closes it. While something is dragged, a slot for a new lane opens
 // above the rows and one below them.
 public sealed class Strip
 {
@@ -68,7 +68,7 @@ public sealed class Strip
         double rowsEnd = y0 + n * (rowH + rowGap) - rowGap;
         if (dragging) strip.Tiles.Add(new StripTile(TileKind.NewLane, n, 0, Guid.Empty, new Box(column, rowsEnd + rowGap, tw, slotH)));
         strip.Tiles.Add(new StripTile(TileKind.Plus, map.Locate(current)?.Lane ?? 0, 0, Guid.Empty, new Box(width - 28 * s - plus, top, plus, plus)));
-        if (bin) strip.Tiles.Add(new StripTile(TileKind.Trash, 0, 0, Guid.Empty, new Box(28 * s, top, plus, plus)));
+        if (bin) strip.Tiles.Add(new StripTile(TileKind.Trash, 0, 0, Guid.Empty, new Box(width - 28 * s - plus, top + plus + 12 * s, plus, plus)));
         strip.Bottom = (dragging ? rowsEnd + rowGap + slotH : rowsEnd) + pad;
         strip.Column = new Box(column - 16 * s, y0 - 8 * s, tw + 32 * s, rowsEnd - y0 + 16 * s);
         // The spread starts below where the rows reach while dragging, so a drag does not move it.
