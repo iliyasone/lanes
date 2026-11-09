@@ -114,6 +114,8 @@ Click a window to go to it (on another desktop, the overview zooms into that des
 the same button again closes the overview. An app with one window, a click with Shift, Ctrl
 or Alt held, the middle button and dragging a button along the taskbar work as in Windows.
 
+![One app's windows from every desktop](docs/screenshots/18-app-overview.png)
+
 The icons on your desktop stay where they are as the fingers start and fade as the overview
 opens.
 
