@@ -92,6 +92,8 @@ sealed partial class Engine
         // The opened place's block as drawn: it grows out of its bar (or the gap) and back into it.
         public Box? Ghost;
         public Box Seed;
+        // The other window of the page a window is held over: let go, the two change places.
+        public int Swap = -1;
     }
 
     // A window let go over a desktop: it shrinks into it and fades.
@@ -541,12 +543,16 @@ sealed partial class Engine
         double rise = 1 - Math.Exp(-dt / 0.09);
         for (int i = 0; i < page.To.Count; i++)
         {
-            double want = i == o.Hover && o.Idle ? 1 : 0;
+            bool swapping = o.Drag is { Window: >= 0 } sd && sd.Swap == i && sd.Window < page.To.Count;
+            double want = i == o.Hover && o.Idle || swapping ? 1 : 0;
             page.Lift[i] += (want - page.Lift[i]) * rise;
             if (Math.Abs(want - page.Lift[i]) < 0.01) page.Lift[i] = want; else moving = true;
             if (o.Drag?.Window == i) continue;
+            // The window a dragged one is held over goes to the dragged one's place already, as
+            // it will once they change places.
+            var goal = swapping ? Fit(page.To[i], page.To[o.Drag!.Window]) : page.To[i];
             var (at, v) = (page.Shown[i], page.Speed[i]);
-            if (Pull(ref at, ref v, page.To[i], dt, 17, 0.75)) moving = true;
+            if (Pull(ref at, ref v, goal, dt, 17, 0.75)) moving = true;
             (page.Shown[i], page.Speed[i]) = (at, v);
         }
         if (o.Drag is { Window: >= 0 } d && d.Window < page.To.Count)
@@ -592,6 +598,13 @@ sealed partial class Engine
         at = new Box(x[0], x[1], x[2], x[3]);
         v = new Box(s[0], s[1], s[2], s[3]);
         return true;
+    }
+
+    // `b`'s shape, as large as fits in `into`, in its middle.
+    static Box Fit(Box b, Box into)
+    {
+        double k = Math.Min(into.W / Math.Max(1, b.W), into.H / Math.Max(1, b.H));
+        return new Box(into.X + (into.W - b.W * k) / 2, into.Y + (into.H - b.H * k) / 2, b.W * k, b.H * k);
     }
 
     static Box Toward(Box from, Box to, double k, ref bool moving)
@@ -900,6 +913,13 @@ sealed partial class Engine
             _redraw = true;
         }
         if (d.Window >= 0 && d.Open != null) d.Target = o.Strip.OpenedSlot;
+        // Over another of the page's windows: over its place in the spread, which stays put while
+        // the window itself goes to the dragged one's place.
+        int swap = -1;
+        if (d.Window >= 0 && d.Target == null && t == null)
+            for (int i = o.Page.To.Count - 1; i >= 0 && swap < 0; i--)
+                if (i != d.Window && Inside(o.Page.To[i], (int)d.X, (int)d.Y)) swap = i;
+        if (swap != d.Swap) { d.Swap = swap; o.Moving = true; _redraw = true; }
     }
 
     void OnLeftUp(int x, int y)
@@ -1009,6 +1029,20 @@ sealed partial class Engine
                 o.Moving = true;
                 _redraw = true;
                 return;
+            }
+            // Let go over another window: the two change places on the desktop, and in the spread.
+            if (d.Swap >= 0 && d.Swap < o.Page.Windows.Count)
+            {
+                var area = _overlay.Area;
+                AppWindows.Swap(hwnd, o.Page.Windows[d.Swap].Handle);
+                foreach (int i in new[] { d.Window, d.Swap })
+                {
+                    var f = Frame(o.Page.Windows[i].Handle);
+                    o.Page.Windows[i] = o.Page.Windows[i] with { Frame = f };
+                    o.Page.From[i] = new Box(f.Left - area.Left, f.Top - area.Top, f.Width, f.Height);
+                }
+                Respread(o.Page, o.Strip);
+                Log.Write("two windows changed places");
             }
             // Back to its place from where it was let go, at the speed it had.
             o.Raise = hwnd;

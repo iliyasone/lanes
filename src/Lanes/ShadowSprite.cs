@@ -14,7 +14,7 @@ namespace Lanes;
 sealed class ShadowSprite : NativeWindow, IDisposable
 {
     // How much darker the picture is than the shadow, so a lifted window's can be darker.
-    public const float Strength = 1.25f;
+    public const float Strength = 1.6f;
 
     public readonly double Scale;
     // From a corner of the window the picture is the shadow of: how far the shadow reaches past
@@ -87,13 +87,15 @@ sealed class ShadowSprite : NativeWindow, IDisposable
 
     // Where the pieces go round a window drawn in `b`, in the order of Pieces: the column edges
     // across and the row edges down. `size` scales the shadow (a window made smaller than in the
-    // spread), `lift` (0..2) drops it lower and spreads it wider.
+    // spread); `lift` (0..2) spreads it wider and further down. The window's own edges stay
+    // where the pieces leave the shadow out (under the window), so none shows between them.
     public (float[] Across, float[] Down) Round(Box b, double lift, double size)
     {
-        float f = (float)(Math.Clamp(size, 0.15, 1) * (1 + 0.25 * lift));
-        float x = (float)b.X, y = (float)(b.Y + 8 * Scale * lift * Math.Clamp(size, 0.15, 1)), w = (float)b.W, h = (float)b.H;
-        float[] across = { x - _side * f, x + _in * f, x + w - _in * f, x + w + _side * f };
-        float[] down = { y - _over * f, y + _inTop * f, y + h - _inBottom * f, y + h + _below * f };
+        float k = (float)Math.Clamp(size, 0.15, 1), l = (float)lift;
+        float top = k * (1 + 0.1f * l), side = k * (1 + 0.3f * l), bottom = k * (1 + 0.6f * l);
+        float x = (float)b.X, y = (float)b.Y, w = (float)b.W, h = (float)b.H;
+        float[] across = { x - _side * side, x + _in * side, x + w - _in * side, x + w + _side * side };
+        float[] down = { y - _over * top, y + _inTop * top, y + h - _inBottom * bottom, y + h + _below * bottom };
         // A window too small for both corners squeezes them.
         if (across[1] > across[2]) across[1] = across[2] = x + w / 2;
         if (down[1] > down[2]) down[1] = down[2] = y + h * _inTop / (_inTop + _inBottom);
@@ -118,11 +120,11 @@ sealed class ShadowPictures : IDisposable
     }
 
     // Round a window drawn in `b`, as dark as `opacity` (1: as on the desktop); `lift` 1 under
-    // the pointer, 2 picked up: lower, wider and darker. Above `clipTop` it is left out.
+    // the pointer, 2 picked up: wider, further down and darker. Above `clipTop` it is left out.
     public void Place(Box b, double lift, float opacity, double size = 1, float clipTop = float.NegativeInfinity)
     {
         var (across, down) = _sprite.Round(b, lift, size);
-        float alpha = opacity * (1 + 0.2f * (float)Math.Min(lift, 1.25)) / ShadowSprite.Strength;
+        float alpha = opacity * (1 + 0.4f * (float)Math.Min(lift, 1.5)) / ShadowSprite.Strength;
         int k = 0;
         for (int j = 0; j < 3; j++)
             for (int i = 0; i < 3; i++)

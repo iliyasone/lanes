@@ -94,8 +94,10 @@ are on, in the middle: what is above and below you reads at a glance.
   picture). Held over a bar, at a lane's end or above or below the lanes, it opens a place
   there for a new desktop (or lane) with it, the same way; held a moment by the gap between
   two desktops, it opens one between them. **+** also takes it, for a new desktop at the end
-  of your lane. A window let go anywhere else springs back to its place, and comes to the
-  front as the overview closes.
+  of your lane. Held over another window of the same desktop, that window moves over to its
+  place; let go, and the two change places (and sizes) on the desktop. A window let go
+  anywhere else springs back to its place. The window you dragged comes to the front as the
+  overview closes.
 - **Middle-click** a window to close it, or a desktop to close the desktop (its windows go to
   the desktop next to it), as in Task View.
 - **Click a window** to bring it to the front and close the overview; **click a desktop** to

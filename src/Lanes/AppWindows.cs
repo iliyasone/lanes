@@ -117,6 +117,30 @@ static class AppWindows
         if (joined) AttachThreadInput(me, front, false);
     }
 
+    // Two windows change places and sizes, as the overview's drag asks: a maximized one stays
+    // maximized and the other takes its place; otherwise each takes the other's frame.
+    public static void Swap(IntPtr a, IntPtr b)
+    {
+        if (IsZoomed(a) || IsZoomed(b))
+        {
+            var pa = new WINDOWPLACEMENT { Length = Marshal.SizeOf<WINDOWPLACEMENT>() };
+            var pb = pa;
+            if (!GetWindowPlacement(a, ref pa) || !GetWindowPlacement(b, ref pb)) return;
+            (pa.Flags, pb.Flags) = (0, 0);
+            (pa.ShowCmd, pb.ShowCmd) = (IsZoomed(b) ? 3 : 4, IsZoomed(a) ? 3 : 4); // SW_SHOWMAXIMIZED, SW_SHOWNOACTIVATE
+            (pa.NormalPosition, pb.NormalPosition) = (pb.NormalPosition, pa.NormalPosition);
+            SetWindowPlacement(a, ref pa);
+            SetWindowPlacement(b, ref pb);
+            return;
+        }
+        if (!GetWindowRect(a, out var ra) || !GetWindowRect(b, out var rb)) return;
+        const uint flags = 0x0004 | 0x0010; // SWP_NOZORDER | SWP_NOACTIVATE
+        SetWindowPos(a, IntPtr.Zero, rb.Left, rb.Top, rb.Width, rb.Height, flags);
+        SetWindowPos(b, IntPtr.Zero, ra.Left, ra.Top, ra.Width, ra.Height, flags);
+    }
+
+    [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern bool GetWindowPlacement(IntPtr hwnd, ref WINDOWPLACEMENT placement);
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] static extern bool AttachThreadInput(uint from, uint to, bool attach);
     [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr hwnd);

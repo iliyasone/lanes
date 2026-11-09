@@ -82,6 +82,28 @@ static class Demo
             await Swipe(engine, 3, 0, -1, 0.28 * 0.7, continueFrom: 0.28 * 0.45);
             await Task.Delay(1200);
             engine.Screenshot(Path.Combine(dir, "4-overview-open.png"));
+
+            // The pointer over a window: its shadow grows and deepens, still right under it.
+            var (_, shown) = await engine.OverviewLayout();
+            var editorBox = shown.First(w => w.Title == "Editor").Rect;
+            SetCursorPos(editorBox.Left + editorBox.Width / 2, editorBox.Top + editorBox.Height / 2);
+            await Task.Delay(500);
+            engine.Screenshot(Path.Combine(dir, "4a-hover.png"));
+            // Notes dragged onto Terminal: Terminal goes to Notes' place already; let go, the
+            // two change places and sizes on the desktop.
+            var notesForm = Application.OpenForms.Cast<Form>().First(f => f.Text == "Notes");
+            var terminalForm = Application.OpenForms.Cast<Form>().First(f => f.Text == "Terminal");
+            string Frames() => $"Notes {notesForm.Bounds}, Terminal {terminalForm.Bounds}";
+            Log.Write("before the swap: " + Frames());
+            await PressAndPull(shown.First(w => w.Title == "Notes").Rect, 30);
+            var terminalBox = shown.First(w => w.Title == "Terminal").Rect;
+            await Glide(new Point(terminalBox.Left + terminalBox.Width / 2, terminalBox.Top + terminalBox.Height / 2));
+            await Task.Delay(500);
+            engine.Screenshot(Path.Combine(dir, "4b-swap-hold.png"));
+            Release();
+            await Task.Delay(900);
+            engine.Screenshot(Path.Combine(dir, "4c-after-swap.png"));
+            Log.Write("after the swap: " + Frames());
             await Task.Delay(600);
 
             // Four fingers inside the overview: to Research and held halfway, then up to the
