@@ -28,8 +28,9 @@ sealed class TaskbarButtons
     readonly Action<AppRef, bool> _clicked;
     // The app whose button the pointer came onto, or null as it leaves the buttons.
     readonly Action<AppRef?> _hovered;
-    // A press on the taskbar while the app map lies over it, with where it was.
-    readonly Action<POINT> _pressedUnderMap;
+    // A click on the taskbar while the app map lies over it, with where it was.
+    readonly Action<POINT> _clickedUnderMap;
+    bool _heldUnderMap;
     string? _over;
     volatile Button[] _buttons = Array.Empty<Button>();
     volatile RECT[] _bars = Array.Empty<RECT>();
@@ -45,11 +46,11 @@ sealed class TaskbarButtons
     // The app map lies over the taskbar.
     public volatile bool UnderMap;
 
-    public TaskbarButtons(Action<AppRef, bool> clicked, Action<AppRef?> hovered, Action<POINT> pressedUnderMap)
+    public TaskbarButtons(Action<AppRef, bool> clicked, Action<AppRef?> hovered, Action<POINT> clickedUnderMap)
     {
         _clicked = clicked;
         _hovered = hovered;
-        _pressedUnderMap = pressedUnderMap;
+        _clickedUnderMap = clickedUnderMap;
         var reader = new Thread(ReadLoop) { IsBackground = true, Name = "taskbar buttons" };
         reader.SetApartmentState(ApartmentState.STA);
         reader.Start();
@@ -98,12 +99,11 @@ sealed class TaskbarButtons
                         }
                         break;
                     case WM_LBUTTONDOWN:
-                        // Caught here, not by the map's window: a press that window got would leave
-                        // Windows holding the button down, and one handed on to the taskbar after
-                        // it would go nowhere.
+                        // Press and release are both Lanes' here, and Windows sees neither: the
+                        // taskbar gets a whole click of its own if the map lets it go.
                         if (UnderMap && _bars.Any(r => Inside(r, m.Pt)))
                         {
-                            _pressedUnderMap(m.Pt);
+                            _heldUnderMap = true;
                             return 1;
                         }
                         if (Held() || At(m.Pt) is not { } b) break;
@@ -115,6 +115,12 @@ sealed class TaskbarButtons
                         _clicked(b.App, false);
                         break;
                     case WM_LBUTTONUP:
+                        if (_heldUnderMap)
+                        {
+                            _heldUnderMap = false;
+                            _clickedUnderMap(m.Pt);
+                            return 1;
+                        }
                         if (_pressed is { } click)
                         {
                             _pressed = null;
@@ -163,10 +169,17 @@ sealed class TaskbarButtons
     }
 
     // Hands a press back to Windows, where it was.
-    public static void Press(POINT at)
+    public static void Press(POINT at) => Send(Input(at, 0x0002 /* LEFTDOWN */));
+
+    // A whole click at `at`, as a hand would make it: the pointer comes onto the spot first, so
+    // what is there sees it arrive.
+    public static void Click(POINT at) =>
+        Send(Input(at with { X = at.X + 1 }, 0), Input(at, 0), Input(at, 0x0002 /* LEFTDOWN */), Input(at, 0x0004 /* LEFTUP */));
+
+    static INPUT Input(POINT at, uint button)
     {
         int x0 = GetSystemMetrics(76), y0 = GetSystemMetrics(77), w = GetSystemMetrics(78), h = GetSystemMetrics(79);
-        var input = new INPUT
+        return new INPUT
         {
             Type = 0, // INPUT_MOUSE
             U = new InputUnion
@@ -175,13 +188,14 @@ sealed class TaskbarButtons
                 {
                     Dx = (int)Math.Round((at.X - x0) * 65535.0 / Math.Max(1, w - 1)),
                     Dy = (int)Math.Round((at.Y - y0) * 65535.0 / Math.Max(1, h - 1)),
-                    Flags = 0x8000 | 0x4000 | 0x0001 | 0x0002, // ABSOLUTE | VIRTUALDESK | MOVE | LEFTDOWN
+                    Flags = 0x8000 | 0x4000 | 0x0001 | button, // ABSOLUTE | VIRTUALDESK | MOVE
                     ExtraInfo = Ours,
                 },
             },
         };
-        SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
     }
+
+    static void Send(params INPUT[] inputs) => SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
 
     // ---------- the buttons ----------
 

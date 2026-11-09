@@ -368,19 +368,27 @@ static class Demo
         // goes and File Explorer opens.
         Desktops.Switch(editor);
         await Task.Delay(2000);
-        await Rest();
-        var start = TopWindows();
         var files = Enumerable.Range(0, Screen.PrimaryScreen!.Bounds.Width / 8)
             .Select(i => new Native.POINT { X = i * 8, Y = cy })
             .FirstOrDefault(p => engine.Buttons!.Under(p) is { } b && (b.App.Id + b.App.Name).Contains("Explorer", StringComparison.OrdinalIgnoreCase));
         if (files.X == 0) Log.Write("app map: no File Explorer button on the taskbar");
+        // The same click with no map first, to know what it does here.
+        var start = TopWindows();
+        Click(files.X, files.Y);
+        await Task.Delay(2500);
+        var opened = TopWindows().Where(w => !start.Contains(w)).ToList();
+        Log.Write($"app map: a click on File Explorer's button with no map opens: {string.Join(", ", opened.Take(5).Select(Describe))}");
+        foreach (var w in opened.Where(w => Native.ClassName(w) == "CabinetWClass")) PostMessage(w, 0x10, IntPtr.Zero, IntPtr.Zero);
+        await Task.Delay(1000);
+        await Rest();
+        start = TopWindows();
         SetCursorPos(files.X, files.Y);
         mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
         await Task.Delay(150);
         Log.Write($"app map: pressed on File Explorer's button through the map; under the pointer now: {Describe(Native.GetAncestor(WindowFromPoint(files), 2))}");
         mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
         await Task.Delay(2500);
-        var opened = TopWindows().Where(w => !start.Contains(w)).ToList();
+        opened = TopWindows().Where(w => !start.Contains(w)).ToList();
         Log.Write($"app map: after the click: the map is {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STILL OPEN")}; new windows: {string.Join(", ", opened.Take(5).Select(Describe))}");
         engine.Screenshot(Path.Combine(dir, "18d-taskbar-click-through-map.png"));
         foreach (var w in opened.Where(w => Native.ClassName(w) == "CabinetWClass")) PostMessage(w, 0x10, IntPtr.Zero, IntPtr.Zero);

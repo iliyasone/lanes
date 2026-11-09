@@ -123,7 +123,7 @@ sealed partial class Engine : IGestureSink
                 SetUpLanes();
                 Ready = true;
                 Buttons = new TaskbarButtons((app, taken) => Post(() => TaskbarClicked(app, taken)), app => Post(() => Hovered(app)),
-                    pt => Post(() => TaskbarPress(pt)));
+                    pt => Post(() => TaskbarClick(pt)));
             }
             else Status?.Invoke("This Windows version is not supported");
             PrepareWallpapers();

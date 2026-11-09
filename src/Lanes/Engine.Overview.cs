@@ -1043,11 +1043,11 @@ sealed partial class Engine
     TaskbarButtons.Button? ButtonUnder(int x, int y) =>
         Buttons?.Under(new POINT { X = x + _overlay.Area.Left, Y = y + _overlay.Area.Top });
 
-    // A press on the taskbar under an app's map (TaskbarButtons' hook catches it): on an app with
+    // A click on the taskbar under an app's map (TaskbarButtons' hook catches it): on an app with
     // two or more windows, the map shows that app's; anything else (an app with one window, the
-    // Start button, the tray) the map goes and the press goes on to the taskbar itself, as if the
+    // Start button, the tray) the map goes and the click goes on to the taskbar itself, as if the
     // map were not there.
-    void TaskbarPress(POINT at)
+    void TaskbarClick(POINT at)
     {
         _hover = null;
         if (_overview is { App: not null } && Buttons?.Under(at) is { Windows: >= 2 } b)
@@ -1055,10 +1055,10 @@ sealed partial class Engine
             ShowApp(b.App);
             return;
         }
-        // Gone at once, as Windows' own pop-ups go: the press must find the taskbar under it.
+        // Gone at once, as Windows' own pop-ups go: the click must find the taskbar under it.
         if (_overview is { App: not null }) CloseOverviewNow();
-        TaskbarButtons.Press(at);
-        Log.Write("map closed: a press on the taskbar went on to it");
+        TaskbarButtons.Click(at);
+        Log.Write("map closed: a click on the taskbar went on to it");
     }
 
     void OnMouseMove(int x, int y)
