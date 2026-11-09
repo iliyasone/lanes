@@ -90,6 +90,9 @@ public sealed class Strip
         _ => t.Rect,
     };
 
+    // Where the new desktop of a slot at a row's end would be, just past that end.
+    public Box Ghost(StripTile t) => new(t.Index == 0 ? t.Rect.Right - TileW : t.Rect.X, t.Rect.Y, TileW, TileH);
+
     // The lane whose row is at height y, if any.
     public int? LaneAt(double y)
     {

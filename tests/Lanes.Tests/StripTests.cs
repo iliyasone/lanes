@@ -69,6 +69,9 @@ public class StripTests
         // Shown as a bar in the gap beside the row's end.
         var bar = s.Bar(middle[1], 4);
         Assert.InRange(bar.X + bar.W / 2, Of(s, C).Right, middle[1].Rect.X);
+        // The new desktop's place, past each end.
+        Assert.True(s.Ghost(middle[0]).Right < Of(s, A).X && s.Ghost(middle[1]).X > Of(s, C).Right);
+        Assert.Equal(s.TileW, s.Ghost(middle[1]).W, 3);
     }
 
     [Fact]

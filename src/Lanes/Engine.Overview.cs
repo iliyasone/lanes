@@ -1393,7 +1393,15 @@ sealed partial class Engine
             {
                 // Where a new lane, or a new desktop at a row's end, would go: a thin bar that
                 // grows out from its middle as the drag starts, blue (and named, for a lane)
-                // when something is over it.
+                // when something is over it; a new desktop's place then shows past the row's end,
+                // as the window held there would hide the bar.
+                if (targeted && t.Kind == TileKind.NewDesk)
+                {
+                    var ghost = strip.Ghost(t);
+                    float gx = (float)ghost.X, gy = (float)ghost.Y + dy, gw = (float)ghost.W, gh = (float)ghost.H;
+                    g.RoundRect(gx, gy, gw, gh, 8 * s, A(0x264CC2FFu, a));
+                    g.RoundRectOutline(gx + 1, gy + 1, gw - 2, gh - 2, 8 * s, A(0xFF4CC2FF, a), 2 * s);
+                }
                 float grow = drag == null ? 1 : (float)Ease(Math.Clamp((Now - drag.Since) / SlotsIn, 0, 1));
                 var bar = strip.Bar(t, (targeted ? 6 : 4) * s);
                 float bx = (float)bar.X, by = (float)bar.Y + dy, bw = (float)bar.W, bh = (float)bar.H;
