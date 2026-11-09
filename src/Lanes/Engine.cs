@@ -644,7 +644,8 @@ sealed partial class Engine : IGestureSink
         foreach (var b in _tilePictures.Values) b.Dispose();
         foreach (var (a, b) in _wallpapers.Values) { a.Dispose(); b.Dispose(); }
         foreach (var b in _deskBitmaps.Values) b.Dispose();
-        _bitmaps.Clear(); _tilePictures.Clear(); _wallpapers.Clear(); _deskBitmaps.Clear();
+        foreach (var t in _mapTiles.Values) t.Small.Dispose();
+        _bitmaps.Clear(); _tilePictures.Clear(); _wallpapers.Clear(); _deskBitmaps.Clear(); _mapTiles.Clear();
         _picturesFor = area;
         _gfx.Attach(_overlay.Handle, area.Width, area.Height);
     }
@@ -780,6 +781,22 @@ sealed partial class Engine : IGestureSink
         var full = Picture(desktop);
         if (full == null) return null;
         return _tilePictures[desktop] = _gfx.Scaled(full, (int)w, (int)h, 8 * _overlay.Scale);
+    }
+
+    // A desktop itself (wallpaper and icons) at a tile's size, for an app's map; made again when
+    // that picture is new, but not while the tiles are still growing to their size.
+    readonly Dictionary<Guid, (ID2D1Bitmap1 From, ID2D1Bitmap1 Small)> _mapTiles = new();
+
+    ID2D1Bitmap1? MapTilePicture(Guid desktop, float w, float h, bool moving)
+    {
+        var full = DeskPicture(desktop);
+        if (full == null) return null;
+        if (_mapTiles.TryGetValue(desktop, out var t) && t.From == full && Math.Abs(t.Small.PixelSize.Width - (int)w) <= 1) return t.Small;
+        if (moving) return null;
+        t.Small?.Dispose();
+        var small = _gfx.Scaled(full, (int)w, (int)h, 8 * _overlay.Scale);
+        _mapTiles[desktop] = (full, small);
+        return small;
     }
 
     (ID2D1Bitmap1 Sharp, ID2D1Bitmap1 Blurred)? Wallpaper(Guid desktop)
@@ -930,7 +947,8 @@ sealed partial class Engine : IGestureSink
         if (kind == GestureKind.Switch)
         {
             // Four fingers in the open overview move between desktops without leaving it.
-            if (_overview is { Open: true, Drag: null, Going: null }) { BeginInnerSwipe(axis); return; }
+            // Not on an app's map, which is there only to pick one of its windows.
+            if (_overview is { Open: true, Drag: null, Going: null, App: null }) { BeginInnerSwipe(axis); return; }
             if (_overview != null || _switch is { Spring: null }) { _ignoring = true; return; }
             BeginSwitch(axis);
         }

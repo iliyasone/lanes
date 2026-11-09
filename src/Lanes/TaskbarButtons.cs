@@ -85,6 +85,7 @@ sealed class TaskbarButtons
                         if (!Held() && At(m.Pt) is { Windows: >= 2 } b)
                         {
                             _pressed = (b, m.Pt);
+                            HidePreviews();
                             return 1;
                         }
                         break;
@@ -99,6 +100,14 @@ sealed class TaskbarButtons
                 }
         }
         return CallNextHookEx(_hook, code, wParam, lParam);
+    }
+
+    // Windows' previews of the button's windows, up since the pointer rested on it, go: Lanes'
+    // map comes in their place (and Windows never sees the click that would close them).
+    static void HidePreviews()
+    {
+        for (IntPtr h = IntPtr.Zero; (h = FindWindowEx(IntPtr.Zero, h, "TaskListThumbnailWnd", null)) != IntPtr.Zero;)
+            if (IsWindowVisible(h)) ShowWindowAsync(h, 0 /* SW_HIDE */);
     }
 
     static bool Held() => GetAsyncKeyState(0x10) < 0 || GetAsyncKeyState(0x11) < 0 || GetAsyncKeyState(0x12) < 0;
@@ -223,6 +232,7 @@ sealed class TaskbarButtons
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vk);
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT pt);
     [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
+    [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr hwnd, int cmd);
 }
 
 // The id Windows groups an app's windows by on the taskbar ("Chrome", "Telegram.TelegramDesktop",

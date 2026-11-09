@@ -235,6 +235,9 @@ sealed class Gfx : IDisposable
 
     public void Rect(float x, float y, float w, float h, uint argb) => Dc.FillRectangle(new Vortice.RawRectF(x, y, x + w, y + h), Brush(argb));
 
+    public void Line(float x0, float y0, float x1, float y1, uint argb, float stroke) =>
+        Dc.DrawLine(new System.Numerics.Vector2(x0, y0), new System.Numerics.Vector2(x1, y1), Brush(argb), stroke);
+
     // A soft shadow made of stacked translucent rounded rectangles; cheap and good enough at UI sizes.
     public void Shadow(float x, float y, float w, float h, float r, float blur, float dy, float alpha)
     {

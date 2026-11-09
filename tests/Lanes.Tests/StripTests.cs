@@ -31,6 +31,17 @@ public class StripTests
     }
 
     [Fact]
+    public void AnAppsMapHasBiggerTilesInTheSameColumnAndNoButtons()
+    {
+        var rows = Strip.Layout(Sample(), B, 1920, 1080, 1, offset: 48, room: 1032, bin: true);
+        var map = Strip.Layout(Sample(), B, 1920, 1080, 1, offset: 48, room: 1032, bin: true, app: true);
+        Assert.True(map.TileW > rows.TileW * 1.5);
+        Assert.True(map.Bottom <= 48 + 1032 * 0.6 + 18);
+        Assert.Equal((1920 - map.TileW) / 2, Of(map, B).X, 3);
+        Assert.DoesNotContain(map.Tiles, t => t.Kind is TileKind.Plus or TileKind.Trash);
+    }
+
+    [Fact]
     public void ADragOpensNewLaneSlotsAboveAndBelowWithoutMovingAnything()
     {
         var idle = Strip.Layout(Sample(), B, 1920, 1080, 1, offset: 48);

@@ -76,8 +76,9 @@ they are), each about where it was, and the lanes come down above them. Smaller 
 shrink less than big ones, and a small one keeps its size where its row has room. Each window
 casts a shadow, the same as on the desktop, which grows and deepens under the pointer. Over a
 full-screen window the taskbar slides in from the screen's edge as the overview opens and back
-out as it closes; while it is open the real taskbar is lifted over the window, so it takes
-clicks as it does anywhere else. Each lane's row is shifted
+out as it closes; while it is open the taskbar is the active window, which Windows keeps in
+front of the full-screen one, so it takes clicks as it does anywhere else (the full-screen
+window is active again after, unless you picked another). Each lane's row is shifted
 so that the desktop a swipe up or down would land on sits in one column with the desktop you
 are on, in the middle: what is above and below you reads at a glance.
 
@@ -100,21 +101,27 @@ are on, in the middle: what is above and below you reads at a glance.
   an edge of the screen goes against the same edge in the other's place). A window let go
   anywhere else springs back to its place. The window you dragged comes to the front as the
   overview closes.
+- **The window under the pointer** gets three round buttons over its top right corner, as on
+  its title bar (which in the overview is only a picture): minimize (it leaves the overview),
+  maximize or restore (it takes its new shape among the others), and close.
 - **Middle-click** a window to close it, or a desktop to close the desktop (its windows go to
   the desktop next to it), as in Task View.
 - **Click a window** to bring it to the front and close the overview; **click a desktop** to
   go there (the overview zooms into it); **click +** for a new desktop at the end of your lane.
 - **Esc**, a click on empty space or **three fingers down** close it.
 
-**Click an app on the taskbar** that has two windows or more (on any desktops) and the
-overview opens with just that app's windows, as a Mac shows an app's windows: those on other
-desktops come out of their desktops in the lanes, the other apps' windows fade away, and the
-desktops without the app's windows are dimmed. The pointer over a window outlines its desktop.
-Click a window to go to it (on another desktop, the overview zooms into that desktop first);
-the same button again closes the overview. An app with one window, a click with Shift, Ctrl
-or Alt held, the middle button and dragging a button along the taskbar work as in Windows.
+**Click an app on the taskbar** that has two windows or more (on any desktops), and in place
+of Windows' row of previews a map of your desktops drops down over the screen, which stays as
+it is, a little darker. The lanes are as in the overview, about twice as big; each desktop
+shows the app's windows, live, exactly where they are on it, and every other window as a pale
+shape, so you see where each one is. Desktops without the app's windows are dimmed. The
+pointer over a window lifts it a little and outlines it and its desktop, whose name gives way
+to the window's title. Click a window to go to it (on another desktop, the map zooms into that
+desktop first), a desktop to go there; the same button again, Esc or a click elsewhere closes
+the map. An app with one window, a click with Shift, Ctrl or Alt held, the middle button and
+dragging a button along the taskbar work as in Windows.
 
-![One app's windows from every desktop](docs/screenshots/18-app-overview.png)
+![One app's windows on a map of the desktops](docs/screenshots/18-app-overview.png)
 
 The icons on your desktop stay where they are as the fingers start and fade as the overview
 opens.

@@ -131,6 +131,8 @@ static class AppWindows
         if (joined) AttachThreadInput(me, front, false);
     }
 
+    public static bool Maximized(IntPtr hwnd) => IsZoomed(hwnd);
+
     // Two windows change places, each keeping its size (see Spread.Trade). A maximized one stays
     // as it is, and the other goes to the middle of the screen.
     public static void Swap(IntPtr a, IntPtr b)

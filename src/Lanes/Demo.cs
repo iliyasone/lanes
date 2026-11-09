@@ -196,6 +196,7 @@ static class Demo
             Click(c.Left + c.Width / 2, c.Top + c.Height / 2);
             await Task.Delay(500);
             Log.Write(clicked ? "click reached the window under the overlay" : "CLICK BLOCKED by the overlay");
+            await WindowButtons(engine, dir, editor);
             await AppOverview(engine, dir, editor, agent);
             await FullScreenTaskbar(engine, dir);
             // With Windows' setting that Lanes turns on, the taskbar keeps the apps of other desktops.
@@ -289,9 +290,10 @@ static class Demo
         mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
     }
 
-    // The test windows' taskbar button (they are all one program's) clicked: the overview shows
-    // them all, from every desktop; the one on the Agent desktop clicked, Lanes goes there and
-    // brings it to the front.
+    // The test windows' taskbar button (they are all one program's): the pointer rests on it a
+    // moment, as a hand does, and Windows shows its previews of the windows; a click, and Lanes'
+    // map of the desktops comes in their place, with the windows where they are. The one on the
+    // Agent desktop clicked, Lanes goes there and brings it to the front.
     static async Task AppOverview(Engine engine, string dir, Guid editor, Guid agent)
     {
         Desktops.Switch(editor);
@@ -300,21 +302,28 @@ static class Demo
         await Task.Delay(400);
         var mine = Application.OpenForms.Cast<Form>().First(f => f.Text == "Editor").Handle;
         var button = engine.Buttons == null ? null : await engine.Buttons.ButtonOf(mine);
-        if (button == null) { Log.Write("app overview: no taskbar button found for the test windows"); return; }
+        if (button == null) { Log.Write("app map: no taskbar button found for the test windows"); return; }
         var r = button.Rect;
-        Log.Write($"app overview: the test windows' button is \"{button.App.Name}\" ({button.App.Id}) at {r.Left},{r.Top} {r.Width}x{r.Height}, {button.Windows} windows");
-        SetCursorPos((r.Left + r.Right) / 2, (r.Top + r.Bottom) / 2);
-        await Task.Delay(400);
+        Log.Write($"app map: the test windows' button is \"{button.App.Name}\" ({button.App.Id}) at {r.Left},{r.Top} {r.Width}x{r.Height}, {button.Windows} windows");
+        var before = TopWindows();
+        int cx = (r.Left + r.Right) / 2, cy = (r.Top + r.Bottom) / 2;
+        SetCursorPos(cx - 20, cy);
+        for (int i = 0; i < 20; i++) { mouse_event(0x1, 1, 0, 0, IntPtr.Zero); await Task.Delay(20); }
+        await Task.Delay(1500);
+        var previews = TopWindows().Where(w => !before.Contains(w)).ToList();
+        Log.Write($"app map: with the pointer on the button, Windows shows: {(previews.Count == 0 ? "nothing new" : string.Join(", ", previews.Select(Describe)))}");
+        engine.Screenshot(Path.Combine(dir, "18c-windows-previews.png"));
         mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
         await Task.Delay(60);
         mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
         await Task.Delay(1300);
+        Log.Write($"app map: Windows' previews after the click: {(previews.Count == 0 ? "there were none" : string.Join(", ", previews.Select(h => $"{Native.ClassName(h)} {(Native.IsWindowVisible(h) ? "STILL SHOWN" : "gone")}")))}");
         engine.Screenshot(Path.Combine(dir, "18-app-overview.png"));
         var (_, shown) = await engine.OverviewLayout();
-        Log.Write("app overview shows: " + string.Join(", ", shown.Select(w => w.Title)));
+        Log.Write("app map shows: " + string.Join(", ", shown.Select(w => $"{w.Title} {w.Rect.Width}x{w.Rect.Height}")));
         var other = shown.FirstOrDefault(w => w.Title == "Agent").Rect;
         if (other.Width == 0) return;
-        _pointer = new Point((r.Left + r.Right) / 2, (r.Top + r.Bottom) / 2);
+        _pointer = new Point(cx, cy);
         await Glide(new Point(other.Left + other.Width / 2, other.Top + other.Height / 2));
         await Task.Delay(600);
         engine.Screenshot(Path.Combine(dir, "18a-app-overview-pointer.png"));
@@ -324,39 +333,116 @@ static class Demo
         engine.Screenshot(Path.Combine(dir, "18b-after-app-click.png"));
     }
 
-    // A full-screen window lies over the taskbar; in the overview the real taskbar is lifted
-    // over it (what is under the pointer there is the taskbar), and back under it after.
+    // The top-level windows shown now.
+    static List<IntPtr> TopWindows()
+    {
+        var list = new List<IntPtr>();
+        Native.EnumWindows((h, _) => { if (Native.IsWindowVisible(h)) list.Add(h); return true; }, IntPtr.Zero);
+        return list;
+    }
+
+    static string Describe(IntPtr h)
+    {
+        var f = Native.Frame(h);
+        return $"{Native.ClassName(h)} \"{Native.WindowText(h)}\" {f.Left},{f.Top} {f.Width}x{f.Height}";
+    }
+
+    // The buttons over a window in the overview: maximize, then restore, then minimize Notes.
+    static async Task WindowButtons(Engine engine, string dir, Guid editor)
+    {
+        Desktops.Switch(editor);
+        await Task.Delay(2500);
+        engine.Snapshot();
+        await Task.Delay(400);
+        var notes = Application.OpenForms.Cast<Form>().First(f => f.Text == "Notes");
+        await Swipe(engine, 3, 0, -1, 0.28 * 0.7);
+        await Task.Delay(1500);
+        async Task<List<Rectangle>> Hover()
+        {
+            var (_, windows) = await engine.OverviewLayout();
+            var box = windows.First(w => w.Title == "Notes").Rect;
+            _pointer = new Point(box.Left + box.Width / 2, box.Bottom + 40);
+            SetCursorPos(_pointer.X, _pointer.Y);
+            await Glide(new Point(box.Left + box.Width / 2, box.Top + box.Height / 2));
+            await Task.Delay(400);
+            return await engine.HoverButtons();
+        }
+        async Task Press(List<Rectangle> buttons, int k)
+        {
+            var b = buttons[k];
+            await Glide(new Point(b.Left + b.Width / 2, b.Top + b.Height / 2));
+            await Task.Delay(300);
+            Click(b.Left + b.Width / 2, b.Top + b.Height / 2);
+            await Task.Delay(1500);
+        }
+        var buttons = await Hover();
+        if (buttons.Count != 3) { Log.Write("window buttons: none over Notes"); return; }
+        engine.Screenshot(Path.Combine(dir, "4d-window-buttons.png"));
+        await Press(buttons, 1);
+        Log.Write($"window buttons: after maximize, Notes is {(AppWindows.Maximized(notes.Handle) ? "maximized" : "NOT MAXIMIZED")}");
+        engine.Screenshot(Path.Combine(dir, "4e-after-maximize.png"));
+        buttons = await Hover();
+        if (buttons.Count == 3) await Press(buttons, 1);
+        Log.Write($"window buttons: after restore, Notes is {(AppWindows.Maximized(notes.Handle) ? "STILL MAXIMIZED" : "back to its size")}");
+        buttons = await Hover();
+        if (buttons.Count == 3) await Press(buttons, 0);
+        Log.Write($"window buttons: after minimize, Notes is {(Native.IsIconic(notes.Handle) ? "minimized" : "NOT MINIMIZED")}; the overview shows {(await engine.OverviewLayout()).Windows.Count} windows");
+        await Swipe(engine, 3, 0, 1, 0.28 * 0.8);
+        await Task.Delay(1500);
+        notes.WindowState = FormWindowState.Normal;
+        await Task.Delay(500);
+    }
+
+    // A browser in full screen, as with a video, lies over the taskbar; in the overview the real
+    // taskbar is in front of it (what is under the pointer there is the taskbar), and after the
+    // overview the browser is in front again. Chrome tells the taskbar itself that it is in full
+    // screen, which a plain window does not.
     static async Task FullScreenTaskbar(Engine engine, string dir)
     {
         var screen = Screen.PrimaryScreen!;
-        var full = new Form
+        string? chrome = new[] { @"C:\Program Files\Google\Chrome\Application\chrome.exe", @"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" }.FirstOrDefault(File.Exists);
+        System.Diagnostics.Process? browser = null;
+        Form? form = null;
+        IntPtr full = IntPtr.Zero;
+        if (chrome != null)
         {
-            Text = "Video",
-            BackColor = Color.FromArgb(0x20, 0x10, 0x30),
-            FormBorderStyle = FormBorderStyle.None,
-            StartPosition = FormStartPosition.Manual,
-            Bounds = screen.Bounds,
-            ShowInTaskbar = true,
-        };
-        full.Show();
-        full.Activate();
+            string profile = Path.Combine(Path.GetTempPath(), "lanes-demo-chrome");
+            browser = System.Diagnostics.Process.Start(chrome, $"--user-data-dir=\"{profile}\" --no-first-run --no-default-browser-check --start-fullscreen \"data:text/html,<title>Video</title><body style='background:%23302040'>\"");
+            for (int i = 0; i < 100 && full == IntPtr.Zero; i++)
+            {
+                await Task.Delay(100);
+                full = TopWindows().FirstOrDefault(h => Native.ClassName(h) == "Chrome_WidgetWin_1" && Native.WindowText(h).StartsWith("Video"));
+            }
+            Log.Write($"full screen: Chrome's window {(full == IntPtr.Zero ? "not found" : Describe(full))}");
+        }
+        if (full == IntPtr.Zero)
+        {
+            form = new Form { Text = "Video", BackColor = Color.FromArgb(0x20, 0x10, 0x30), FormBorderStyle = FormBorderStyle.None, StartPosition = FormStartPosition.Manual, Bounds = screen.Bounds, ShowInTaskbar = true };
+            form.Show();
+            full = form.Handle;
+        }
+        await Task.Delay(1000);
+        AppWindows.Activate(full);
         await Task.Delay(1500);
         engine.Snapshot();
         await Task.Delay(500);
         var b = screen.Bounds; var w = screen.WorkingArea;
         var bar = w.Bottom < b.Bottom ? Rectangle.FromLTRB(b.Left, w.Bottom, b.Right, b.Bottom) : Rectangle.FromLTRB(b.Left, b.Top, b.Right, w.Top);
+        if (bar.Height == 0) bar = Rectangle.FromLTRB(b.Left, b.Bottom - 48, b.Right, b.Bottom);
         var at = new Native.POINT { X = bar.Left + 8, Y = (bar.Top + bar.Bottom) / 2 };
         string Under() => Native.GetAncestor(WindowFromPoint(at), 2) is var h ? $"{Native.ClassName(h)} \"{Native.WindowText(h)}\"" : "";
-        Log.Write($"full screen: under the taskbar's place before the overview: {Under()}");
+        string Front() => Native.ClassName(GetForegroundWindow());
+        Log.Write($"full screen: under the taskbar's place before the overview: {Under()}; in front: {Front()}");
         await Swipe(engine, 3, 0, -1, 0.28 * 0.7);
         await Task.Delay(1500);
-        Log.Write($"full screen: in the overview: {Under()}");
+        Log.Write($"full screen: in the overview: {Under()}; in front: {Front()}");
         engine.Screenshot(Path.Combine(dir, "19-full-screen-overview.png"));
         await Swipe(engine, 3, 0, 1, 0.28 * 0.8);
         await Task.Delay(1500);
-        Log.Write($"full screen: after the overview closed: {Under()}");
-        full.Close();
-        await Task.Delay(500);
+        Log.Write($"full screen: after the overview closed: {Under()}; in front: {Front()}");
+        form?.Close();
+        try { browser?.Kill(entireProcessTree: true); } catch { }
+        await Task.Delay(800);
     }
 
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
