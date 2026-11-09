@@ -39,6 +39,10 @@ sealed partial class Engine : IGestureSink
     readonly Dictionary<Guid, (ID2D1Bitmap1 Sharp, ID2D1Bitmap1 Blurred)> _wallpapers = new();
     // Whether a window covered the whole screen (the taskbar hidden) when the picture was taken.
     readonly Dictionary<Guid, bool> _fullScreen = new();
+    // Each desktop itself, wallpaper and icons, as the overview shows it under the windows.
+    readonly Dictionary<Guid, (Pixels Pixels, long At)> _deskPixels = new();
+    readonly Dictionary<Guid, ID2D1Bitmap1> _deskBitmaps = new();
+    Task? _deskTask;
     // The overlay area the pictures on the GPU are cut for.
     RECT _picturesFor;
     Task<(Pixels Pixels, IntPtr KeepUnder)>? _touchCapture;
@@ -336,13 +340,150 @@ sealed partial class Engine : IGestureSink
 
     void Idle()
     {
-        if (!Ready || _overlay.Shown || _switch != null || _overview != null) return;
+        if (!Ready || _overlay.Shown || _switch != null || _overview != null || Touching) return;
         long now = Environment.TickCount64;
-        if (now - _lastSnapshot < 5000 || Touching) return;
+        if (now - _lastWindowCheck >= 1000)
+        {
+            _lastWindowCheck = now;
+            CheckOtherDesktops();
+        }
+        if (now - _lastSnapshot < 5000) return;
         _lastSnapshot = now;
         // As at touch time, windows that leave themselves out of Lanes' pictures (Ciao) do.
         Remember(_current, Capture.ScreenWithout(PointerMonitor().Monitor, _overlay.Handle, out _));
         Warm();
+        TakeDesk();
+    }
+
+    // The desktop under the windows (wallpaper and icons), taken now and then on the thread pool:
+    // icons change seldom, and the overview needs it at once.
+    void TakeDesk()
+    {
+        if (_deskTask is { IsCompleted: false }) return;
+        if (_deskPixels.TryGetValue(_current, out var had) && Environment.TickCount64 - had.At < 30000) return;
+        var desktop = _current;
+        var monitor = PointerMonitor().Monitor;
+        _deskTask = Task.Run(() => Capture.Desktop(monitor)).ContinueWith(t => Post(() =>
+        {
+            if (t.Status != TaskStatus.RanToCompletion || t.Result is not { } p) return;
+            // Taken while Windows was switching: it may show the other desktop's wallpaper.
+            if (desktop != _current || Now - _lastSwitchAt < 1) { p.Dispose(); return; }
+            if (_deskPixels.Remove(desktop, out var old)) old.Pixels.Dispose();
+            _deskPixels[desktop] = (p, Environment.TickCount64);
+            if (_deskBitmaps.Remove(desktop, out var b)) b.Dispose();
+        }));
+    }
+
+    ID2D1Bitmap1? DeskPicture(Guid desktop)
+    {
+        if (_deskBitmaps.TryGetValue(desktop, out var b)) return b;
+        if (_deskPixels.TryGetValue(desktop, out var d) && d.Pixels.Width == _overlay.Monitor.Width && d.Pixels.Height == _overlay.Monitor.Height)
+            return _deskBitmaps[desktop] = _gfx.Bitmap(d.Pixels, Inner);
+        return Wallpaper(desktop)?.Sharp;
+    }
+
+    // ---------- windows moved to other desktops ----------
+
+    // The windows on each other desktop when Lanes last looked. One moved there since (or one
+    // that left or closed) would otherwise be missing from its picture, and come in late, after
+    // the swipe: the picture gets the new window drawn in, or is made again from the windows.
+    readonly Dictionary<Guid, List<AppWindow>> _windowsSeen = new();
+    readonly HashSet<Guid> _redrawing = new();
+    long _lastWindowCheck;
+
+    void CheckOtherDesktops()
+    {
+        var monitor = PointerMonitor().Monitor;
+        var all = AppWindows.OnOtherDesktops(monitor, _overlay.Handle);
+        // This desktop's picture is taken live; it is looked at again once you have left it.
+        _windowsSeen.Remove(_current);
+        foreach (var d in Desktops.All())
+        {
+            if (d == _current || _redrawing.Contains(d)) continue;
+            var now = all.GetValueOrDefault(d) ?? new List<AppWindow>();
+            if (!_windowsSeen.TryGetValue(d, out var seen))
+            {
+                _windowsSeen[d] = now;
+                continue;
+            }
+            static bool Same(AppWindow a, AppWindow b) => a.Handle == b.Handle && a.Frame.Left == b.Frame.Left && a.Frame.Top == b.Frame.Top
+                && a.Frame.Right == b.Frame.Right && a.Frame.Bottom == b.Frame.Bottom;
+            if (seen.Count == now.Count && seen.Zip(now).All(x => Same(x.First, x.Second))) continue;
+            _windowsSeen[d] = now;
+            var came = now.Where(w => !seen.Any(x => Same(x, w))).ToList();
+            bool onlyCame = seen.All(x => now.Any(w => Same(x, w)));
+            Redraw(d, onlyCame ? came : null, now, monitor);
+        }
+    }
+
+    // A new picture of desktop `d` on the thread pool: the one it has with the windows that came
+    // drawn over it, or (`came` null) its wallpaper with all its windows.
+    void Redraw(Guid d, List<AppWindow>? came, List<AppWindow> windows, RECT monitor)
+    {
+        _snapshots.TryGetValue(d, out var had);
+        var start = came != null && had != null && had.Width == monitor.Width && had.Height == monitor.Height ? had.Copy() : null;
+        var front = windows.Count > 0 ? windows[^1] : null;
+        bool full = front != null && front.Frame.Left <= monitor.Left && front.Frame.Top <= monitor.Top
+            && front.Frame.Right >= monitor.Right && front.Frame.Bottom >= monitor.Bottom;
+        var bar = TaskbarOn(monitor);
+        uint colour = _barColour;
+        _redrawing.Add(d);
+        Task.Run(() =>
+        {
+            Pixels picture;
+            if (start != null)
+            {
+                picture = start;
+                Capture.DrawWindows(picture, came!, monitor);
+            }
+            else picture = Capture.Composed(WallpaperPixels(d, monitor), windows, monitor);
+            if (!full && bar is RECT b) picture.Fill(b, colour);
+            return picture;
+        }).ContinueWith(t => Post(() =>
+        {
+            _redrawing.Remove(d);
+            if (t.Status != TaskStatus.RanToCompletion) { start?.Dispose(); return; }
+            var p = t.Result;
+            // You went there meanwhile: the picture taken then is newer.
+            if (d == _current || _snapshots.GetValueOrDefault(d) != had) { p.Dispose(); return; }
+            had?.Dispose();
+            _snapshots[d] = p;
+            if (_bitmaps.Remove(d, out var bmp)) bmp.Dispose();
+            if (_tilePictures.Remove(d, out var tile)) tile.Dispose();
+            _fullScreen[d] = full;
+            if (front != null) _appOf[d] = front.App; else _appOf.Remove(d);
+            Log.Write($"picture of desktop {Desktops.IndexOf(d) + 1} {(start != null ? $"took in {string.Join(", ", came!.Select(w => w.App))}" : "made again from its windows")}");
+        }));
+    }
+
+    // The wallpaper of a desktop on this monitor, made now if Lanes has none of that size yet.
+    Pixels WallpaperPixels(Guid d, RECT monitor)
+    {
+        (Pixels Sharp, Pixels Blurred, string? Path) wall;
+        bool have;
+        lock (_wallpaperPixels) have = _wallpaperPixels.TryGetValue(d, out wall);
+        if (!have || wall.Sharp.Width != monitor.Width || wall.Sharp.Height != monitor.Height) wall = MakeWallpaper(d, monitor);
+        return wall.Sharp;
+    }
+
+    // ---------- the taskbar in pictures ----------
+
+    // The copy of the taskbar in a picture becomes an empty bar of its own colour: in a swipe
+    // the one taskbar with anything on it is the live one, which stays put over all desktops.
+    uint _barColour = 0xFF202020;
+
+    // Where the taskbar is in a picture of the whole monitor.
+    static RECT? TaskbarOn(RECT monitor)
+    {
+        foreach (var cls in new[] { "Shell_TrayWnd", "Shell_SecondaryTrayWnd" })
+            for (IntPtr h = IntPtr.Zero; (h = FindWindowEx(IntPtr.Zero, h, cls, null)) != IntPtr.Zero;)
+            {
+                if (!IsWindowVisible(h)) continue;
+                var f = Frame(h);
+                int l = Math.Max(f.Left, monitor.Left), t = Math.Max(f.Top, monitor.Top), r = Math.Min(f.Right, monitor.Right), b = Math.Min(f.Bottom, monitor.Bottom);
+                if (r > l && b > t) return new RECT(l - monitor.Left, t - monitor.Top, r - monitor.Left, b - monitor.Top);
+            }
+        return null;
     }
 
     // Puts the pictures a swipe from here may need on the GPU ahead of time, so the first frame
@@ -372,6 +513,12 @@ sealed partial class Engine : IGestureSink
         else if (fg != _overlay.Handle && Desktops.OnCurrent(fg))
             _appOf[desktop] = ClassName(fg) == "CabinetWClass" ? "File Explorer" : AppWindows.AppName(fg);
         _fullScreen[desktop] = FullScreenInFront(pixels.Width, pixels.Height);
+        var monitor = PointerMonitor().Monitor;
+        if (!_fullScreen[desktop] && monitor.Width == pixels.Width && monitor.Height == pixels.Height && TaskbarOn(monitor) is RECT bar)
+        {
+            _barColour = pixels.Plain(bar);
+            pixels.Fill(bar, _barColour);
+        }
     }
 
     // A picture taken within two seconds of a switch can have Windows' "Desktop N" pill in it
@@ -426,7 +573,8 @@ sealed partial class Engine : IGestureSink
         foreach (var b in _bitmaps.Values) b.Dispose();
         foreach (var b in _tilePictures.Values) b.Dispose();
         foreach (var (a, b) in _wallpapers.Values) { a.Dispose(); b.Dispose(); }
-        _bitmaps.Clear(); _tilePictures.Clear(); _wallpapers.Clear();
+        foreach (var b in _deskBitmaps.Values) b.Dispose();
+        _bitmaps.Clear(); _tilePictures.Clear(); _wallpapers.Clear(); _deskBitmaps.Clear();
         _picturesFor = area;
         _gfx.Attach(_overlay.Handle, area.Width, area.Height);
     }
@@ -523,20 +671,23 @@ sealed partial class Engine : IGestureSink
         var jobs = Desktops.All().Where(d => d != _current && !_snapshots.ContainsKey(d))
             .Select(d => (Desktop: d, Windows: AppWindows.OnScreen(monitor, _overlay.Handle, d))).ToList();
         if (jobs.Count == 0) return;
+        var bar = TaskbarOn(monitor);
+        // The taskbar's colour, from the screen (no picture has been taken yet).
+        if (bar is RECT live && !FullScreenInFront(monitor.Width, monitor.Height))
+            using (var shot = Capture.Screen(new RECT(monitor.Left + live.Left, monitor.Top + live.Top, monitor.Left + live.Right, monitor.Top + live.Bottom)))
+                _barColour = shot.Plain(new RECT(0, 0, live.Width, live.Height));
+        uint colour = _barColour;
         Task.Run(() =>
         {
             long t0 = Environment.TickCount64;
             foreach (var (d, windows) in jobs)
                 try
                 {
-                    (Pixels Sharp, Pixels Blurred, string? Path) wall;
-                    bool have;
-                    lock (_wallpaperPixels) have = _wallpaperPixels.TryGetValue(d, out wall);
-                    if (!have || wall.Sharp.Width != monitor.Width || wall.Sharp.Height != monitor.Height) wall = MakeWallpaper(d, monitor);
-                    var picture = Capture.Composed(wall.Sharp, windows, monitor);
+                    var picture = Capture.Composed(WallpaperPixels(d, monitor), windows, monitor);
                     var front = windows.Count > 0 ? windows[^1] : null;
                     bool full = front != null && front.Frame.Left <= monitor.Left && front.Frame.Top <= monitor.Top
                         && front.Frame.Right >= monitor.Right && front.Frame.Bottom >= monitor.Bottom;
+                    if (!full && bar is RECT b) picture.Fill(b, colour);
                     Post(() =>
                     {
                         if (_snapshots.ContainsKey(d)) { picture.Dispose(); return; }
@@ -579,6 +730,8 @@ sealed partial class Engine : IGestureSink
     {
         Log.Write($"wallpaper of desktop {Desktops.IndexOf(desktop) + 1} changed");
         if (_wallpapers.Remove(desktop, out var w)) { w.Sharp.Dispose(); w.Blurred.Dispose(); }
+        if (_deskPixels.Remove(desktop, out var desk)) desk.Pixels.Dispose();
+        if (_deskBitmaps.Remove(desktop, out var db)) db.Dispose();
         if (!_snapshots.ContainsKey(desktop) && _tilePictures.Remove(desktop, out var t)) t.Dispose();
         _redraw = true;
     }

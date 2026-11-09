@@ -26,23 +26,48 @@ static class AppWindows
         {
             if (h == own || !IsWindowVisible(h) || IsIconic(h)) return true;
             if (desktop == null ? Cloaked(h) : !CloakedByShell(h) || Desktops.WindowDesktop(h) != desktop) return true;
-            long ex = GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64();
-            if ((ex & WS_EX_TOOLWINDOW) != 0 && (ex & WS_EX_APPWINDOW) == 0) return true;
-            if (GetWindow(h, GW_OWNER) != IntPtr.Zero && (ex & WS_EX_APPWINDOW) == 0) return true;
-            // A window that never takes focus is something over the apps (a dictation pill, an
-            // on-screen keyboard), not one of them.
-            if ((ex & WS_EX_NOACTIVATE) != 0) return true;
-            if (ShellClasses.Contains(ClassName(h))) return true;
-            string title = WindowText(h);
-            if (title.Length == 0) return true;
-            var f = Frame(h);
-            if (f.Width < 40 || f.Height < 40) return true;
-            if (f.Right <= area.Left || f.Left >= area.Right || f.Bottom <= area.Top || f.Top >= area.Bottom) return true;
-            list.Add(new AppWindow(h, f, title, AppName(h)));
+            if (App(h, area) is { } w) list.Add(w);
             return true;
         }, IntPtr.Zero);
         list.Reverse(); // EnumWindows goes front to back
         return list;
+    }
+
+    // The windows on every desktop but this one, back to front, by desktop: one pass over the
+    // windows instead of one per desktop.
+    public static Dictionary<Guid, List<AppWindow>> OnOtherDesktops(RECT area, IntPtr own)
+    {
+        var map = new Dictionary<Guid, List<AppWindow>>();
+        EnumWindows((h, _) =>
+        {
+            if (h == own || !IsWindowVisible(h) || IsIconic(h) || !CloakedByShell(h)) return true;
+            if (App(h, area) is not { } w) return true;
+            var d = Desktops.WindowDesktop(h);
+            if (d == Guid.Empty) return true;
+            if (!map.TryGetValue(d, out var list)) map[d] = list = new List<AppWindow>();
+            list.Add(w);
+            return true;
+        }, IntPtr.Zero);
+        foreach (var list in map.Values) list.Reverse();
+        return map;
+    }
+
+    // The window as the overview lists it, or null for what is not an app's own window.
+    static AppWindow? App(IntPtr h, RECT area)
+    {
+        long ex = GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64();
+        if ((ex & WS_EX_TOOLWINDOW) != 0 && (ex & WS_EX_APPWINDOW) == 0) return null;
+        if (GetWindow(h, GW_OWNER) != IntPtr.Zero && (ex & WS_EX_APPWINDOW) == 0) return null;
+        // A window that never takes focus is something over the apps (a dictation pill, an
+        // on-screen keyboard), not one of them.
+        if ((ex & WS_EX_NOACTIVATE) != 0) return null;
+        if (ShellClasses.Contains(ClassName(h))) return null;
+        string title = WindowText(h);
+        if (title.Length == 0) return null;
+        var f = Frame(h);
+        if (f.Width < 40 || f.Height < 40) return null;
+        if (f.Right <= area.Left || f.Left >= area.Right || f.Bottom <= area.Top || f.Top >= area.Bottom) return null;
+        return new AppWindow(h, f, title, AppName(h));
     }
 
     // "Telegram Desktop", "Google Chrome": the product name of the window's program.

@@ -7,8 +7,9 @@ using static Lanes.Native;
 
 namespace Lanes;
 
-// The overview on a three-finger swipe up: the lanes at the top, the current desktop's windows
-// spread out below. The windows are live DWM thumbnails that travel from where they are to
+// The overview on a three-finger swipe up, as Mission Control: the lanes at the top on a
+// frosted band, the current desktop's windows spread out below over the desktop itself (sharp,
+// with its icons). The windows are live DWM thumbnails that travel from where they are to
 // their place in the spread as the fingers move. Once it is open, desktops and windows can be
 // dragged with the mouse, a middle click closes either, and four fingers move to another
 // desktop without leaving it.
@@ -82,8 +83,6 @@ sealed partial class Engine
 
     sealed class OverviewState
     {
-        // The desktop itself (wallpaper and icons), live: it fades as the overview opens.
-        public Thumbnail? Desk;
         public bool TaskbarFades;
         public Page Page = null!;
         public Strip Strip = null!;
@@ -133,8 +132,6 @@ sealed partial class Engine
         UseArea();
         var o = new OverviewState { Tracking = true, Track = new OverviewTrack(0, _tuning), LastStep = Now };
         Relayout(o, snap: true);
-        // Registered first, so the windows are drawn over it.
-        if (FindWindow("Progman", null) is var progman && progman != IntPtr.Zero) o.Desk = new Thumbnail(_overlay.Handle, progman, _overlay.Area);
         o.Page = MakePage(_current, o.Strip);
         RaiseTaskbar();
         // Behind a full-screen window the taskbar was hidden: it comes in as the overview opens.
@@ -178,7 +175,7 @@ sealed partial class Engine
         var page = new Page { Desktop = desktop };
         page.Windows = AppWindows.OnScreen(area, _overlay.Handle, desktop == _current ? null : desktop);
         page.From = page.Windows.Select(w => new Box(w.Frame.Left - area.Left, w.Frame.Top - area.Top, w.Frame.Width, w.Frame.Height)).ToList();
-        page.To = Spread.Layout(page.From, SpreadArea(strip), 32 * s, 52 * s, 200 * s).ToList();
+        page.To = Spread.Layout(page.From, SpreadArea(strip), 32 * s, 52 * s).ToList();
         page.Shown = page.To.ToList();
         foreach (var w in page.Windows)
         {
@@ -194,7 +191,7 @@ sealed partial class Engine
     void Respread(Page page, Strip strip, OverviewState? o = null)
     {
         float s = _overlay.Scale;
-        page.To = Spread.Layout(page.From, SpreadArea(strip), 32 * s, 52 * s, 200 * s).ToList();
+        page.To = Spread.Layout(page.From, SpreadArea(strip), 32 * s, 52 * s).ToList();
         (o ?? _overview!).Moving = true;
     }
 
@@ -300,7 +297,6 @@ sealed partial class Engine
         DropTaskbar();
         Hook(false);
         Log.Write($"overview drawn: {_gfx.FrameStats()}");
-        o.Desk?.Dispose();
         o.Page.Dispose();
         o.Swipe?.PreviousPage?.Dispose();
         o.Swipe?.NextPage?.Dispose();
@@ -834,15 +830,15 @@ sealed partial class Engine
         bool vertical = sw?.Axis == Axis.Vertical;
         g.Begin(Gfx.Color(0xFF000000));
 
-        if (Wallpaper(_current) is var (sharp, blurred))
-        {
-            g.Image(sharp, 0, 0, g.Width, g.Height);
-            g.Image(blurred, 0, 0, g.Width, g.Height, pc);
-        }
-        if (toward is Guid tw && Wallpaper(tw) is var (_, theirs)) g.Image(theirs, 0, 0, g.Width, g.Height, pc * Math.Abs(f));
-        g.Rect(0, 0, g.Width, g.Height, A(0xFF000000, 0.55f * pc));
-        // The icons on the desktop are there as the fingers start, and fade as it opens.
-        o.Desk?.Place(0, 0, g.Width, g.Height, 1 - Math.Clamp(p / 0.35f, 0, 1));
+        // The desktop itself under the windows, sharp and with its icons, a little darker. A
+        // four-finger swipe slides it away with its windows, and the next desktop comes in beside
+        // it, as a swipe outside the overview does.
+        double ox = sw == null || vertical ? 0 : sw.Offset, oy = vertical ? sw!.Offset : 0;
+        double step = sw == null ? 0 : sw.Track.Page * (f < 0 ? 1 : -1);
+        float px = (float)ox + (vertical ? 0 : (float)step), py = (float)oy + (vertical ? (float)step : 0);
+        if (DeskPicture(_current) is { } desk) g.Image(desk, (float)ox, (float)oy, g.Width, g.Height);
+        if (toward is Guid tw && DeskPicture(tw) is { } theirs) g.Image(theirs, px, py, g.Width, g.Height);
+        g.Rect(0, 0, g.Width, g.Height, A(0xFF000000, 0.25f * pc));
 
         // Where each window is at this moment.
         var page = o.Page;
@@ -854,17 +850,27 @@ sealed partial class Engine
             highest = Math.Min(highest, boxes[i].Y);
         }
 
-        // Lane rows. They come down from above the screen just ahead of the windows, so they
-        // never overlap them (as the Spaces bar does in Mission Control).
+        // Lane rows on a frosted band, the only blurred part. They come down from above the
+        // screen just ahead of the windows, so they never overlap them (as the Spaces bar does in
+        // Mission Control). Under the band the desktops slide too, blurred.
         float sp = Math.Clamp(p / 0.6f, 0, 1), sq = 1 - MathF.Pow(1 - sp, 3);
         float a = sq * keep, dy = (1 - sq) * -40 * s;
         if (boxes.Length > 0) dy = Math.Min(dy, Math.Min(0, (float)highest - 30 * s - (float)o.Strip.Bottom));
+        float band = (float)o.Strip.Bottom + dy;
+        if (a > 0.002f && band > 0)
+        {
+            g.Clip(0, 0, g.Width, band);
+            if (Wallpaper(_current) is var (_, blurred)) g.Image(blurred, (float)ox, (float)oy, g.Width, g.Height, a);
+            if (toward is Guid tb && Wallpaper(tb) is var (_, theirsBlurred)) g.Image(theirsBlurred, px, py, g.Width, g.Height, a);
+            g.Rect(0, 0, g.Width, band, A(0xFF000000, 0.3f * a));
+            g.Unclip();
+            g.Rect(0, band - 1, g.Width, 1, A(0x1FFFFFFF, a));
+        }
         if (a > 0.002f) DrawStrip(o, a, dy, f, toward, p);
 
         // The windows of this desktop, and of the one a four-finger swipe brings in.
         float la = Math.Clamp((p - 0.7f) / 0.3f, 0, 1) * keep;
-        double ox = sw == null || vertical ? 0 : sw.Offset, oy = vertical ? sw!.Offset : 0;
-        float clip = vertical ? (float)o.Strip.Bottom + dy : float.NegativeInfinity;
+        float clip = vertical ? band : float.NegativeInfinity;
         // A window going up under the lane rows fades as it goes, instead of being cut off.
         float Fade(Box b) => vertical ? 1 - Math.Clamp((clip + 40 * s - (float)b.Y) / Math.Max(1, (float)b.H * 0.6f), 0, 1) : 1;
         if (vertical) g.Clip(0, clip, g.Width, g.Height - clip);
@@ -881,7 +887,6 @@ sealed partial class Engine
             if (unused != null && unused != other) unused.Hide();
         if (other != null)
         {
-            double step = sw!.Track.Page * (f < 0 ? 1 : -1);
             for (int i = 0; i < other.Thumbs.Count; i++)
             {
                 var b = other.To[i] with { X = other.To[i].X + ox + (vertical ? 0 : step), Y = other.To[i].Y + oy + (vertical ? step : 0) };
@@ -1016,5 +1021,4 @@ sealed partial class Engine
     [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int id, HookProc proc, IntPtr module, uint thread);
     [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hook);
     [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string? title);
 }

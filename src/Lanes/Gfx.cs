@@ -305,5 +305,47 @@ sealed class Pixels : IDisposable
         Data = System.Runtime.InteropServices.Marshal.AllocHGlobal(width * height * 4);
     }
 
+    public Pixels Copy()
+    {
+        var p = new Pixels(Width, Height, Opaque);
+        unsafe { Buffer.MemoryCopy((void*)Data, (void*)p.Data, (long)Width * Height * 4, (long)Width * Height * 4); }
+        return p;
+    }
+
+    public void Fill(Native.RECT r, uint argb)
+    {
+        int l = Math.Max(0, r.Left), t = Math.Max(0, r.Top), right = Math.Min(Width, r.Right), b = Math.Min(Height, r.Bottom);
+        unsafe
+        {
+            for (int y = t; y < b; y++)
+            {
+                uint* row = (uint*)Data + (long)y * Width;
+                for (int x = l; x < right; x++) row[x] = argb;
+            }
+        }
+    }
+
+    // The colour most of this rectangle has (a bar's own colour, under what is on it).
+    public uint Plain(Native.RECT r)
+    {
+        var count = new Dictionary<uint, (int N, long B, long G, long R)>();
+        int l = Math.Max(0, r.Left), t = Math.Max(0, r.Top), right = Math.Min(Width, r.Right), b = Math.Min(Height, r.Bottom);
+        unsafe
+        {
+            for (int y = t + 1; y < b - 1; y += 3)
+                for (int x = l + 1; x < right - 1; x += 3)
+                {
+                    uint c = ((uint*)Data)[(long)y * Width + x];
+                    // Nearly equal colours count as one (a bar can have a faint texture).
+                    uint key = c & 0xF8F8F8;
+                    count.TryGetValue(key, out var n);
+                    count[key] = (n.N + 1, n.B + (c & 0xFF), n.G + ((c >> 8) & 0xFF), n.R + ((c >> 16) & 0xFF));
+                }
+        }
+        if (count.Count == 0) return 0xFF202020;
+        var best = count.Values.MaxBy(v => v.N);
+        return 0xFF000000 | (uint)(best.R / best.N) << 16 | (uint)(best.G / best.N) << 8 | (uint)(best.B / best.N);
+    }
+
     public void Dispose() => System.Runtime.InteropServices.Marshal.FreeHGlobal(Data);
 }

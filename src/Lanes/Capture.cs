@@ -39,6 +39,50 @@ static class Capture
         int mw = monitor.Width, mh = monitor.Height;
         var p = new Pixels(mw, mh);
         unsafe { Buffer.MemoryCopy((void*)wallpaper.Data, (void*)p.Data, (long)mw * mh * 4, (long)mw * mh * 4); }
+        DrawWindows(p, windows, monitor);
+        return p;
+    }
+
+    // The desktop itself on this monitor, wallpaper and icons, without any window: the shell's
+    // own window drawn by PrintWindow (about 45 ms on a 1080p screen).
+    public static Pixels? Desktop(RECT monitor)
+    {
+        IntPtr shell = GetShellWindow();
+        if (shell == IntPtr.Zero || !GetWindowRect(shell, out var wr) || wr.Width <= 0 || wr.Height <= 0) return null;
+        int l = Math.Max(monitor.Left, wr.Left), t = Math.Max(monitor.Top, wr.Top), r = Math.Min(monitor.Right, wr.Right), b = Math.Min(monitor.Bottom, wr.Bottom);
+        if (r - l != monitor.Width || b - t != monitor.Height) return null;
+        IntPtr screen = GetDC(IntPtr.Zero), mem = CreateCompatibleDC(screen);
+        var bi = new BITMAPINFOHEADER { Size = Marshal.SizeOf<BITMAPINFOHEADER>(), Width = wr.Width, Height = -wr.Height, Planes = 1, BitCount = 32 };
+        IntPtr dib = CreateDIBSection(mem, ref bi, 0, out IntPtr bits, IntPtr.Zero, 0);
+        Pixels? p = null;
+        if (dib != IntPtr.Zero)
+        {
+            IntPtr old = SelectObject(mem, dib);
+            if (PrintWindow(shell, mem, 2 /* PW_RENDERFULLCONTENT */))
+            {
+                p = new Pixels(monitor.Width, monitor.Height);
+                unsafe
+                {
+                    uint* src = (uint*)bits, dst = (uint*)p.Data;
+                    for (int y = 0; y < monitor.Height; y++)
+                    {
+                        uint* from = src + (long)(y + monitor.Top - wr.Top) * wr.Width + (monitor.Left - wr.Left), to = dst + (long)y * monitor.Width;
+                        for (int x = 0; x < monitor.Width; x++) to[x] = from[x] | 0xFF000000;
+                    }
+                }
+            }
+            SelectObject(mem, old);
+            DeleteObject(dib);
+        }
+        DeleteDC(mem);
+        ReleaseDC(IntPtr.Zero, screen);
+        return p;
+    }
+
+    // Draws these windows over `p` (a picture of `monitor`), back to front.
+    public static void DrawWindows(Pixels p, IReadOnlyList<AppWindow> windows, RECT monitor)
+    {
+        int mw = monitor.Width;
         IntPtr screen = GetDC(IntPtr.Zero), mem = CreateCompatibleDC(screen);
         foreach (var w in windows)
         {
@@ -73,7 +117,6 @@ static class Capture
         }
         DeleteDC(mem);
         ReleaseDC(IntPtr.Zero, screen);
-        return p;
     }
 
     // Windows that stay live over Lanes' animations, such as a status pill shown on every

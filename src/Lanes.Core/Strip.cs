@@ -32,15 +32,16 @@ public sealed class Strip
     public double RowY(int lane) => _rowY[lane];
 
     // Tiles have the screen's shape (`width` x `height`); the rows start `offset` down from its
-    // top and take at most half of the `room` below that (by default the whole height).
+    // top and take about a third of the `room` below that (by default the whole height), as the
+    // Spaces bar does in Mission Control, leaving the rest to the windows.
     public static Strip Layout(LaneMap map, Guid current, double width, double height, double s, bool dragging = false, double offset = 0, double? room = null)
     {
         var strip = new Strip();
         int n = map.Lanes.Count;
-        double gap = 16 * s, rowGap = 14 * s, top = offset + 18 * s, newLaneH = 32 * s, caption = 24 * s;
-        double tw = 184 * s, aspect = height / width, half = (room ?? height) * 0.5;
+        double gap = 16 * s, rowGap = 14 * s, top = offset + 18 * s, newLaneH = 32 * s, caption = 20 * s;
+        double tw = 160 * s, aspect = height / width, limit = (room ?? height) * 0.36;
         double Height(double w) => n * (w * aspect + caption) + (n - 1) * rowGap + rowGap + newLaneH;
-        while (tw > 110 * s && top - offset + newLaneH + rowGap + Height(tw) > half) tw -= 4 * s;
+        while (tw > 96 * s && top - offset + newLaneH + rowGap + Height(tw) > limit) tw -= 4 * s;
         double th = tw * aspect, rowH = th + caption, plusW = Math.Max(56 * s, tw * 0.4);
         double column = (width - tw) / 2;
         strip.TileW = tw; strip.TileH = th; strip.Gap = gap; strip.RowGap = rowGap; strip.Caption = caption;

@@ -9,8 +9,6 @@ sealed partial class Engine
 {
     sealed class SwitchState
     {
-        // The live taskbar is shown over the desktops (none of them has a full-screen window).
-        public bool TaskbarStays;
         public Axis Axis;
         public SwipeTrack Track = null!;
         public Guid From;
@@ -65,9 +63,6 @@ sealed partial class Engine
             Previous = _lanes.Neighbor(_current, axis == Axis.Horizontal ? Direction.Left : Direction.Up),
             Next = _lanes.Neighbor(_current, axis == Axis.Horizontal ? Direction.Right : Direction.Down),
         };
-        // With a full-screen window on any of the desktops, each desktop's picture brings its own
-        // taskbar, or none; otherwise the live taskbar stays over all of them.
-        s.TaskbarStays = !(FullScreen(s.From) || FullScreen(s.Previous) || FullScreen(s.Next));
         if (!_overlay.Shown) UseArea();
         // A whole step is a screen plus the gap between screens, so a finished swipe ends exactly in place.
         double page = (axis == Axis.Horizontal ? _gfx.Width : _gfx.Height) + GapDip * _overlay.Scale;
@@ -188,7 +183,14 @@ sealed partial class Engine
         // Lanes' pill stays put over both desktops.
         float hud = HudAlpha(s);
         if (hud > 0.002f) DrawPill(s, PillFor(), hud);
-        PlaceTaskbar(s.TaskbarStays ? 1 : 0);
+        // One taskbar, the live one, stays put over all desktops; their pictures have an empty bar
+        // in its place. A desktop with a full-screen window has none: the taskbar comes in over
+        // the first fifth of the way from it, and goes over the last fifth of the way to it.
+        float bar = 1, fade = 0.2f * (page + gap);
+        if (FullScreen(s.From)) bar = Math.Min(bar, Math.Clamp(Math.Abs(o) / fade, 0, 1));
+        Guid? otherDesktop = o < 0 ? s.Next : o > 0 ? s.Previous : null;
+        if (other != null && FullScreen(otherDesktop)) bar = Math.Min(bar, Math.Clamp((page + gap - Math.Abs(o)) / fade, 0, 1));
+        PlaceTaskbar(bar);
         g.End();
 
         void Draw(ID2D1Bitmap1 bmp, float at)
