@@ -134,12 +134,16 @@ static class Capture
     {
         var asked = new List<IntPtr>();
         IntPtr lowest = IntPtr.Zero;
+        bool pastTopmost = false;
         EnumWindows((h, _) =>
         {
             if (h == own || !IsWindowVisible(h) || Cloaked(h)) return true;
             // Lanes' own windows (its pill after a switch) are never in the picture anyway.
             if (GetWindowThreadProcessId(h, out uint pid) != 0 && pid == Environment.ProcessId) return true;
-            if ((GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64() & WS_EX_TOPMOST) == 0) return true;
+            if ((GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64() & WS_EX_TOPMOST) == 0) { pastTopmost = true; return true; }
+            // A window marked topmost that its program has put under ordinary windows (Ciao's
+            // overlay after Ciao restarts) is not kept: the overlay would go under them with it.
+            if (pastTopmost) return true;
             var f = Frame(h);
             if (f.Right <= area.Left || f.Left >= area.Right || f.Bottom <= area.Top || f.Top >= area.Bottom) return true;
             SendMessageTimeout(h, ScreenPictureMessage, (IntPtr)1, IntPtr.Zero, 0x2 /* SMTO_ABORTIFHUNG */, 50, out _);
