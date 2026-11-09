@@ -1878,7 +1878,7 @@ sealed partial class Engine
             // The glass lies over the screen as it is: what shows through it stays put as it slides.
             g.Clip(0, top, g.Width, bottom - top);
             if (_mapBlur != null) g.Image(_mapBlur, 0, 0, g.Width, g.Height);
-            g.Rect(0, top, g.Width, bottom - top, A(0xFF000000, 0.35f));
+            g.Rect(0, top, g.Width, bottom - top, A(0xFF000000, 0.55f));
             g.Unclip();
             // Its edge catches the light, and it casts a soft shadow on the screen past it.
             float edge = o.Below ? top : bottom, way = o.Below ? -1 : 1, reach = 24 * s;
