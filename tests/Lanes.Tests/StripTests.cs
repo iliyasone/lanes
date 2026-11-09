@@ -53,6 +53,17 @@ public class StripTests
     }
 
     [Fact]
+    public void ADraggedDesktopFindsABinWhereThePlusWas()
+    {
+        var idle = Strip.Layout(Sample(), B, 1920, 1080, 1);
+        var drag = Strip.Layout(Sample(), B, 1920, 1080, 1, dragging: true, bin: true);
+        Assert.DoesNotContain(drag.Tiles, t => t.Kind == TileKind.Plus);
+        Assert.Equal(idle.Tiles.Single(t => t.Kind == TileKind.Plus).Rect, drag.Tiles.Single(t => t.Kind == TileKind.Trash).Rect);
+        Assert.Equal(2, drag.LaneAt(drag.RowY(2) + 5));
+        Assert.Null(drag.LaneAt(drag.SpreadTop));
+    }
+
+    [Fact]
     public void DroppingBetweenTwoDesktopsPutsItThere()
     {
         var m = Sample();

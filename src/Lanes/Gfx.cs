@@ -146,11 +146,21 @@ sealed class Gfx : IDisposable
 
     // Draws into memory instead of the screen: `draw` uses the overlay's coordinates, and the
     // pixels returned are the w x h of them from (x, y), premultiplied. Call between frames only.
+    (int W, int H, ID2D1Bitmap1 Target, ID2D1Bitmap1 Cpu)? _offscreen;
+
     public Pixels Offscreen(int x, int y, int w, int h, Action draw)
     {
         var format = new D2DPixelFormat(Format.B8G8R8A8_UNorm, D2DAlpha.Premultiplied);
-        using var bmp = Dc.CreateBitmap(new SizeI(w, h), IntPtr.Zero, 0, new BitmapProperties1(format, 96, 96, BitmapOptions.Target));
-        using var cpu = Dc.CreateBitmap(new SizeI(w, h), IntPtr.Zero, 0, new BitmapProperties1(format, 96, 96, BitmapOptions.CpuRead | BitmapOptions.CannotDraw));
+        // Kept for the next call: Lanes' pill is drawn this way on every frame of a swipe.
+        if (_offscreen is not { } off || off.W != w || off.H != h)
+        {
+            _offscreen?.Target.Dispose();
+            _offscreen?.Cpu.Dispose();
+            _offscreen = off = (w, h,
+                Dc.CreateBitmap(new SizeI(w, h), IntPtr.Zero, 0, new BitmapProperties1(format, 96, 96, BitmapOptions.Target)),
+                Dc.CreateBitmap(new SizeI(w, h), IntPtr.Zero, 0, new BitmapProperties1(format, 96, 96, BitmapOptions.CpuRead | BitmapOptions.CannotDraw)));
+        }
+        var (bmp, cpu) = (off.Target, off.Cpu);
         Dc.Target = bmp;
         Dc.BeginDraw();
         Dc.Transform = Matrix3x2.CreateTranslation(-x, -y);
@@ -240,17 +250,6 @@ sealed class Gfx : IDisposable
         }
     }
 
-    // A strip fading from a colour to transparent, for the shadow on a moving desktop's edge.
-    public void Fade(float x, float y, float w, float h, bool horizontal, bool toEnd, float alpha)
-    {
-        var stops = new[] { new GradientStop(0, new Color4(0, 0, 0, toEnd ? alpha : 0)), new GradientStop(1, new Color4(0, 0, 0, toEnd ? 0 : alpha)) };
-        using var coll = Dc.CreateGradientStopCollection(stops, ExtendMode.Clamp);
-        var start = new Vector2(x, y);
-        var end = horizontal ? new Vector2(x + w, y) : new Vector2(x, y + h);
-        using var brush = Dc.CreateLinearGradientBrush(new LinearGradientBrushProperties(start, end), coll);
-        Dc.FillRectangle(new Vortice.RawRectF(x, y, x + w, y + h), brush);
-    }
-
     public void Image(ID2D1Bitmap1 bmp, float x, float y, float w, float h, float opacity = 1) =>
         Dc.DrawBitmap(bmp, new Vortice.RawRectF(x, y, x + w, y + h), opacity, Vortice.Direct2D1.InterpolationMode.Linear, null, null);
 
@@ -320,6 +319,19 @@ sealed class Pixels : IDisposable
         var p = new Pixels(Width, Height, Opaque);
         unsafe { Buffer.MemoryCopy((void*)Data, (void*)p.Data, (long)Width * Height * 4, (long)Width * Height * 4); }
         return p;
+    }
+
+    // The part `r` of a picture of the same size, copied in.
+    public void Paste(Pixels from, Native.RECT r)
+    {
+        if (from.Width != Width || from.Height != Height) return;
+        int l = Math.Max(0, r.Left), t = Math.Max(0, r.Top), right = Math.Min(Width, r.Right), b = Math.Min(Height, r.Bottom);
+        if (right <= l) return;
+        unsafe
+        {
+            for (int y = t; y < b; y++)
+                Buffer.MemoryCopy((byte*)from.Data + ((long)y * Width + l) * 4, (byte*)Data + ((long)y * Width + l) * 4, (right - l) * 4, (right - l) * 4);
+        }
     }
 
     public void Fill(Native.RECT r, uint argb)

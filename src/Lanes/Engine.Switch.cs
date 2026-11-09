@@ -23,6 +23,9 @@ sealed partial class Engine
         // Windows has switched to where the picture is landing.
         public bool Switched;
         public double SwitchedAt;
+        // Live pictures of the windows of the desktops beside you, over their desktops' own
+        // pictures (and of the one you set out from, when a swipe starts while the last lands).
+        public List<(AppWindow Window, Thumbnail Thumb)> PreviousWindows = new(), NextWindows = new(), FromWindows = new();
     }
 
     // When Windows last switched desktops; its "Desktop N" pill stays about two seconds.
@@ -39,13 +42,18 @@ sealed partial class Engine
     void BeginSwitch(Axis axis)
     {
         ID2D1Bitmap1? from = null;
+        List<(AppWindow, Thumbnail)>? fromWindows = null;
         // Lanes' pill is already up from the last swipe: it carries on from where it is.
         bool pillUp = _switch != null || _map.Shown;
         if (_switch is { } pending)
         {
             // A new swipe while the last one is still settling: finish that one now, under the
-            // picture, and start from where it was going.
+            // picture, and start from where it was going, with its windows' live pictures.
             from = pending.Outcome switch { Outcome.Next => pending.NextPicture, Outcome.Previous => pending.PreviousPicture, _ => pending.FromPicture };
+            fromWindows = pending.Outcome switch { Outcome.Next => pending.NextWindows, Outcome.Previous => pending.PreviousWindows, _ => pending.FromWindows };
+            if (pending.Outcome == Outcome.Next) pending.NextWindows = new();
+            else if (pending.Outcome == Outcome.Previous) pending.PreviousWindows = new();
+            else pending.FromWindows = new();
             FinishSwitch(keepOverlay: true);
             DiscardTouchCapture();
         }
@@ -64,24 +72,35 @@ sealed partial class Engine
             Next = _lanes.Neighbor(_current, axis == Axis.Horizontal ? Direction.Right : Direction.Down),
         };
         if (!_overlay.Shown) UseArea();
-        // A whole step is a screen plus the gap between screens, so a finished swipe ends exactly in place.
-        double page = (axis == Axis.Horizontal ? _gfx.Width : _gfx.Height) + GapDip * _overlay.Scale;
+        // A whole step is a screen: desktops lie edge to edge, as if one long screen.
+        double page = axis == Axis.Horizontal ? _gfx.Width : _gfx.Height;
         s.Track = new SwipeTrack(page, s.Previous != null, s.Next != null, _tuning);
         s.FromPicture = from ?? Picture(_current)!;
-        s.PreviousPicture = s.Previous is Guid p ? Picture(p) : null;
-        s.NextPicture = s.Next is Guid n ? Picture(n) : null;
+        s.FromWindows = fromWindows ?? new();
+        s.PreviousPicture = s.Previous is Guid p ? Beside(p, s.PreviousWindows) : null;
+        s.NextPicture = s.Next is Guid n ? Beside(n, s.NextWindows) : null;
         _switch = s;
         if (!pillUp) _pillX = _pillAside = null;
         _gfx.Frames.Clear();
+        // Over the windows' live pictures, which were registered just now.
+        RaiseTaskbar();
         if (!_overlay.Shown)
         {
             _overlay.Place();
-            RaiseTaskbar();
             RenderSwitch();
             _overlay.Show();
-            _map.Hide();
         }
         Log.Write($"switch {axis} from {Title(_current)}; previous {(s.Previous is Guid a ? Title(a) : "-")}, next {(s.Next is Guid b ? Title(b) : "-")}; {CaptureNote}");
+    }
+
+    // A desktop beside you: its own picture (wallpaper and icons) under live pictures of its
+    // windows, which keep drawing there (see Awake); Lanes knows them from its look at the other
+    // desktops each second. Else the picture from when you were last there.
+    ID2D1Bitmap1? Beside(Guid desktop, List<(AppWindow, Thumbnail)> live)
+    {
+        if (!_windowsSeen.TryGetValue(desktop, out var seen)) return Picture(desktop);
+        foreach (var w in seen) live.Add((w, new Thumbnail(_overlay.Handle, w.Handle)));
+        return DeskPicture(desktop);
     }
 
     double Along(double dx, double dy, Axis axis)
@@ -106,6 +125,10 @@ sealed partial class Engine
         s.Spring = new Spring(s.Offset, speed, target, _tuning.SwitchResponse);
         s.SpringStart = Now;
         Log.Write($"release at {s.Offset / s.Track.Page:0.00} screen, {speed / s.Track.Page:0.00} screens/s: {outcome}{Reported()}");
+        // Windows switches as soon as the landing is known: the desktop's window takes the focus
+        // and redraws as the focused one (its title bar, a page under the pointer) while it is
+        // still coming in, not as it lands.
+        SwitchNow(s);
     }
 
     void StepSwitch(double now)
@@ -116,10 +139,6 @@ sealed partial class Engine
         s.Offset = s.Spring.At(t);
         bool done = s.Spring.Done(t);
         if (done) s.Offset = s.Spring.Target;
-        // Windows switches as the picture comes to rest, a few pixels short of it: its own pill
-        // then comes up where Lanes' copy has arrived, and Windows has a moment to draw the new
-        // desktop (its wallpaper takes a tenth of a second or more) before the picture goes.
-        if (!s.Switched && Math.Abs(s.Offset - s.Spring.Target) < 0.004 * s.Track.Page) SwitchNow(s);
         if (!done) return;
         if (s.Switched && now - s.SwitchedAt < 0.2) return;
         RenderSwitch();
@@ -147,6 +166,7 @@ sealed partial class Engine
         var s = _switch!;
         SwitchNow(s);
         _switch = null;
+        foreach (var (_, thumb) in s.PreviousWindows.Concat(s.NextWindows).Concat(s.FromWindows)) thumb.Dispose();
         if (keepOverlay) return;
         LingerPill(s);
         _overlay.Hide();
@@ -160,29 +180,17 @@ sealed partial class Engine
     {
         var s = _switch!;
         var g = _gfx;
-        float scale = _overlay.Scale, gap = GapDip * scale;
         float w = g.Width, h = g.Height, o = (float)s.Offset;
         bool horizontal = s.Axis == Axis.Horizontal;
-        float page = horizontal ? w : h; // one screen; the step between screens is page + gap
+        float page = horizontal ? w : h; // one screen; desktops lie edge to edge
         g.Begin(Gfx.Color(0xFF0A0C10));
         Draw(s.FromPicture, o);
         ID2D1Bitmap1? other = o < 0 ? s.NextPicture : o > 0 ? s.PreviousPicture : null;
-        float otherAt = o < 0 ? o + page + gap : o - page - gap;
+        float otherAt = o < 0 ? o + page : o - page;
         if (other != null) Draw(other, otherAt);
-
-        // Side by side, each desktop darkens toward the edge that faces the gap, so the two read
-        // as separate sheets; the darkening goes as the gap reaches the screen's edge, so nothing
-        // is left of it once a desktop is in place. Desktops one above the other go without it.
-        float sh = 24 * scale, dark = 0.35f * Math.Clamp(Math.Min(Math.Abs(o), page + gap - Math.Abs(o)) / (80 * scale), 0, 1);
-        if (horizontal && dark > 0.002f)
-        {
-            if (o < 0) { EdgeShadow(o + page - sh, false); if (other != null) EdgeShadow(otherAt, true); }
-            if (o > 0) { EdgeShadow(o, true); if (other != null) EdgeShadow(otherAt + page - sh, false); }
-        }
-
-        // Lanes' pill stays put over both desktops.
-        float hud = HudAlpha(s);
-        if (hud > 0.002f) DrawPill(s, PillFor(), hud);
+        Live(s.FromWindows, o);
+        Live(s.PreviousWindows, o > 0 ? otherAt : null);
+        Live(s.NextWindows, o < 0 ? otherAt : null);
         // One taskbar, the live one, stays put over all desktops; their pictures have an empty bar
         // in its place. A full-screen window lies over the taskbar, as on the screen: the taskbar
         // comes out from under it, at full strength, where it moves off, and goes under one that
@@ -193,6 +201,9 @@ sealed partial class Engine
         if (other != null && FullScreen(otherDesktop)) covers.Add((otherAt, otherAt + page));
         PlaceTaskbar(horizontal, covers);
         g.End();
+        // Lanes' pill stays put over both desktops, in its own window above the live pictures.
+        float hud = HudAlpha(s);
+        ShowPill(p => DrawPill(s, p, hud));
 
         void Draw(ID2D1Bitmap1 bmp, float at)
         {
@@ -200,8 +211,17 @@ sealed partial class Engine
             else g.Image(bmp, 0, at, w, h);
         }
 
-        // A strip `sh` wide starting at `at`; dark at its start when `darkFirst`, else at its end.
-        void EdgeShadow(float at, bool darkFirst) => g.Fade(at, 0, sh, h, true, darkFirst, dark);
+        // Each window where it is on its desktop, cut at the desktop's edges.
+        void Live(List<(AppWindow Window, Thumbnail Thumb)> windows, float? at)
+        {
+            foreach (var (win, thumb) in windows)
+            {
+                if (at is not float a) { thumb.Place(0, 0, 1, 1, 0); continue; }
+                var f = win.Frame;
+                float x = f.Left - _overlay.Area.Left + (horizontal ? a : 0), y = f.Top - _overlay.Area.Top + (horizontal ? 0 : a);
+                thumb.PlaceCut(x, y, f.Width, f.Height, a, a + page, horizontal);
+            }
+        }
     }
 
     // Lanes' pill comes in quickly as a swipe starts, and stays after it (see LingerPill).
@@ -303,11 +323,18 @@ sealed partial class Engine
     double _pillSince;
     Action<Pill>? _pillDraw;
 
-    void LingerPill(Action<Pill> draw, double since)
+    // The pill in its small window of its own, above the overlay and the live window pictures
+    // DWM draws over everything Lanes draws there.
+    void ShowPill(Action<Pill> draw)
     {
         var p = PillFor();
         using var pixels = _gfx.Offscreen((int)p.X, (int)p.Y, (int)p.W, (int)p.H, () => draw(p));
         _map.Show(pixels, _overlay.Area.Left + (int)p.X, _overlay.Area.Top + (int)p.Y);
+    }
+
+    void LingerPill(Action<Pill> draw, double since)
+    {
+        ShowPill(draw);
         // Shown before the overlay goes, so no frame has neither.
         DwmFlush();
         _pillDraw = draw;

@@ -2,13 +2,14 @@ using Microsoft.Win32;
 
 namespace Lanes;
 
-// While Lanes runs, Windows' own four-finger swipes and three-finger up/down are set to
-// "Nothing" so the two never react to the same swipe; quitting Lanes puts back what you had.
-// Three-finger left/right and taps stay with Windows.
+// While Lanes runs, Windows' own four-finger swipes and three-finger swipes are set to
+// "Nothing" so the two never react to the same swipe (three fingers sideways, Windows' app
+// switching, is left doing nothing: four fingers cover it); quitting Lanes puts back what you
+// had. Taps stay with Windows.
 static class WindowsGestures
 {
     const string Key = @"Software\Microsoft\Windows\CurrentVersion\PrecisionTouchPad";
-    static readonly string[] Values = { "FourFingerLeft", "FourFingerRight", "FourFingerUp", "FourFingerDown", "ThreeFingerUp", "ThreeFingerDown" };
+    static readonly string[] Values = { "FourFingerLeft", "FourFingerRight", "FourFingerUp", "FourFingerDown", "ThreeFingerUp", "ThreeFingerDown", "ThreeFingerLeft", "ThreeFingerRight" };
     static readonly string Saved = Path.Combine(Log.Dir, "windows-gestures.txt");
 
     // Whether this process holds the swipes now; only then does quitting give them back.
@@ -27,6 +28,12 @@ static class WindowsGestures
                 File.WriteAllLines(Saved, Values.Select(v => $"{v}={key.GetValue(v) ?? ""}")
                     .Append($"FourFingerSlideEnabled={key.GetValue("FourFingerSlideEnabled") ?? ""}")
                     .Append($"ThreeFingerSlideEnabled={key.GetValue("ThreeFingerSlideEnabled") ?? ""}"));
+            }
+            else
+            {
+                // Saved by a version that took fewer: the ones it left alone are still yours.
+                var had = File.ReadAllLines(Saved).Select(l => l[..l.IndexOf('=')]).ToHashSet();
+                File.AppendAllLines(Saved, Values.Where(v => !had.Contains(v)).Select(v => $"{v}={key.GetValue(v) ?? ""}"));
             }
             // 65535 is the "custom" choice that makes Windows read the per-direction values.
             key.SetValue("FourFingerSlideEnabled", 65535, RegistryValueKind.DWord);

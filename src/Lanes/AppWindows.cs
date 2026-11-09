@@ -92,37 +92,6 @@ static class AppWindows
         return AppNames[pid] = name;
     }
 
-    public static Pixels? Icon(IntPtr hwnd, int size)
-    {
-        IntPtr h = IntPtr.Zero;
-        SendMessageTimeout(hwnd, WM_GETICON, (IntPtr)2 /* ICON_SMALL2 */, IntPtr.Zero, 2, 50, out h);
-        if (h == IntPtr.Zero) SendMessageTimeout(hwnd, WM_GETICON, (IntPtr)1 /* ICON_BIG */, IntPtr.Zero, 2, 50, out h);
-        if (h == IntPtr.Zero) h = GetClassLongPtr(hwnd, GCLP_HICONSM);
-        if (h == IntPtr.Zero) h = GetClassLongPtr(hwnd, GCLP_HICON);
-        if (h == IntPtr.Zero) return null;
-        try
-        {
-            using var icon = System.Drawing.Icon.FromHandle(h);
-            using var src = icon.ToBitmap();
-            using var bmp = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
-            using (var g = Graphics.FromImage(bmp))
-            {
-                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                g.DrawImage(src, 0, 0, size, size);
-            }
-            var p = new Pixels(size, size, opaque: false);
-            var data = bmp.LockBits(new Rectangle(0, 0, size, size), System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
-            unsafe
-            {
-                for (int y = 0; y < size; y++)
-                    Buffer.MemoryCopy((void*)(data.Scan0 + y * data.Stride), (void*)(p.Data + y * size * 4), size * 4, size * 4);
-            }
-            bmp.UnlockBits(data);
-            return p;
-        }
-        catch { return null; }
-    }
-
     // Brings a window to the front; Windows allows it because Lanes just got the click.
     public static void Activate(IntPtr hwnd)
     {

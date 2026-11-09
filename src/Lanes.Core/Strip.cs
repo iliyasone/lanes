@@ -1,9 +1,10 @@
 namespace Lanes.Core;
 
-public enum TileKind { Desktop, Plus, NewLane }
+public enum TileKind { Desktop, Plus, NewLane, Trash }
 
 // One box in the overview's lane rows: a desktop, the "+" (Lane is your lane, which it adds
-// to), or a slot for a new lane (Lane is where the new lane would be inserted).
+// to), a slot for a new lane (Lane is where the new lane would be inserted), or the bin a
+// dragged desktop is dropped in to close it.
 public sealed record StripTile(TileKind Kind, int Lane, int Index, Guid Desktop, Box Rect);
 
 // Where a dragged desktop would go: into a lane at an index (counted without the dragged
@@ -15,7 +16,7 @@ public readonly record struct DeskDrop(int Lane, int Index, bool NewLane);
 // the desktop you are on, in the middle: what is above and below you reads at a glance. Rows
 // run off the screen's sides when long. One "+" in the top right corner adds a desktop at the
 // end of your lane. While something is dragged, a slot for a new lane opens above the rows and
-// one below them.
+// one below them; while a desktop is dragged (`bin`), a bin takes the "+"'s place.
 public sealed class Strip
 {
     public List<StripTile> Tiles { get; } = new();
@@ -35,7 +36,7 @@ public sealed class Strip
     // Tiles have the screen's shape (`width` x `height`); the rows start `offset` down from its
     // top and take about a third of the `room` below that (by default the whole height), as the
     // Spaces bar does in Mission Control, leaving the rest to the windows.
-    public static Strip Layout(LaneMap map, Guid current, double width, double height, double s, bool dragging = false, double offset = 0, double? room = null)
+    public static Strip Layout(LaneMap map, Guid current, double width, double height, double s, bool dragging = false, double offset = 0, double? room = null, bool bin = false)
     {
         var strip = new Strip();
         int n = map.Lanes.Count;
@@ -65,13 +66,21 @@ public sealed class Strip
         }
         double rowsEnd = y0 + n * (rowH + rowGap) - rowGap;
         if (dragging) strip.Tiles.Add(new StripTile(TileKind.NewLane, n, 0, Guid.Empty, new Box(column, rowsEnd + rowGap, tw, slotH)));
-        strip.Tiles.Add(new StripTile(TileKind.Plus, map.Locate(current)?.Lane ?? 0, 0, Guid.Empty, new Box(width - 28 * s - plus, top, plus, plus)));
+        strip.Tiles.Add(new StripTile(bin ? TileKind.Trash : TileKind.Plus, map.Locate(current)?.Lane ?? 0, 0, Guid.Empty, new Box(width - 28 * s - plus, top, plus, plus)));
         strip.Bottom = (dragging ? rowsEnd + rowGap + slotH : rowsEnd) + pad;
         strip.Column = new Box(column - 16 * s, y0 - 8 * s, tw + 32 * s, rowsEnd - y0 + 16 * s);
         // The spread starts below where the rows reach while dragging, so a drag does not move it.
         double dragEnd = top + n * (rowH + rowGap) - rowGap + 2 * (slotH + rowGap);
         strip.SpreadTop = dragEnd + 56 * s;
         return strip;
+    }
+
+    // The lane whose row is at height y, if any.
+    public int? LaneAt(double y)
+    {
+        for (int l = 0; l < _rowY.Count; l++)
+            if (y >= _rowY[l] - RowGap / 2 && y < _rowY[l] + TileH + Caption + RowGap / 2) return l;
+        return null;
     }
 
     public StripTile? Hit(double x, double y) =>

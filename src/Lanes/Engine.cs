@@ -12,7 +12,6 @@ namespace Lanes;
 sealed partial class Engine : IGestureSink
 {
     const int WM_COMMAND_QUEUED = WM_USER + 1, WM_DESKTOP_CHANGED = WM_USER + 2;
-    const float GapDip = 24;
 
     readonly Settings _settings;
     readonly Tuning _tuning = new();
@@ -171,7 +170,7 @@ sealed partial class Engine : IGestureSink
         WindowsPill.Restore();
     }
 
-    bool Animating => _switch != null || _overview is { } o && (o.Tracking || o.Spring != null || o.Zoom != null || o.Swipe != null || o.Moving || o.Added != null) || _redraw;
+    bool Animating => _switch != null || _overview is { } o && (o.Tracking || o.Spring != null || o.Zoom != null || o.Swipe != null || o.Moving || o.Added != null || o.Scroll != null || o.Dwell != null) || _redraw;
     Awake? _awake;
     bool _redraw;
 
@@ -429,8 +428,6 @@ sealed partial class Engine : IGestureSink
         var front = windows.Count > 0 ? windows[^1] : null;
         bool full = front != null && front.Frame.Left <= monitor.Left && front.Frame.Top <= monitor.Top
             && front.Frame.Right >= monitor.Right && front.Frame.Bottom >= monitor.Bottom;
-        var bar = TaskbarOn(monitor);
-        uint colour = _barColour;
         _redrawing.Add(d);
         Task.Run(() =>
         {
@@ -441,7 +438,6 @@ sealed partial class Engine : IGestureSink
                 Capture.DrawWindows(picture, came!, monitor);
             }
             else picture = Capture.Composed(WallpaperPixels(d, monitor), windows, monitor);
-            if (!full && bar is RECT b) picture.Fill(b, colour);
             return picture;
         }).ContinueWith(t => Post(() =>
         {
@@ -472,9 +468,8 @@ sealed partial class Engine : IGestureSink
 
     // ---------- the taskbar in pictures ----------
 
-    // The copy of the taskbar in a picture becomes an empty bar of its own colour: in a swipe
-    // the one taskbar with anything on it is the live one, which stays put over all desktops.
-    uint _barColour = 0xFF202020;
+    // A picture shows the wallpaper where the taskbar is: in a swipe the one taskbar is the live
+    // one, which stays put over all desktops, with the desktops sliding under it.
 
     // Where the taskbar is in a picture of the whole monitor.
     static RECT? TaskbarOn(RECT monitor)
@@ -520,8 +515,12 @@ sealed partial class Engine : IGestureSink
         var monitor = PointerMonitor().Monitor;
         if (!_fullScreen[desktop] && monitor.Width == pixels.Width && monitor.Height == pixels.Height && TaskbarOn(monitor) is RECT bar)
         {
-            _barColour = pixels.Plain(bar);
-            pixels.Fill(bar, _barColour);
+            // Under the taskbar, what is behind it: the wallpaper (else an empty bar of its colour).
+            Pixels? wall = null;
+            lock (_wallpaperPixels)
+                if (_wallpaperPixels.TryGetValue(desktop, out var w) && w.Sharp.Width == pixels.Width && w.Sharp.Height == pixels.Height) wall = w.Sharp;
+            if (wall != null) pixels.Paste(wall, bar);
+            else pixels.Fill(bar, pixels.Plain(bar));
         }
     }
 
@@ -591,8 +590,7 @@ sealed partial class Engine : IGestureSink
 
     void RaiseTaskbar()
     {
-        _taskbar?.Dispose();
-        _taskbar = null;
+        DropTaskbar();
         var m = _overlay.Monitor;
         foreach (var cls in new[] { "Shell_TrayWnd", "Shell_SecondaryTrayWnd" })
             for (IntPtr h = IntPtr.Zero; (h = FindWindowEx(IntPtr.Zero, h, cls, null)) != IntPtr.Zero;)
@@ -600,6 +598,7 @@ sealed partial class Engine : IGestureSink
                 var f = Frame(h);
                 if (!IsWindowVisible(h) || f.Right <= m.Left || f.Left >= m.Right || f.Bottom <= m.Top || f.Top >= m.Bottom) continue;
                 _taskbar = new Thumbnail(_overlay.Handle, h);
+                for (int i = 0; i < Shade.Length; i++) _taskbarShade.Add(new Thumbnail(_overlay.Handle, h));
                 return;
             }
     }
@@ -608,13 +607,21 @@ sealed partial class Engine : IGestureSink
     {
         _taskbar?.Dispose();
         _taskbar = null;
+        foreach (var t in _taskbarShade) t.Dispose();
+        _taskbarShade.Clear();
     }
+
+    // Thin slices of the taskbar next to a full-screen window lying over it, each over black and
+    // a little less faded than the last: the window's shadow on the taskbar.
+    readonly List<Thumbnail> _taskbarShade = new();
+    static readonly float[] Shade = { 0.42f, 0.56f, 0.68f, 0.79f, 0.88f, 0.95f };
 
     void PlaceTaskbar(float opacity)
     {
         if (_taskbar is not { } t) return;
         var f = Frame(t.Window);
         t.Place(f.Left - _overlay.Area.Left, f.Top - _overlay.Area.Top, f.Width, f.Height, opacity);
+        foreach (var slice in _taskbarShade) slice.Place(0, 0, 1, 1, 0);
     }
 
     // The taskbar without the parts under full-screen windows, which lie over it as on the
@@ -625,15 +632,30 @@ sealed partial class Engine : IGestureSink
         var f = Frame(t.Window);
         float x = f.Left - _overlay.Area.Left, y = f.Top - _overlay.Area.Top;
         float a0 = horizontal ? x : y, a1 = a0 + (horizontal ? f.Width : f.Height);
+        bool shadeStart = false, shadeEnd = false;
         foreach (var (c0, c1) in covers)
         {
             if (c1 <= a0 || c0 >= a1) continue;
-            if (c0 <= a0) a0 = Math.Max(a0, c1);
-            else if (c1 >= a1) a1 = Math.Min(a1, c0);
-            else if (c0 - a0 >= a1 - c1) a1 = c0;
-            else a0 = c1;
+            if (c0 <= a0) { a0 = Math.Max(a0, c1); shadeStart = true; }
+            else if (c1 >= a1) { a1 = Math.Min(a1, c0); shadeEnd = true; }
+            else if (c0 - a0 >= a1 - c1) { a1 = c0; shadeEnd = true; }
+            else { a0 = c1; shadeStart = true; }
         }
-        t.PlaceCut(x, y, f.Width, f.Height, a0, a1, horizontal);
+        float step = 2.5f * _overlay.Scale, width = Shade.Length * step;
+        float m0 = shadeStart ? a0 + width : a0, m1 = shadeEnd && !shadeStart ? a1 - width : a1;
+        t.PlaceCut(x, y, f.Width, f.Height, m0, Math.Max(m0, m1), horizontal);
+        for (int i = 0; i < _taskbarShade.Count; i++)
+        {
+            if (!(shadeStart || shadeEnd)) { _taskbarShade[i].Place(0, 0, 1, 1, 0); continue; }
+            float s0 = shadeStart ? a0 + i * step : a1 - (i + 1) * step, s1 = s0 + step;
+            s0 = Math.Clamp(s0, a0, a1); s1 = Math.Clamp(s1, a0, a1);
+            if (s1 - s0 >= 0.5f)
+            {
+                if (horizontal) _gfx.Rect(s0, y, s1 - s0, f.Height, 0xFF000000);
+                else _gfx.Rect(x, s0, f.Width, s1 - s0, 0xFF000000);
+            }
+            _taskbarShade[i].PlaceCut(x, y, f.Width, f.Height, s0, s1, horizontal, Shade[i]);
+        }
     }
 
     // The top of the screen below the taskbar, in the overlay's own coordinates.
@@ -694,12 +716,6 @@ sealed partial class Engine : IGestureSink
         var jobs = Desktops.All().Where(d => d != _current && !_snapshots.ContainsKey(d))
             .Select(d => (Desktop: d, Windows: AppWindows.OnScreen(monitor, _overlay.Handle, d))).ToList();
         if (jobs.Count == 0) return;
-        var bar = TaskbarOn(monitor);
-        // The taskbar's colour, from the screen (no picture has been taken yet).
-        if (bar is RECT live && !FullScreenInFront(monitor.Width, monitor.Height))
-            using (var shot = Capture.Screen(new RECT(monitor.Left + live.Left, monitor.Top + live.Top, monitor.Left + live.Right, monitor.Top + live.Bottom)))
-                _barColour = shot.Plain(new RECT(0, 0, live.Width, live.Height));
-        uint colour = _barColour;
         Task.Run(() =>
         {
             long t0 = Environment.TickCount64;
@@ -710,7 +726,6 @@ sealed partial class Engine : IGestureSink
                     var front = windows.Count > 0 ? windows[^1] : null;
                     bool full = front != null && front.Frame.Left <= monitor.Left && front.Frame.Top <= monitor.Top
                         && front.Frame.Right >= monitor.Right && front.Frame.Bottom >= monitor.Bottom;
-                    if (!full && bar is RECT b) picture.Fill(b, colour);
                     Post(() =>
                     {
                         if (_snapshots.ContainsKey(d)) { picture.Dispose(); return; }
@@ -787,7 +802,7 @@ sealed partial class Engine : IGestureSink
         if (!_recognizers.TryGetValue(device, out var r)) _recognizers[device] = r = new GestureRecognizer(this);
         if (_activeDevice != IntPtr.Zero && _activeDevice != device && !r.Tracking) return;
         _activeDevice = device;
-        // In the open overview two fingers move between desktops too; elsewhere they scroll.
+        // In the open overview two fingers slide another lane's row; elsewhere they scroll.
         r.TwoFingers = _overview is { Open: true };
         r.OnFrame(frame);
         if (!r.Tracking && fingers == 0) _activeDevice = IntPtr.Zero;
@@ -801,8 +816,7 @@ sealed partial class Engine : IGestureSink
         _ignoring = false;
         if (kind == GestureKind.Scroll)
         {
-            if (_overview is { Open: true, Drag: null, Going: null }) BeginInnerSwipe(axis);
-            else _ignoring = true;
+            if (!BeginRowScroll(axis)) _ignoring = true;
             return;
         }
         if (kind == GestureKind.Switch)
@@ -820,6 +834,7 @@ sealed partial class Engine : IGestureSink
         if (_ignoring) return;
         if (_switch != null) MoveSwitch(dx, dy);
         else if (_overview?.Swipe != null) MoveInnerSwipe(dx, dy);
+        else if (_overview?.Scroll != null) MoveRowScroll(dx);
         else if (_overview != null) MoveOverview(dy);
     }
 
@@ -836,6 +851,7 @@ sealed partial class Engine : IGestureSink
         if (_ignoring) { _ignoring = false; return; }
         if (_switch != null) EndSwitch(vx, vy);
         else if (_overview?.Swipe is { Spring: null }) EndInnerSwipe(vx, vy);
+        else if (_overview?.Scroll != null) EndRowScroll(vx);
         else if (_overview != null) EndOverview(vy);
     }
 

@@ -95,6 +95,26 @@ sealed class Overlay : NativeWindow
 
     public void Place() => SetWindowPos(Handle, After, Area.Left, Area.Top, Area.Width, Area.Height, SWP_NOACTIVATE);
 
+    // Leaves `hole` (in the overlay's own coordinates) out of the window: what is under it shows
+    // through and takes the clicks. Null fills it again.
+    public void Hole(RECT? hole)
+    {
+        if (hole is not RECT h) { if (_holed) SetWindowRgn(Handle, IntPtr.Zero, true); _holed = false; return; }
+        IntPtr all = CreateRectRgn(0, 0, Area.Width, Area.Height), cut = CreateRectRgn(h.Left, h.Top, h.Right, h.Bottom);
+        CombineRgn(all, all, cut, 4 /* RGN_DIFF */);
+        DeleteRegion(cut);
+        // Windows owns the region from here on.
+        SetWindowRgn(Handle, all, true);
+        _holed = true;
+    }
+
+    bool _holed;
+
+    [DllImport("gdi32.dll")] static extern IntPtr CreateRectRgn(int l, int t, int r, int b);
+    [DllImport("gdi32.dll")] static extern int CombineRgn(IntPtr dest, IntPtr a, IntPtr b, int mode);
+    [DllImport("gdi32.dll", EntryPoint = "DeleteObject")] static extern bool DeleteRegion(IntPtr obj);
+    [DllImport("user32.dll")] static extern int SetWindowRgn(IntPtr hwnd, IntPtr rgn, bool redraw);
+
     public void Hide()
     {
         Cloak(true);
@@ -261,7 +281,7 @@ sealed class Thumbnail : IDisposable
 
     // Draws the window into this box, but only between `from` and `to` (along x when
     // `horizontal`, else along y): the rest lies under something Lanes draws as if above it.
-    public void PlaceCut(float x, float y, float w, float h, float from, float to, bool horizontal)
+    public void PlaceCut(float x, float y, float w, float h, float from, float to, bool horizontal, float opacity = 1)
     {
         if (!Valid) return;
         float a = horizontal ? x : y, len = Math.Max(1, horizontal ? w : h);
@@ -271,7 +291,7 @@ sealed class Thumbnail : IDisposable
         int s0 = (int)MathF.Round((c0 - a) / len * n), s1 = (int)MathF.Round((c1 - a) / len * n);
         if (horizontal) { src.Left = _source.Left + s0; src.Right = _source.Left + s1; x = c0; w = c1 - c0; }
         else { src.Top = _source.Top + s0; src.Bottom = _source.Top + s1; y = c0; h = c1 - c0; }
-        Set(x, y, w, h, src, c1 - c0 >= 1 && s1 > s0 ? 1 : 0);
+        Set(x, y, w, h, src, c1 - c0 >= 0.5f && s1 > s0 ? opacity : 0);
     }
 
     void Set(float x, float y, float w, float h, RECT src, float opacity)

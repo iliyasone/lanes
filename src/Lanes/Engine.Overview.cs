@@ -22,7 +22,6 @@ sealed partial class Engine
         public Guid Desktop;
         public List<AppWindow> Windows = new();
         public List<Thumbnail> Thumbs = new();
-        public List<ID2D1Bitmap1?> Icons = new();
         // Where each window is on the screen, its place in the spread, and where it is drawn
         // now (gliding to a new place after a window leaves).
         public List<Box> From = new(), To = new(), Shown = new();
@@ -30,8 +29,7 @@ sealed partial class Engine
         public void RemoveAt(int i)
         {
             Thumbs[i].Dispose();
-            Icons[i]?.Dispose();
-            Windows.RemoveAt(i); Thumbs.RemoveAt(i); Icons.RemoveAt(i);
+            Windows.RemoveAt(i); Thumbs.RemoveAt(i);
             From.RemoveAt(i); To.RemoveAt(i); Shown.RemoveAt(i);
         }
 
@@ -43,7 +41,6 @@ sealed partial class Engine
         public void Dispose()
         {
             foreach (var t in Thumbs) t.Dispose();
-            foreach (var i in Icons) i?.Dispose();
         }
     }
 
@@ -67,6 +64,14 @@ sealed partial class Engine
         public double GrabX, GrabY;  // where on the dragged thing it was picked up, 0..1
         public StripTile? Target;    // a window over a desktop, a "+" or "New lane"
         public DeskDrop? Drop;       // a desktop over the rows
+    }
+
+    // Two fingers sideways over another lane's row: the row slides (`Shift`, from its desktop
+    // `From` in the middle column).
+    sealed class RowScroll
+    {
+        public int Lane, From;
+        public double Shift;
     }
 
     // Four fingers while the overview is open: the windows of the next desktop slide in.
@@ -101,21 +106,27 @@ sealed partial class Engine
         public InnerSwipe? Swipe;
         public bool Moving; // tiles or windows still gliding to new places
         public double LastStep;
+        public RowScroll? Scroll;
+        // The desktop the pointer rests on, which shows its windows after a moment.
+        public Guid? Dwell;
+        public double DwellSince;
+        // A desktop being renamed, and its name so far.
+        public Guid? Renaming;
+        public string Name = "";
         // A desktop picked with the mouse: its lane slides it under the ring first, then it zooms in.
         public Guid? Going;
         public double GoingAt;
         public Task? GoingWallpaper;
         public Box? RingShown;
-        // The menu a right click on a desktop opened, with its one item.
+        // The menu a right click on a desktop opened, and the item under the pointer.
         public Guid? MenuFor;
         public Box MenuBox;
-        public bool MenuHover;
+        public int MenuItem = -1;
         // A desktop just made with the "+", lit up for a moment.
         public Guid? Added;
         public double AddedAt;
-        // When the windows were last looked at again, and where the taskbar is.
+        // When the windows were last looked at again.
         public double LastLook;
-        public RECT? Bar;
         public bool Open => !Tracking && Spring == null && Zoom == null && P > 0.99;
         public bool Idle => Open && Drag == null && Swipe == null && Going == null;
     }
@@ -127,6 +138,7 @@ sealed partial class Engine
             if (open.Zoom != null || open.Swipe != null || open.Drag != null || open.Going != null) { _ignoring = true; return; }
             open.Tracking = true;
             open.Spring = null;
+            _overlay.Hole(null);
             open.Press = null;
             _gfx.Frames.Clear();
             open.Track = new OverviewTrack(open.P, _tuning);
@@ -137,7 +149,7 @@ sealed partial class Engine
         Remember(_current, TakeTouchCapture());
         RefreshTitles();
         UseArea();
-        var o = new OverviewState { Tracking = true, Track = new OverviewTrack(0, _tuning), LastStep = Now, Bar = TaskbarOn(_overlay.Monitor) };
+        var o = new OverviewState { Tracking = true, Track = new OverviewTrack(0, _tuning), LastStep = Now };
         Relayout(o, snap: true);
         o.Page = NewPage(_current, o.Strip);
         _overview = o;
@@ -161,7 +173,7 @@ sealed partial class Engine
     {
         double spreadTop = o.Strip?.SpreadTop ?? double.NaN;
         o.Strip = Strip.Layout(_lanes, o.Going ?? _current, _gfx.Width, _gfx.Height, _overlay.Scale, dragging: o.Drag != null,
-            offset: WorkTop, room: WorkBottom - WorkTop);
+            offset: WorkTop, room: WorkBottom - WorkTop, bin: o.Drag is { Window: < 0 } && Desktops.Count > 1);
         if (snap) o.TileShown.Clear();
         foreach (var t in o.Strip.Tiles) o.TileShown.TryAdd(Key(t), t.Rect);
         foreach (var t in o.Strip.Tiles)
@@ -186,13 +198,7 @@ sealed partial class Engine
         page.From = page.Windows.Select(w => new Box(w.Frame.Left - area.Left, w.Frame.Top - area.Top, w.Frame.Width, w.Frame.Height)).ToList();
         page.To = Spread.Layout(page.From, SpreadArea(strip), 32 * s, 52 * s).ToList();
         page.Shown = page.To.ToList();
-        foreach (var w in page.Windows)
-        {
-            page.Thumbs.Add(new Thumbnail(_overlay.Handle, w.Handle));
-            var icon = AppWindows.Icon(w.Handle, (int)(16 * s));
-            page.Icons.Add(icon == null ? null : _gfx.Bitmap(icon));
-            icon?.Dispose();
-        }
+        foreach (var w in page.Windows) page.Thumbs.Add(new Thumbnail(_overlay.Handle, w.Handle));
         return page;
     }
 
@@ -230,7 +236,62 @@ sealed partial class Engine
         _lanes.Visited(d);
         Settings.SaveLanes(_lanes);
         RetakeSoon();
+        UpdateHole(o);
         Log.Write($"overview: now on desktop {Desktops.IndexOf(d) + 1}");
+    }
+
+    // While the overview is open, the real taskbar shows through it and takes clicks (the tray,
+    // the clock), except over a full-screen window, which lies over the real taskbar.
+    void UpdateHole(OverviewState o) =>
+        _overlay.Hole(o.Open && o.Zoom == null && !FullScreen(_current) ? TaskbarOn(_overlay.Monitor) : null);
+
+    // ---------- two fingers over another lane ----------
+
+    // Two fingers sideways over another lane's row slide that row, without leaving your
+    // desktop: the desktop brought to the middle column is where a swipe into that lane lands.
+    bool BeginRowScroll(Axis axis)
+    {
+        if (_overview is not { Idle: true } o || axis != Axis.Horizontal) return false;
+        GetCursorPos(out var pt);
+        if (o.Strip.LaneAt(pt.Y - _overlay.Area.Top) is not int lane || lane == _lanes.Locate(_current)?.Lane) return false;
+        var desks = _lanes.Lanes[lane].Desktops;
+        o.Scroll = new RowScroll { Lane = lane, From = Math.Max(0, desks.IndexOf(_lanes.CurrentOf(lane) ?? Guid.Empty)) };
+        o.Hover = -1;
+        o.HoverTile = null;
+        o.Dwell = null;
+        return true;
+    }
+
+    void MoveRowScroll(double dx)
+    {
+        var o = _overview!;
+        var sc = o.Scroll!;
+        double step = o.Strip.TileW + o.Strip.Gap, shift = dx * 3 * step;
+        int count = _lanes.Lanes[sc.Lane].Desktops.Count;
+        double most = sc.From * step, least = -(count - 1 - sc.From) * step;
+        // Past the lane's ends the row gives a little.
+        if (shift > most) shift = most + (shift - most) * 0.3;
+        if (shift < least) shift = least + (shift - least) * 0.3;
+        sc.Shift = shift;
+        foreach (var t in o.Strip.Tiles.Where(t => t.Kind == TileKind.Desktop && t.Lane == sc.Lane))
+            o.TileShown[Key(t)] = t.Rect with { X = t.Rect.X + shift };
+    }
+
+    void EndRowScroll(double vx)
+    {
+        var o = _overview!;
+        var sc = o.Scroll!;
+        o.Scroll = null;
+        double step = o.Strip.TileW + o.Strip.Gap;
+        var desks = _lanes.Lanes[sc.Lane].Desktops;
+        int to = Math.Clamp((int)Math.Round(sc.From - (sc.Shift + vx * 3 * step * 0.12) / step), 0, desks.Count - 1);
+        if (to != sc.From)
+        {
+            _lanes.Visited(desks[to]);
+            Settings.SaveLanes(_lanes);
+            Log.Write($"overview: lane {sc.Lane + 1} slid to desktop {Desktops.IndexOf(desks[to]) + 1}");
+        }
+        Relayout(o);
     }
 
     // Windows that opened, came up or closed while the overview is open join or leave the
@@ -243,7 +304,6 @@ sealed partial class Engine
         bool changed = false;
         for (int i = page.Windows.Count - 1; i >= 0; i--)
             if (!now.Any(w => w.Handle == page.Windows[i].Handle)) { page.RemoveAt(i); changed = true; }
-        float s = _overlay.Scale;
         foreach (var w in now)
         {
             if (page.Windows.Any(x => x.Handle == w.Handle)) continue;
@@ -251,9 +311,6 @@ sealed partial class Engine
             page.Windows.Add(w);
             page.From.Add(from); page.To.Add(from); page.Shown.Add(from);
             page.Thumbs.Add(new Thumbnail(_overlay.Handle, w.Handle));
-            var icon = AppWindows.Icon(w.Handle, (int)(16 * s));
-            page.Icons.Add(icon == null ? null : _gfx.Bitmap(icon));
-            icon?.Dispose();
             changed = true;
         }
         if (!changed) return;
@@ -292,6 +349,7 @@ sealed partial class Engine
     {
         var o = _overview!;
         if (o.Open) _gfx.Frames.Clear();
+        _overlay.Hole(null);
         if (target < 0.5) Arrive(o);
         o.Tracking = false;
         o.Press = null;
@@ -309,6 +367,12 @@ sealed partial class Engine
         var o = _overview!;
         Glide(o, now);
         if (o.Added != null && now - o.AddedAt > 0.6) { o.Added = null; _redraw = true; }
+        // Resting on a desktop for a moment shows its windows, as if you were there.
+        if (o.Dwell is Guid dwell && now - o.DwellSince >= 0.7)
+        {
+            o.Dwell = null;
+            if (o.Idle && dwell != o.Page.Desktop) ShowPage(o, dwell);
+        }
         if (o.Idle && now - o.LastLook > 0.5)
         {
             o.LastLook = now;
@@ -342,6 +406,7 @@ sealed partial class Engine
         else
         {
             Hook(true);
+            UpdateHole(o);
             _redraw = true;
             Log.Write($"overview opened: {_gfx.FrameStats()}");
         }
@@ -376,6 +441,7 @@ sealed partial class Engine
         var o = _overview;
         if (o == null) return;
         _overview = null;
+        _overlay.Hole(null);
         _overlay.Hide();
         DropTaskbar();
         Hook(false);
@@ -390,6 +456,7 @@ sealed partial class Engine
         var o = _overview!;
         _gfx.Frames.Clear();
         Hook(false);
+        _overlay.Hole(null);
         o.Zoom = new Zoom { Target = target, From = from, Spring = new Spring(0, 0, 1, _tuning.OverviewResponse), Start = Now };
     }
 
@@ -488,7 +555,7 @@ sealed partial class Engine
             Previous = _lanes.Neighbor(_current, axis == Axis.Horizontal ? Direction.Left : Direction.Up),
             Next = _lanes.Neighbor(_current, axis == Axis.Horizontal ? Direction.Right : Direction.Down),
         };
-        double page = (axis == Axis.Horizontal ? _gfx.Width : _gfx.Height) + GapDip * _overlay.Scale;
+        double page = axis == Axis.Horizontal ? _gfx.Width : _gfx.Height;
         sw.Track = new SwipeTrack(page, sw.Previous != null, sw.Next != null, _tuning);
         if (sw.Previous is Guid p) sw.PreviousPage = MakePage(p, o.Strip);
         if (sw.Next is Guid n) sw.NextPage = MakePage(n, o.Strip);
@@ -548,6 +615,7 @@ sealed partial class Engine
             o.Page = arrived;
             Relayout(o, snap: true);
             RetakeSoon();
+            UpdateHole(o);
         }
         _redraw = true;
         Log.Write($"overview swipe drawn: {_gfx.FrameStats()}");
@@ -566,8 +634,8 @@ sealed partial class Engine
         if (o is not { Open: true } || o.Swipe != null) return;
         if (o.MenuFor != null)
         {
-            bool over = Inside(o.MenuBox, x, y);
-            if (over != o.MenuHover) { o.MenuHover = over; _redraw = true; }
+            int item = MenuItemAt(o, x, y);
+            if (item != o.MenuItem) { o.MenuItem = item; _redraw = true; }
             return;
         }
         if (o.Drag is { } d)
@@ -593,13 +661,13 @@ sealed partial class Engine
         }
         int hover = HitWindow(o, x, y);
         var tile = hover >= 0 ? null : o.Strip.Hit(x, y);
-        // A desktop under the pointer shows its windows at once, as if you were there; they stay
+        // Resting on a desktop shows its windows after a moment (see StepOverview); they stay
         // while the pointer goes on down to them.
         if (tile is { Kind: TileKind.Desktop } && tile.Desktop != o.Page.Desktop && o.Idle)
         {
-            ShowPage(o, tile.Desktop);
-            hover = -1;
+            if (o.Dwell != tile.Desktop) { o.Dwell = tile.Desktop; o.DwellSince = Now; }
         }
+        else o.Dwell = null;
         if (hover != o.Hover || tile != o.HoverTile)
         {
             o.Hover = hover;
@@ -630,12 +698,19 @@ sealed partial class Engine
 
     void Aim(OverviewState o, Drag d)
     {
-        if (d.Window >= 0)
+        var t = o.Strip.Hit(d.X, d.Y);
+        if (d.Window >= 0) d.Target = t is { Kind: TileKind.Desktop } && t.Desktop == o.Page.Desktop ? null : t;
+        else if (t is { Kind: TileKind.Trash })
         {
-            var t = o.Strip.Hit(d.X, d.Y);
-            d.Target = t is { Kind: TileKind.Desktop } && t.Desktop == o.Page.Desktop ? null : t;
+            // Over the bin: let go, and the desktop closes.
+            d.Target = t;
+            d.Drop = null;
         }
-        else d.Drop = o.Strip.DropFor(d.X, d.Y, d.Desktop, _lanes);
+        else
+        {
+            d.Target = null;
+            d.Drop = o.Strip.DropFor(d.X, d.Y, d.Desktop, _lanes);
+        }
     }
 
     void OnLeftUp(int x, int y)
@@ -655,12 +730,25 @@ sealed partial class Engine
 
     void Click(OverviewState o, int x, int y)
     {
+        if (o.Renaming != null)
+        {
+            FinishRename(o, keep: true);
+            return;
+        }
         if (o.MenuFor is Guid menuFor)
         {
             o.MenuFor = null;
             _redraw = true;
-            if (Inside(o.MenuBox, x, y)) CloseDesktop(o, menuFor);
-            else Log.Write("overview click: menu closed");
+            switch (MenuItemAt(o, x, y))
+            {
+                case 0:
+                    o.Renaming = menuFor;
+                    o.Name = Desktops.Name(menuFor);
+                    Log.Write("overview: renaming a desktop");
+                    break;
+                case 1: CloseDesktop(o, menuFor); break;
+                default: Log.Write("overview click: menu closed"); break;
+            }
             return;
         }
         int w = HitWindow(o, x, y);
@@ -727,6 +815,11 @@ sealed partial class Engine
                 o.Moving = true;
             }
         }
+        else if (d.Target is { Kind: TileKind.Trash })
+        {
+            CloseDesktop(o, d.Desktop);
+            return;
+        }
         else
         {
             if (d.Drop is { } drop)
@@ -765,25 +858,37 @@ sealed partial class Engine
         if (o.Strip.Hit(x, y) is { Kind: TileKind.Desktop } t) CloseDesktop(o, t.Desktop);
     }
 
-    // A right click on a desktop opens a menu to close it, as in Task View.
+    // A right click on a desktop opens a menu to rename it or close it, as in Task View.
     void OnRightUp(int x, int y)
     {
         var o = _overview;
         if (o == null) return;
         if (!o.Idle) { Log.Write("overview right click: not taken, the overview was busy"); return; }
+        if (o.Renaming != null) FinishRename(o, keep: true);
         o.MenuFor = null;
         _redraw = true;
         int w = HitWindow(o, x, y);
         Log.Write($"overview right click: {HitName(o, w, x, y)}");
-        if (w >= 0 || o.Strip.Hit(x, y) is not { Kind: TileKind.Desktop } t || Desktops.Count <= 1) return;
+        if (w >= 0 || o.Strip.Hit(x, y) is not { Kind: TileKind.Desktop } t) return;
         float s = _overlay.Scale;
-        double mw = _gfx.TextWidth(CloseDesktopText, MenuFont()) + 40 * s, mh = 40 * s;
+        var items = MenuItems();
+        double mw = items.Max(i => _gfx.TextWidth(i, MenuFont())) + 40 * s, mh = (items.Length * MenuRow + 8) * s;
         o.MenuFor = t.Desktop;
         o.MenuBox = new Box(Math.Clamp(x, 0, _gfx.Width - mw), Math.Clamp(y, 0, _gfx.Height - mh), mw, mh);
-        o.MenuHover = Inside(o.MenuBox, x, y);
+        o.MenuItem = MenuItemAt(o, x, y);
     }
 
-    const string CloseDesktopText = "Close desktop";
+    const float MenuRow = 36;
+
+    // The last desktop cannot be closed.
+    static string[] MenuItems() => Desktops.Count > 1 ? new[] { "Rename", "Close desktop" } : new[] { "Rename" };
+
+    int MenuItemAt(OverviewState o, int x, int y)
+    {
+        if (!Inside(o.MenuBox, x, y)) return -1;
+        int i = (int)((y - o.MenuBox.Y - 4 * _overlay.Scale) / (MenuRow * _overlay.Scale));
+        return i >= 0 && i < MenuItems().Length ? i : -1;
+    }
 
     IDWriteTextFormat MenuFont() => _gfx.Font(14 * _overlay.Scale, FontWeight.Normal, family: "Segoe UI Variable Text");
 
@@ -791,12 +896,43 @@ sealed partial class Engine
     {
         var g = _gfx;
         float s = _overlay.Scale;
-        float x = (float)o.MenuBox.X, y = (float)o.MenuBox.Y, w = (float)o.MenuBox.W, h = (float)o.MenuBox.H;
+        float x = (float)o.MenuBox.X, y = (float)o.MenuBox.Y, w = (float)o.MenuBox.W, h = (float)o.MenuBox.H, row = MenuRow * s;
         g.Shadow(x, y, w, h, 8 * s, 20 * s, 6 * s, 0.5f);
         g.RoundRect(x, y, w, h, 8 * s, 0xFF2C2C2C);
         g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, 8 * s, 0x26FFFFFF, 1);
-        if (o.MenuHover) g.RoundRect(x + 4 * s, y + 4 * s, w - 8 * s, h - 8 * s, 4 * s, 0x1AFFFFFF);
-        g.Text(CloseDesktopText, MenuFont(), x + 20 * s, y, w - 40 * s, h, 0xFFFFFFFF);
+        var items = MenuItems();
+        for (int i = 0; i < items.Length; i++)
+        {
+            float iy = y + 4 * s + i * row;
+            if (o.MenuItem == i) g.RoundRect(x + 4 * s, iy, w - 8 * s, row, 4 * s, 0x1AFFFFFF);
+            g.Text(items[i], MenuFont(), x + 20 * s, iy, w - 40 * s, row, 0xFFFFFFFF);
+        }
+    }
+
+    // The new name is kept (empty gives back "Desktop N") or dropped.
+    void FinishRename(OverviewState o, bool keep)
+    {
+        if (o.Renaming is not Guid d) return;
+        o.Renaming = null;
+        _redraw = true;
+        if (!keep) return;
+        Desktops.Rename(d, o.Name.Trim());
+        RefreshTitles();
+        Log.Write("overview: desktop renamed");
+    }
+
+    // What a key types with the keyboard layout of the window in front.
+    static string Typed(int vk, int scan)
+    {
+        var state = new byte[256];
+        foreach (int k in new[] { 0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5 })
+            if ((GetAsyncKeyState(k) & 0x8000) != 0) state[k] = 0x80;
+        if ((GetKeyState(0x14) & 1) != 0) state[0x14] = 1;
+        var layout = GetKeyboardLayout(GetWindowThreadProcessId(GetForegroundWindow(), out _));
+        var buf = new System.Text.StringBuilder(8);
+        // 4: leaves the keyboard's state alone, so a dead key in the window in front still works.
+        int n = ToUnicodeEx((uint)vk, (uint)scan, state, buf, buf.Capacity, 4, layout);
+        return n > 0 ? new string(buf.ToString()[..n].Where(c => !char.IsControl(c)).ToArray()) : "";
     }
 
     static bool Inside(Box b, int x, int y) => x >= b.X && x < b.Right && y >= b.Y && y < b.Bottom;
@@ -806,6 +942,7 @@ sealed partial class Engine
     {
         { Kind: TileKind.Desktop } t => $"desktop {Desktops.IndexOf(t.Desktop) + 1}",
         { Kind: TileKind.NewLane } => "New lane",
+        { Kind: TileKind.Trash } => "the bin",
         { } => "a +",
         null => "nothing",
     };
@@ -883,6 +1020,21 @@ sealed partial class Engine
 
     IntPtr KeyHook(int code, IntPtr wParam, IntPtr lParam)
     {
+        // Typing a desktop's name: the keys go to the name, not to the window in front
+        // (Shift, Ctrl, Alt and the Windows key still pass, for the layout and shortcuts).
+        if (code >= 0 && _overview is { Renaming: not null } ro && Marshal.ReadInt32(lParam) is var vk
+            && vk is not (0x10 or 0x11 or 0x12 or 0x14 or 0x5B or 0x5C) and not (>= 0xA0 and <= 0xA5))
+        {
+            if (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)0x104 /* WM_SYSKEYDOWN */)
+            {
+                if (vk == 0x0D) FinishRename(ro, keep: true);
+                else if (vk == 0x1B) FinishRename(ro, keep: false);
+                else if (vk == 0x08) { if (ro.Name.Length > 0) ro.Name = ro.Name[..^1]; }
+                else if (ro.Name.Length < 60) ro.Name += Typed(vk, Marshal.ReadInt32(lParam, 4));
+                _redraw = true;
+            }
+            return 1;
+        }
         if (code >= 0 && wParam == (IntPtr)WM_KEYDOWN && Marshal.ReadInt32(lParam) == 0x1B)
         {
             if (_overview is { MenuFor: not null } om)
@@ -970,17 +1122,15 @@ sealed partial class Engine
             g.Unclip();
             g.Rect(0, band - 1, g.Width, 1, A(0x1FFFFFFF, a));
         }
-        // Each desktop has the taskbar's plain bar in its place and carries it as it slides, as in
-        // a swipe; the live taskbar stays over the one in place.
-        if (o.Bar is RECT plain)
-        {
-            g.Rect(plain.Left + (float)ox, plain.Top + (float)oy, plain.Width, plain.Height, _barColour);
-            if (toward != null) g.Rect(plain.Left + px, plain.Top + py, plain.Width, plain.Height, _barColour);
-        }
         if (a > 0.002f) DrawStrip(o, a, dy, f, toward, p);
 
-        // The windows of this desktop, and of the one a four-finger swipe brings in.
-        float la = Math.Clamp((p - 0.7f) / 0.3f, 0, 1) * keep;
+        // The windows of this desktop, and of the one a four-finger swipe brings in, each with
+        // its shadow, a deeper one under the pointer. No names: the windows speak for themselves.
+        float sa = keep * Math.Clamp(p, 0, 1);
+        void Lift(Box b, bool high)
+        {
+            if (sa > 0.002f) g.Shadow((float)b.X, (float)b.Y, (float)b.W, (float)b.H, 8 * s, (high ? 46 : 28) * s, (high ? 16 : 10) * s, (high ? 0.9f : 0.6f) * sa);
+        }
         // Going up or down, windows pass under the band.
         float clip = vertical ? band : float.NegativeInfinity;
         if (vertical) g.Clip(0, clip, g.Width, g.Height - clip);
@@ -988,10 +1138,8 @@ sealed partial class Engine
         {
             if (o.Drag?.Window == i) continue;
             var b = boxes[i] with { X = boxes[i].X + ox, Y = boxes[i].Y + oy };
+            Lift(b, o.Hover == i && o.Idle);
             page.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep, clip);
-            if (la > 0.002f) WindowTitle(page, i, b, la);
-            if (o.Hover == i && o.Idle)
-                g.RoundRectOutline((float)b.X - 5 * s, (float)b.Y - 5 * s, (float)b.W + 10 * s, (float)b.H + 10 * s, 11 * s, 0xD9FFFFFF, 2 * s);
         }
         foreach (var unused in new[] { sw?.PreviousPage, sw?.NextPage })
             if (unused != null && unused != other) unused.Hide();
@@ -1000,8 +1148,8 @@ sealed partial class Engine
             for (int i = 0; i < other.Thumbs.Count; i++)
             {
                 var b = other.To[i] with { X = other.To[i].X + ox + (vertical ? 0 : step), Y = other.To[i].Y + oy + (vertical ? step : 0) };
+                Lift(b, false);
                 other.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep, clip);
-                WindowTitle(other, i, b, la);
             }
         }
         if (vertical) g.Unclip();
@@ -1044,19 +1192,32 @@ sealed partial class Engine
             float x = (float)r.X + (t.Lane == lane && t.Kind == TileKind.Desktop ? shift : 0), y = (float)r.Y + dy, w = (float)r.W, h = (float)r.H;
             bool targeted = drag?.Target == t || drag?.Drop is { NewLane: true } nd && t.Kind == TileKind.NewLane && t.Lane == nd.Lane;
             bool hover = o.HoverTile == t && o.Idle;
-            if (t.Kind == TileKind.Plus)
+            if (t.Kind is TileKind.Plus or TileKind.Trash)
             {
-                // A round "+" in the corner; it lights up under the pointer and says what it does.
+                // A round button in the corner: "+", or the bin while a desktop is dragged. It
+                // lights up under the pointer (red for the bin) and says what it does.
+                bool bin = t.Kind == TileKind.Trash;
+                uint accent = bin ? 0xFFE5484Du : 0xFF4CC2FFu;
                 float rr = w / 2, cx = x + rr, cy = y + rr, arm = 7 * s;
-                if (hover || targeted) g.RoundRect(x, y, w, h, rr, A(targeted ? 0x334CC2FFu : 0x1FFFFFFFu, a));
-                g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, rr, targeted ? A(0xFF4CC2FF, a) : A(hover ? 0x59FFFFFFu : 0x33FFFFFFu, a), targeted ? 2 * s : 1);
+                if (hover || targeted) g.RoundRect(x, y, w, h, rr, A(targeted ? (accent & 0xFFFFFF) | 0x33000000u : 0x1FFFFFFFu, a));
+                g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, rr, targeted ? A(accent, a) : A(hover ? 0x59FFFFFFu : 0x33FFFFFFu, a), targeted ? 2 * s : 1);
                 uint ink = A(hover || targeted ? 0xFFFFFFFFu : 0x8CFFFFFFu, a);
-                g.Rect(cx - arm, cy - 0.75f * s, 2 * arm, 1.5f * s, ink);
-                g.Rect(cx - 0.75f * s, cy - arm, 1.5f * s, 2 * arm, ink);
+                if (bin)
+                {
+                    g.Rect(cx - 7 * s, cy - 5.5f * s, 14 * s, 1.5f * s, ink);
+                    g.Rect(cx - 2.5f * s, cy - 7.5f * s, 5 * s, 1.5f * s, ink);
+                    g.RoundRectOutline(cx - 5 * s, cy - 3 * s, 10 * s, 11 * s, 1.5f * s, ink, 1.5f * s);
+                }
+                else
+                {
+                    g.Rect(cx - arm, cy - 0.75f * s, 2 * arm, 1.5f * s, ink);
+                    g.Rect(cx - 0.75f * s, cy - arm, 1.5f * s, 2 * arm, ink);
+                }
                 if (hover || targeted)
                 {
-                    float tw = g.TextWidth("New desktop", capFont);
-                    g.Text("New desktop", capFont, Math.Min(cx - tw / 2, g.Width - tw - 8 * s), y + h + 6 * s, tw, 18 * s, A(0xFFE6E6E6, a));
+                    string tip = bin ? "Close desktop" : "New desktop";
+                    float tw = g.TextWidth(tip, capFont);
+                    g.Text(tip, capFont, Math.Min(cx - tw / 2, g.Width - tw - 8 * s), y + h + 6 * s, tw, 18 * s, A(0xFFE6E6E6, a));
                 }
                 continue;
             }
@@ -1083,6 +1244,18 @@ sealed partial class Engine
             else if ((hover || t.Desktop == o.Page.Desktop) && t.Desktop != _current) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xD9FFFFFF, a), 2 * s);
             if (o.Added == t.Desktop && 1 - (float)((Now - o.AddedAt) / 0.6) is var lit and > 0)
                 g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xFFFFFFFF, a * lit), 2 * s);
+            if (o.Renaming == t.Desktop)
+            {
+                // The name being typed, in a field where the caption was.
+                var font = g.Font(14 * s);
+                float fx = x - 6 * s, fy = y + h + 3 * s, fw = w + 12 * s, fh = 22 * s;
+                g.RoundRect(fx, fy, fw, fh, 5 * s, A(0xFF1F1F1F, ta));
+                g.RoundRectOutline(fx + 0.75f, fy + 0.75f, fw - 1.5f, fh - 1.5f, 5 * s, A(0xFF4CC2FF, ta), 1.5f * s);
+                float nw = Math.Min(g.TextWidth(o.Name, font), fw - 18 * s);
+                g.Text(o.Name, font, fx + 8 * s, fy, nw, fh, A(0xFFFFFFFF, ta));
+                g.Rect(fx + 8 * s + nw + 1, fy + 4 * s, 1.5f * s, fh - 8 * s, A(0xFFFFFFFF, ta));
+                continue;
+            }
             string title = Title(t.Desktop);
             float cw = Math.Min(g.TextWidth(title, capFont), w);
             g.Text(title, capFont, x + (w - cw) / 2, y + h + 6 * s, cw, 18 * s, A(0xFFE6E6E6, ta));
@@ -1118,25 +1291,12 @@ sealed partial class Engine
         else if (Picture(desktop) is { } pic) _gfx.RoundImage(pic, x, y, w, h, 8 * _overlay.Scale, alpha);
     }
 
-    // The window's icon and name above it, once it has nearly arrived.
-    void WindowTitle(Page page, int i, Box b, float la)
-    {
-        if (la <= 0.002f) return;
-        var g = _gfx;
-        float s = _overlay.Scale;
-        var nameFont = g.Font(15 * s);
-        float icon = 16 * s, gap = 8 * s, room = (float)b.W - 16 * s - icon - gap;
-        string title = page.Windows[i].Title;
-        // A title too long for the window's width gives way to the program's name.
-        if (g.TextWidth(title, nameFont) > room && page.Windows[i].App.Length > 0) title = page.Windows[i].App;
-        float tw = Math.Min(g.TextWidth(title, nameFont), room);
-        float x = (float)(b.X + (b.W - (icon + gap + tw)) / 2), y = (float)b.Y - 28 * s;
-        if (page.Icons[i] is { } ic) g.Image(ic, x, y, icon, icon, la);
-        g.Text(title, nameFont, x + icon + gap, y - 2 * s, tw, 20 * s, A(0xFFFFFFFF, la));
-    }
-
     delegate IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int id, HookProc proc, IntPtr module, uint thread);
     [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hook);
     [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vk);
+    [DllImport("user32.dll")] static extern short GetKeyState(int vk);
+    [DllImport("user32.dll")] static extern IntPtr GetKeyboardLayout(uint thread);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int ToUnicodeEx(uint vk, uint scan, byte[] state, System.Text.StringBuilder buf, int size, uint flags, IntPtr layout);
 }
