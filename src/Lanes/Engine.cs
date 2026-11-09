@@ -922,20 +922,7 @@ sealed partial class Engine : IGestureSink
         if (fingers >= 2 && _overview != null) _overview.Dwell = null;
         // Three or more fingers just landed: take a picture of the screen now, while they
         // travel far enough for the swipe to be recognised.
-        if (fingers >= 3 && before < 3 && !_overlay.Shown && _switch == null)
-        {
-            DiscardTouchCapture();
-            var monitor = PointerMonitor().Monitor;
-            var own = _overlay.Handle;
-            _touchCaptureOf = _current;
-            _touchCapture = Task.Run(() =>
-            {
-                long t0 = Environment.TickCount64;
-                var p = Capture.ScreenWithout(monitor, own, out var keep);
-                _captureMs = Environment.TickCount64 - t0;
-                return (p, keep);
-            });
-        }
+        if (fingers >= 3 && before < 3 && !_overlay.Shown && _switch == null) StartTouchCapture();
         if (!_recognizers.TryGetValue(device, out var r)) _recognizers[device] = r = new GestureRecognizer(this);
         if (_activeDevice != IntPtr.Zero && _activeDevice != device && !r.Tracking) return;
         _activeDevice = device;
@@ -993,7 +980,23 @@ sealed partial class Engine : IGestureSink
         else if (_overview != null) EndOverview(vy);
     }
 
-    // A picture taken at touch time that no swipe used: free it once it is done.
+    // A picture of the screen taken in the background, for a gesture that may start soon.
+    void StartTouchCapture()
+    {
+        DiscardTouchCapture();
+        var monitor = PointerMonitor().Monitor;
+        var own = _overlay.Handle;
+        _touchCaptureOf = _current;
+        _touchCapture = Task.Run(() =>
+        {
+            long t0 = Environment.TickCount64;
+            var p = Capture.ScreenWithout(monitor, own, out var keep);
+            _captureMs = Environment.TickCount64 - t0;
+            return (p, keep);
+        });
+    }
+
+    // A picture taken ahead that no gesture used: free it once it is done.
     void DiscardTouchCapture()
     {
         var t = _touchCapture;

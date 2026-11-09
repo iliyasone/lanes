@@ -364,17 +364,20 @@ static class Demo
         await Task.Delay(2500);
         Log.Write($"after a click on Agent there: {(Desktops.Current == agent ? "on its desktop" : "on another desktop")}, \"{Native.WindowText(GetForegroundWindow())}\" in front");
         engine.Screenshot(Path.Combine(dir, "18b-after-app-click.png"));
-        // Back over the button, then a click on the taskbar's Start button through the map.
+        // Back over the button, then a click on the taskbar's clock through the map: the map goes
+        // and the clock's calendar comes up.
         Desktops.Switch(editor);
         await Task.Delay(2000);
         await Rest();
         var start = TopWindows();
-        SetCursorPos(r.Left - 300, cy);
+        var clock = new Native.POINT { X = Screen.PrimaryScreen!.Bounds.Right - 70, Y = cy };
+        SetCursorPos(clock.X, clock.Y);
         mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
         await Task.Delay(150);
+        Log.Write($"app map: pressed on the clock through the map; under the pointer now: {Describe(Native.GetAncestor(WindowFromPoint(clock), 2))}");
         mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
         await Task.Delay(1500);
-        Log.Write($"app map: after a click on the taskbar left of the buttons: the map is {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STILL OPEN")}; new windows: {string.Join(", ", TopWindows().Where(w => !start.Contains(w)).Take(5).Select(Describe))}");
+        Log.Write($"app map: after the click: the map is {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STILL OPEN")}; new windows: {string.Join(", ", TopWindows().Where(w => !start.Contains(w)).Take(5).Select(Describe))}");
         engine.Screenshot(Path.Combine(dir, "18d-taskbar-click-through-map.png"));
         SendKeys.SendWait("{ESC}");
         await Task.Delay(800);

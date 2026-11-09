@@ -901,6 +901,11 @@ sealed partial class Engine
     {
         _hover = app;
         _hoverAt = Now;
+        // The picture of the screen the map opens over is taken as the pointer comes to a button,
+        // as when fingers land for a swipe; it goes as the pointer leaves the buttons.
+        if (_overview != null || _switch != null || _overlay.Shown) return;
+        if (app == null) DiscardTouchCapture();
+        else StartTouchCapture();
     }
 
     void StepHover(double now)
