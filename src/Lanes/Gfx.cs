@@ -144,6 +144,33 @@ sealed class Gfx : IDisposable
         return bmp;
     }
 
+    // Draws into memory instead of the screen: `draw` uses the overlay's coordinates, and the
+    // pixels returned are the w x h of them from (x, y), premultiplied. Call between frames only.
+    public Pixels Offscreen(int x, int y, int w, int h, Action draw)
+    {
+        var format = new D2DPixelFormat(Format.B8G8R8A8_UNorm, D2DAlpha.Premultiplied);
+        using var bmp = Dc.CreateBitmap(new SizeI(w, h), IntPtr.Zero, 0, new BitmapProperties1(format, 96, 96, BitmapOptions.Target));
+        using var cpu = Dc.CreateBitmap(new SizeI(w, h), IntPtr.Zero, 0, new BitmapProperties1(format, 96, 96, BitmapOptions.CpuRead | BitmapOptions.CannotDraw));
+        Dc.Target = bmp;
+        Dc.BeginDraw();
+        Dc.Transform = Matrix3x2.CreateTranslation(-x, -y);
+        Dc.Clear(new Color4(0, 0, 0, 0));
+        draw();
+        Dc.EndDraw();
+        Dc.Transform = Matrix3x2.Identity;
+        Dc.Target = _target;
+        cpu.CopyFromBitmap(bmp);
+        var map = cpu.Map(MapOptions.Read);
+        var p = new Pixels(w, h, opaque: false);
+        unsafe
+        {
+            for (int row = 0; row < h; row++)
+                Buffer.MemoryCopy((void*)(map.Bits + row * map.Pitch), (void*)(p.Data + row * w * 4), w * 4, w * 4);
+        }
+        cpu.Unmap();
+        return p;
+    }
+
     public ID2D1SolidColorBrush Brush(uint argb)
     {
         if (!_brushes.TryGetValue(argb, out var b))

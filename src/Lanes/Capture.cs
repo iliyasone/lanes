@@ -45,6 +45,8 @@ static class Capture
         EnumWindows((h, _) =>
         {
             if (h == own || !IsWindowVisible(h) || Cloaked(h)) return true;
+            // Lanes' own windows (its pill after a switch) are never in the picture anyway.
+            if (GetWindowThreadProcessId(h, out uint pid) != 0 && pid == Environment.ProcessId) return true;
             if ((GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64() & WS_EX_TOPMOST) == 0) return true;
             var f = Frame(h);
             if (f.Right <= area.Left || f.Left >= area.Right || f.Bottom <= area.Top || f.Top >= area.Bottom) return true;

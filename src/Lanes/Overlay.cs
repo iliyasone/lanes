@@ -13,6 +13,7 @@ sealed class Overlay : NativeWindow
     public event Action<int, int>? LeftDown;
     public event Action<int, int>? LeftUp;
     public event Action<int, int>? MiddleUp;
+    public event Action<int, int>? RightUp;
 
     // The monitor the overlay is on, its work area (without the taskbar), and the part the
     // overlay covers: the work area, or the whole monitor when a full-screen window is involved.
@@ -111,11 +112,78 @@ sealed class Overlay : NativeWindow
             case WM_MBUTTONUP:
                 MiddleUp?.Invoke(X(m), Y(m));
                 break;
+            case WM_RBUTTONUP:
+                RightUp?.Invoke(X(m), Y(m));
+                break;
         }
         base.WndProc(ref m);
 
         static int X(Message m) => (short)(m.LParam.ToInt64() & 0xFFFF);
         static int Y(Message m) => (short)((m.LParam.ToInt64() >> 16) & 0xFFFF);
+    }
+}
+
+// The lane map after a switch: a small see-through window that stays over the desktop as long as
+// Windows' own "Desktop N" pill does, then fades with it. Clicks go through it, and Lanes' screen
+// pictures leave it out. Like the overlay, it stays shown on every desktop and is cloaked when unused.
+sealed class MapWindow : NativeWindow
+{
+    public bool Shown { get; private set; }
+
+    public MapWindow()
+    {
+        CreateHandle(new CreateParams
+        {
+            Caption = "Lanes map",
+            Style = unchecked((int)WS_POPUP),
+            ExStyle = (int)(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE),
+            Width = 1,
+            Height = 1,
+        });
+        SetWindowDisplayAffinity(Handle, WDA_EXCLUDEFROMCAPTURE);
+        Cloak(true);
+        SetWindowPos(Handle, HWND_TOPMOST, 0, 0, 1, 1, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+
+    void Cloak(bool on)
+    {
+        int v = on ? 1 : 0;
+        DwmSetWindowAttribute(Handle, 13 /* DWMWA_CLOAK */, ref v, 4);
+    }
+
+    // Shows these premultiplied pixels with their top-left corner at (x, y) on the screen.
+    public void Show(Pixels p, int x, int y)
+    {
+        IntPtr screen = GetDC(IntPtr.Zero), mem = CreateCompatibleDC(screen);
+        var bi = new BITMAPINFOHEADER { Size = Marshal.SizeOf<BITMAPINFOHEADER>(), Width = p.Width, Height = -p.Height, Planes = 1, BitCount = 32 };
+        IntPtr dib = CreateDIBSection(mem, ref bi, 0, out IntPtr bits, IntPtr.Zero, 0);
+        unsafe { Buffer.MemoryCopy((void*)p.Data, (void*)bits, (long)p.Width * p.Height * 4, (long)p.Width * p.Height * 4); }
+        IntPtr old = SelectObject(mem, dib);
+        var at = new POINT { X = x, Y = y };
+        var size = new SIZE { Cx = p.Width, Cy = p.Height };
+        var from = new POINT();
+        var blend = new BLENDFUNCTION { SourceConstantAlpha = 255, AlphaFormat = 1 /* AC_SRC_ALPHA */ };
+        UpdateLayeredWindow(Handle, screen, ref at, ref size, mem, ref from, 0, ref blend, 2 /* ULW_ALPHA */);
+        SelectObject(mem, old);
+        DeleteObject(dib);
+        DeleteDC(mem);
+        ReleaseDC(IntPtr.Zero, screen);
+        SetWindowPos(Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        Cloak(false);
+        Shown = true;
+    }
+
+    public void Fade(float alpha)
+    {
+        var blend = new BLENDFUNCTION { SourceConstantAlpha = (byte)Math.Clamp(alpha * 255, 0, 255), AlphaFormat = 1 };
+        UpdateLayeredWindow(Handle, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 0, ref blend, 2);
+    }
+
+    public void Hide()
+    {
+        if (!Shown) return;
+        Cloak(true);
+        Shown = false;
     }
 }
 

@@ -105,6 +105,10 @@ sealed partial class Engine
         public double GoingAt;
         public Task? GoingWallpaper;
         public Box? RingShown;
+        // The menu a right click on a desktop opened, with its one item.
+        public Guid? MenuFor;
+        public Box MenuBox;
+        public bool MenuHover;
         public bool Open => !Tracking && Spring == null && Zoom == null && P > 0.99;
         public bool Idle => Open && Drag == null && Swipe == null && Going == null;
     }
@@ -136,6 +140,7 @@ sealed partial class Engine
         _overlay.Place();
         RenderOverview();
         _overlay.Show();
+        _map.Hide();
         Log.Write($"overview: {o.Page.Windows.Count} windows; {CaptureNote}");
     }
 
@@ -309,6 +314,8 @@ sealed partial class Engine
     {
         z.SwitchedAt = Now;
         if (z.Target == _current) return;
+        // Here Windows' own pill comes up over Lanes' copy, as after a switch without Lanes.
+        WindowsPill.Restore();
         if (!Desktops.Switch(z.Target)) Log.Write("switch failed");
         _overlay.Place();
         _lastSwitchAt = Now;
@@ -465,6 +472,12 @@ sealed partial class Engine
     {
         var o = _overview;
         if (o is not { Open: true } || o.Swipe != null) return;
+        if (o.MenuFor != null)
+        {
+            bool over = Inside(o.MenuBox, x, y);
+            if (over != o.MenuHover) { o.MenuHover = over; _redraw = true; }
+            return;
+        }
         if (o.Drag is { } d)
         {
             d.X = x;
@@ -535,14 +548,24 @@ sealed partial class Engine
             Drop(o, d);
             return;
         }
-        if (o.Press == null || !o.Idle) return; // pressed before the overview was open
+        // Pressed before the overview was open, or while something moves.
+        if (o.Press == null || !o.Idle) { Log.Write("overview click: not taken, the overview was busy"); return; }
         o.Press = null;
         Click(o, x, y);
     }
 
     void Click(OverviewState o, int x, int y)
     {
+        if (o.MenuFor is Guid menuFor)
+        {
+            o.MenuFor = null;
+            _redraw = true;
+            if (Inside(o.MenuBox, x, y)) CloseDesktop(o, menuFor);
+            else Log.Write("overview click: menu closed");
+            return;
+        }
         int w = HitWindow(o, x, y);
+        Log.Write($"overview click: {HitName(o, w, x, y)}");
         if (w >= 0)
         {
             var hwnd = o.Page.Windows[w].Handle;
@@ -616,8 +639,11 @@ sealed partial class Engine
     void OnMiddleUp(int x, int y)
     {
         var o = _overview;
-        if (o is not { Idle: true }) return;
+        if (o == null) return;
+        if (!o.Idle) { Log.Write("overview middle click: not taken, the overview was busy"); return; }
+        o.MenuFor = null;
         int w = HitWindow(o, x, y);
+        Log.Write($"overview middle click: {HitName(o, w, x, y)}");
         if (w >= 0)
         {
             // As in Task View: the window is asked to close (it may still ask to save first).
@@ -632,6 +658,49 @@ sealed partial class Engine
         }
         if (o.Strip.Hit(x, y) is { Kind: TileKind.Desktop } t) CloseDesktop(o, t.Desktop);
     }
+
+    // A right click on a desktop opens a menu to close it, as in Task View.
+    void OnRightUp(int x, int y)
+    {
+        var o = _overview;
+        if (o == null) return;
+        if (!o.Idle) { Log.Write("overview right click: not taken, the overview was busy"); return; }
+        o.MenuFor = null;
+        _redraw = true;
+        int w = HitWindow(o, x, y);
+        Log.Write($"overview right click: {HitName(o, w, x, y)}");
+        if (w >= 0 || o.Strip.Hit(x, y) is not { Kind: TileKind.Desktop } t || Desktops.Count <= 1) return;
+        float s = _overlay.Scale;
+        double mw = _gfx.TextWidth(CloseDesktopText, PillFont()) + 40 * s, mh = 40 * s;
+        o.MenuFor = t.Desktop;
+        o.MenuBox = new Box(Math.Clamp(x, 0, _gfx.Width - mw), Math.Clamp(y, 0, _gfx.Height - mh), mw, mh);
+        o.MenuHover = Inside(o.MenuBox, x, y);
+    }
+
+    const string CloseDesktopText = "Close desktop";
+
+    void DrawMenu(OverviewState o)
+    {
+        var g = _gfx;
+        float s = _overlay.Scale;
+        float x = (float)o.MenuBox.X, y = (float)o.MenuBox.Y, w = (float)o.MenuBox.W, h = (float)o.MenuBox.H;
+        g.Shadow(x, y, w, h, 8 * s, 20 * s, 6 * s, 0.5f);
+        g.RoundRect(x, y, w, h, 8 * s, 0xFF2C2C2C);
+        g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, 8 * s, 0x26FFFFFF, 1);
+        if (o.MenuHover) g.RoundRect(x + 4 * s, y + 4 * s, w - 8 * s, h - 8 * s, 4 * s, 0x1AFFFFFF);
+        g.Text(CloseDesktopText, PillFont(), x + 20 * s, y, w - 40 * s, h, 0xFFFFFFFF);
+    }
+
+    static bool Inside(Box b, int x, int y) => x >= b.X && x < b.Right && y >= b.Y && y < b.Bottom;
+
+    // What a click landed on, for the log.
+    string HitName(OverviewState o, int window, int x, int y) => window >= 0 ? "a window" : o.Strip.Hit(x, y) switch
+    {
+        { Kind: TileKind.Desktop } t => $"desktop {Desktops.IndexOf(t.Desktop) + 1}",
+        { Kind: TileKind.NewLane } => "New lane",
+        { } => "a +",
+        null => "nothing",
+    };
 
     // Closes a desktop; its windows go to the one next to it, as when Windows closes a desktop.
     void CloseDesktop(OverviewState o, Guid desktop)
@@ -704,7 +773,12 @@ sealed partial class Engine
     {
         if (code >= 0 && wParam == (IntPtr)WM_KEYDOWN && Marshal.ReadInt32(lParam) == 0x1B)
         {
-            if (_overview is { Drag: { } d } o)
+            if (_overview is { MenuFor: not null } om)
+            {
+                om.MenuFor = null;
+                _redraw = true;
+            }
+            else if (_overview is { Drag: { } d } o)
             {
                 // Esc while dragging puts the thing back.
                 d.Target = null;
@@ -809,6 +883,8 @@ sealed partial class Engine
             var b = DraggedWindowBox(o, dw);
             page.Thumbs[dw.Window].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H);
         }
+
+        if (o.MenuFor != null && o.Idle) DrawMenu(o);
 
         if (o.Zoom is { } zoom && Picture(zoom.Target) is { } target)
         {

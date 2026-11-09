@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using Lanes.Core;
 using Vortice.Direct2D1;
+using Vortice.DirectWrite;
 using static Lanes.Native;
 
 namespace Lanes;
@@ -21,6 +22,7 @@ sealed partial class Engine : IGestureSink
     Thread? _thread;
     MessageWindow _msg = null!;
     Overlay _overlay = null!;
+    MapWindow _map = null!;
     Gfx _gfx = null!;
     Touchpad _touchpad = null!;
     readonly Dictionary<IntPtr, GestureRecognizer> _recognizers = new();
@@ -91,6 +93,7 @@ sealed partial class Engine : IGestureSink
         {
             _msg = new MessageWindow(this);
             _overlay = new Overlay();
+            _map = new MapWindow();
             _overlay.PickArea();
             _picturesFor = _overlay.Area;
             _gfx = new Gfx();
@@ -99,11 +102,14 @@ sealed partial class Engine : IGestureSink
             _overlay.LeftDown += OnLeftDown;
             _overlay.LeftUp += OnLeftUp;
             _overlay.MiddleUp += OnMiddleUp;
+            _overlay.RightUp += OnRightUp;
             _touchpad = new Touchpad(OnFrame);
             _touchpad.Register(_msg.Handle);
             if (Desktops.Load())
             {
                 Desktops.Pin(_overlay.Handle);
+                Desktops.Pin(_map.Handle);
+                WindowsPill.Repair();
                 Desktops.Listen(_msg.Handle, WM_DESKTOP_CHANGED);
                 SetUpLanes();
                 Ready = true;
@@ -137,7 +143,8 @@ sealed partial class Engine : IGestureSink
                 }
                 else
                 {
-                    MessageLoop.Wait(200);
+                    // Faster while Lanes' pill is fading after a switch.
+                    MessageLoop.Wait(_map.Shown ? 15u : 200u);
                     if (!MessageLoop.Pump()) break;
                     Tick();
                     Idle();
@@ -150,6 +157,8 @@ sealed partial class Engine : IGestureSink
             }
         }
         _overlay.Hide();
+        _map.Hide();
+        WindowsPill.Restore();
     }
 
     bool Animating => _switch != null || _overview is { } o && (o.Tracking || o.Spring != null || o.Zoom != null || o.Swipe != null || o.Moving) || _redraw;
@@ -171,6 +180,9 @@ sealed partial class Engine : IGestureSink
         if (_switch != null) StepSwitch(now);
         if (_overview != null) StepOverview(now);
         if (_retakeAt > 0 && now >= _retakeAt) Retake();
+        if (_map.Shown && _switch == null) StepLingeringPill(now);
+        // Windows' pill is given back a while after the last switch, once its time would be over.
+        if (WindowsPill.Hidden && _switch == null && now - _lastSwitchAt > 3) WindowsPill.Restore();
     }
 
     // When Lanes itself changed what is on this desktop while the overview is up (a window moved
@@ -223,6 +235,7 @@ sealed partial class Engine : IGestureSink
             _switch = null;
             CloseOverviewNow();
             _overlay.Hide();
+            _map.Hide();
             _ignoring = false;
         }
         catch { }
@@ -321,13 +334,46 @@ sealed partial class Engine : IGestureSink
 
     void Remember(Guid desktop, Pixels pixels)
     {
-        if (_snapshots.TryGetValue(desktop, out var old) && old != pixels) old.Dispose();
+        if (_snapshots.TryGetValue(desktop, out var old) && old != pixels)
+        {
+            CoverPill(pixels, old);
+            old.Dispose();
+        }
         _snapshots[desktop] = pixels;
         if (_bitmaps.Remove(desktop, out var bmp)) bmp.Dispose();
         if (_tilePictures.Remove(desktop, out var tile)) tile.Dispose();
         var fg = GetForegroundWindow();
         if (fg != IntPtr.Zero && Desktops.OnCurrent(fg)) _appOf[desktop] = AppWindows.AppName(fg);
         _fullScreen[desktop] = FullScreenInFront(pixels.Width, pixels.Height);
+    }
+
+    // A picture taken within two seconds of a switch can have Windows' "Desktop N" pill in it
+    // (after a switch with the keyboard, or when Lanes could not keep it away), and the copy
+    // would ride on the desktop through the next swipe. Its place is filled from the picture
+    // this desktop had before, blended in at the edges.
+    void CoverPill(Pixels fresh, Pixels old)
+    {
+        if (Now - _lastSwitchAt > 2.3 || old.Width != fresh.Width || old.Height != fresh.Height) return;
+        var mi = PointerMonitor();
+        if (mi.Monitor.Width != fresh.Width || mi.Monitor.Height != fresh.Height) return;
+        float s = _overlay.Scale, edge = 10 * s;
+        var font = _gfx.Font(14 * s, FontWeight.Normal, centred: true, family: "Segoe UI Variable Text");
+        float pw = Math.Max(_gfx.TextWidth(WindowsName(_current), font) + 69 * s, 160 * s), ph = 48 * s;
+        float cx = (mi.Work.Left + mi.Work.Right) / 2f - mi.Monitor.Left, bottom = mi.Work.Bottom - mi.Monitor.Top - 13 * s;
+        int l = Math.Max(0, (int)(cx - pw / 2 - edge)), r = Math.Min(fresh.Width, (int)(cx + pw / 2 + edge));
+        int t = Math.Max(0, (int)(bottom - ph - edge)), b = Math.Min(fresh.Height, (int)(bottom + edge));
+        unsafe
+        {
+            byte* to = (byte*)fresh.Data, from = (byte*)old.Data;
+            for (int y = t; y < b; y++)
+                for (int x = l; x < r; x++)
+                {
+                    float d = Math.Min(Math.Min(x - l, r - 1 - x), Math.Min(y - t, b - 1 - y));
+                    float k = Math.Clamp(d / edge, 0, 1);
+                    long i = ((long)y * fresh.Width + x) * 4;
+                    for (int c = 0; c < 4; c++) to[i + c] = (byte)(to[i + c] + (from[i + c] - to[i + c]) * k);
+                }
+        }
     }
 
     // A window in front that covers the whole monitor (a video, a game, a browser in full
