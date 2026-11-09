@@ -394,29 +394,52 @@ sealed partial class Engine
         return x >= r.Left && x < r.Right && y >= r.Top && y < r.Bottom;
     }
 
-    // The taskbar lifted over a full-screen window, and that window.
-    (IntPtr Bar, IntPtr Over)? _lifted;
+    // The taskbar lifted over a full-screen window, that window, and whether the window was put
+    // just under the taskbar instead (Explorer may keep the taskbar itself where it is).
+    (IntPtr Bar, IntPtr Over, bool Lowered)? _lifted;
 
     void LiftTaskbar(bool up)
     {
+        const uint keep = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
         if (up)
         {
             if (TaskbarWindow() is not IntPtr bar) return;
-            if (_lifted == null) Log.Write("taskbar lifted over the full-screen window");
-            _lifted = (bar, _lifted?.Over ?? GetForegroundWindow());
-            SetWindowPos(bar, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            var over = _lifted?.Over ?? GetForegroundWindow();
+            bool lowered = _lifted?.Lowered ?? false;
+            if (!lowered) SetWindowPos(bar, HWND_TOPMOST, 0, 0, 0, 0, keep);
+            if (!InFront(bar, over))
+            {
+                SetWindowPos(over, bar, 0, 0, 0, 0, keep);
+                lowered = true;
+            }
+            if (_lifted == null) Log.Write($"taskbar lifted over the full-screen window{(lowered ? " (the window put under it)" : "")}: {(InFront(bar, over) ? "in front of it" : "STILL UNDER IT")}");
+            _lifted = (bar, over, lowered);
             // The overlay stays over it, but where the hole is.
             _overlay.Place();
         }
-        else if (_lifted is var (bar, over))
+        else if (_lifted is var (bar, over, lowered))
         {
             _lifted = null;
             // Back under the window, unless another has come to the front since (the taskbar was
             // used, or Windows switched desktops): Windows then puts the taskbar where it goes.
-            if (GetForegroundWindow() == over) SetWindowPos(bar, over, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-            Log.Write("taskbar back under the full-screen window");
+            if (GetForegroundWindow() == over)
+            {
+                if (lowered) SetWindowPos(over, IntPtr.Zero /* HWND_TOP */, 0, 0, 0, 0, keep);
+                else SetWindowPos(bar, over, 0, 0, 0, 0, keep);
+            }
+            Log.Write($"taskbar back under the full-screen window: {(InFront(bar, over) ? "STILL IN FRONT OF IT" : "under it")}");
         }
     }
+
+    // Whether window `a` is in front of window `b`.
+    static bool InFront(IntPtr a, IntPtr b)
+    {
+        for (IntPtr h = GetWindow(b, 3 /* GW_HWNDPREV */); h != IntPtr.Zero; h = GetWindow(h, 3))
+            if (h == a) return true;
+        return false;
+    }
+
+    [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr hwnd, uint cmd);
 
     // ---------- two fingers over another lane ----------
 

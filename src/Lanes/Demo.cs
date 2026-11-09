@@ -346,7 +346,7 @@ static class Demo
         var b = screen.Bounds; var w = screen.WorkingArea;
         var bar = w.Bottom < b.Bottom ? Rectangle.FromLTRB(b.Left, w.Bottom, b.Right, b.Bottom) : Rectangle.FromLTRB(b.Left, b.Top, b.Right, w.Top);
         var at = new Native.POINT { X = bar.Left + 8, Y = (bar.Top + bar.Bottom) / 2 };
-        string Under() => Native.ClassName(Native.GetAncestor(WindowFromPoint(at), 2));
+        string Under() => Native.GetAncestor(WindowFromPoint(at), 2) is var h ? $"{Native.ClassName(h)} \"{Native.WindowText(h)}\"" : "";
         Log.Write($"full screen: under the taskbar's place before the overview: {Under()}");
         await Swipe(engine, 3, 0, -1, 0.28 * 0.7);
         await Task.Delay(1500);
