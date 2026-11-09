@@ -895,7 +895,7 @@ sealed partial class Engine
     // app's windows sooner. Not over the overview, which a click on a button turns into the map.
     AppRef? _hover;
     double _hoverAt;
-    const double HoverTime = 0.3, OtherAppTime = 0.15;
+    const double HoverTime = 0.3, OtherAppTime = 0.25;
 
     void Hovered(AppRef? app)
     {
@@ -1048,11 +1048,11 @@ sealed partial class Engine
             ShowApp(b.App);
             return;
         }
+        // Gone at once, as Windows' own pop-ups go: the press must find the taskbar under it.
         ReleaseCapture();
-        _overlay.Hole(TaskbarOn(_overlay.Monitor));
+        CloseOverviewNow();
         TaskbarButtons.Press(new POINT { X = x + _overlay.Area.Left, Y = y + _overlay.Area.Top });
         Log.Write("map closed: a press on the taskbar went on to it");
-        CloseOverview();
     }
 
     void OnMouseMove(int x, int y)

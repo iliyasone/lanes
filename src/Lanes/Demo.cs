@@ -300,6 +300,24 @@ static class Demo
         await Task.Delay(2500);
         engine.Snapshot();
         await Task.Delay(400);
+        // Another app's window, in colour, on the Agent desktop: the map shows it in grey, as all
+        // but the app's own windows.
+        string? chrome = new[] { @"C:\Program Files\Google\Chrome\Application\chrome.exe", @"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" }.FirstOrDefault(File.Exists);
+        System.Diagnostics.Process? browser = null;
+        if (chrome != null)
+        {
+            string profile = Path.Combine(Path.GetTempPath(), "lanes-demo-colours");
+            browser = System.Diagnostics.Process.Start(chrome, $"--user-data-dir=\"{profile}\" --no-first-run --no-default-browser-check --window-position=760,120 --window-size=1000,640 \"data:text/html,<title>Colours</title><body style='margin:0;background:linear-gradient(90deg,%23e84a5f,%23ffb400,%2337b24d,%233b82f6)'>\"");
+            IntPtr colours = IntPtr.Zero;
+            for (int i = 0; i < 100 && colours == IntPtr.Zero; i++)
+            {
+                await Task.Delay(100);
+                colours = TopWindows().FirstOrDefault(h => Native.ClassName(h) == "Chrome_WidgetWin_1" && Native.WindowText(h).StartsWith("Colours"));
+            }
+            if (colours != IntPtr.Zero) Desktops.MoveWindow(colours, agent);
+            await Task.Delay(2500);
+            Log.Write($"app map: a Chrome window {(colours == IntPtr.Zero ? "NOT FOUND" : "moved to the Agent desktop")}");
+        }
         var mine = Application.OpenForms.Cast<Form>().First(f => f.Text == "Editor").Handle;
         var button = engine.Buttons == null ? null : await engine.Buttons.ButtonOf(mine);
         if (button == null) { Log.Write("app map: no taskbar button found for the test windows"); return; }
@@ -335,7 +353,9 @@ static class Demo
         var (_, windows) = await engine.OverviewLayout();
         var other = windows.FirstOrDefault(w => w.Title == "Agent").Rect;
         if (other.Width == 0) return;
+        // Up off the taskbar first, as a hand goes, then over to the window.
         _pointer = new Point(cx, cy);
+        await Glide(new Point(cx, cy - 120));
         await Glide(new Point(other.Left + other.Width / 2, other.Top + other.Height / 2));
         await Task.Delay(600);
         engine.Screenshot(Path.Combine(dir, "18a-app-overview-pointer.png"));
@@ -357,6 +377,7 @@ static class Demo
         engine.Screenshot(Path.Combine(dir, "18d-taskbar-click-through-map.png"));
         SendKeys.SendWait("{ESC}");
         await Task.Delay(800);
+        try { browser?.Kill(entireProcessTree: true); } catch { }
     }
 
     // The top-level windows shown now.
