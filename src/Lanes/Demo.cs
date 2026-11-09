@@ -364,21 +364,26 @@ static class Demo
         await Task.Delay(2500);
         Log.Write($"after a click on Agent there: {(Desktops.Current == agent ? "on its desktop" : "on another desktop")}, \"{Native.WindowText(GetForegroundWindow())}\" in front");
         engine.Screenshot(Path.Combine(dir, "18b-after-app-click.png"));
-        // Back over the button, then a click on the taskbar's clock through the map: the map goes
-        // and the clock's calendar comes up.
+        // Back over the button, then a click on File Explorer's button through the map: the map
+        // goes and File Explorer opens.
         Desktops.Switch(editor);
         await Task.Delay(2000);
         await Rest();
         var start = TopWindows();
-        var clock = new Native.POINT { X = Screen.PrimaryScreen!.Bounds.Right - 70, Y = cy };
-        SetCursorPos(clock.X, clock.Y);
+        var files = Enumerable.Range(0, Screen.PrimaryScreen!.Bounds.Width / 8)
+            .Select(i => new Native.POINT { X = i * 8, Y = cy })
+            .FirstOrDefault(p => engine.Buttons!.Under(p) is { } b && (b.App.Id + b.App.Name).Contains("Explorer", StringComparison.OrdinalIgnoreCase));
+        if (files.X == 0) Log.Write("app map: no File Explorer button on the taskbar");
+        SetCursorPos(files.X, files.Y);
         mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
         await Task.Delay(150);
-        Log.Write($"app map: pressed on the clock through the map; under the pointer now: {Describe(Native.GetAncestor(WindowFromPoint(clock), 2))}");
+        Log.Write($"app map: pressed on File Explorer's button through the map; under the pointer now: {Describe(Native.GetAncestor(WindowFromPoint(files), 2))}");
         mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
-        await Task.Delay(1500);
-        Log.Write($"app map: after the click: the map is {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STILL OPEN")}; new windows: {string.Join(", ", TopWindows().Where(w => !start.Contains(w)).Take(5).Select(Describe))}");
+        await Task.Delay(2500);
+        var opened = TopWindows().Where(w => !start.Contains(w)).ToList();
+        Log.Write($"app map: after the click: the map is {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STILL OPEN")}; new windows: {string.Join(", ", opened.Take(5).Select(Describe))}");
         engine.Screenshot(Path.Combine(dir, "18d-taskbar-click-through-map.png"));
+        foreach (var w in opened.Where(w => Native.ClassName(w) == "CabinetWClass")) PostMessage(w, 0x10, IntPtr.Zero, IntPtr.Zero);
         SendKeys.SendWait("{ESC}");
         await Task.Delay(800);
         try { browser?.Kill(entireProcessTree: true); } catch { }
