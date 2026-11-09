@@ -36,13 +36,13 @@ sealed class DesktopShadows : IDisposable
     readonly Dictionary<IntPtr, double> _arriving = new();
     readonly Stopwatch _clock = Stopwatch.StartNew();
     readonly Thread _thread;
-    readonly uint _pid = (uint)Environment.ProcessId;
     readonly List<IntPtr> _hooks = new();
     WinEventProc? _proc;
     IntPtr _instance;
     uint _threadId;
     double _dueAt;
     long _lastError;
+    bool _started;
 
     double Now => _clock.Elapsed.TotalSeconds;
 
@@ -219,6 +219,11 @@ sealed class DesktopShadows : IDisposable
             Follow(sh);
         }
         foreach (var h in _arriving.Where(a => now - a.Value > 1).Select(a => a.Key).ToList()) _arriving.Remove(h);
+        if (!_started)
+        {
+            _started = true;
+            Log.Write($"window shadows: {_shades.Count} windows");
+        }
         foreach (var h in want)
             if (_shades.TryGetValue(h, out var sh) && sh.Shown && !Stacked(sh)) Stack(sh, show: false);
     }
@@ -227,8 +232,6 @@ sealed class DesktopShadows : IDisposable
     {
         if (!IsWindowVisible(h) || IsIconic(h) || IsZoomed(h) || Cloaked(h)) return false;
         if ((GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64() & WS_EX_TOPMOST) != 0) return false;
-        GetWindowThreadProcessId(h, out uint pid);
-        if (pid == _pid) return false;
         return AppWindows.IsApp(h, out var f, out _) && !FillsMonitor(h, f);
     }
 
