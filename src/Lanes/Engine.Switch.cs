@@ -228,7 +228,8 @@ sealed partial class Engine
         if (FullScreen(s.From)) covers.Add((o, o + page));
         Guid? otherDesktop = o < 0 ? s.Next : o > 0 ? s.Previous : null;
         if (other != null && FullScreen(otherDesktop)) covers.Add((otherAt, otherAt + page));
-        PlaceTaskbar(horizontal, covers);
+        // The shadow comes as the desktops move, not at once at the first touch.
+        PlaceTaskbar(horizontal, covers, Math.Clamp(Math.Abs(o) / (0.3f * page), 0, 1));
         g.End();
         // Lanes' pill stays put over both desktops, in its own window above the live pictures.
         float hud = HudAlpha(s);

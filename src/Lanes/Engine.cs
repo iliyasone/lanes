@@ -614,9 +614,9 @@ sealed partial class Engine : IGestureSink
 
     // Thin slices of the taskbar near the edge of a full-screen window lying over it, each over
     // black and a little less faded than the last: the window's shadow, falling on the taskbar
-    // from as far as `ShadeReach` away, darkest at the edge.
+    // from as far as `ShadeReach` away, darkest at the edge (`Shade` is how dark, 0..1).
     readonly List<Thumbnail> _taskbarShade = new();
-    static readonly float[] Shade = Enumerable.Range(0, 12).Select(i => 1 - 0.62f * MathF.Pow(1 - (i + 0.5f) / 12, 2)).ToArray();
+    static readonly float[] Shade = Enumerable.Range(0, 12).Select(i => 0.5f * MathF.Pow(1 - (i + 0.5f) / 12, 2)).ToArray();
     const float ShadeReach = 64;
 
     void PlaceTaskbar(float opacity)
@@ -629,7 +629,8 @@ sealed partial class Engine : IGestureSink
 
     // The taskbar without the parts under full-screen windows, which lie over it as on the
     // screen: `covers` are the spans those windows take now (along x when `horizontal`, else y).
-    void PlaceTaskbar(bool horizontal, IEnumerable<(float From, float To)> covers)
+    // Their shadow on it grows with `depth` (0..1), how far the swipe has gone.
+    void PlaceTaskbar(bool horizontal, IEnumerable<(float From, float To)> covers, float depth)
     {
         if (_taskbar is not { } t) return;
         var f = Frame(t.Window);
@@ -673,7 +674,7 @@ sealed partial class Engine : IGestureSink
                 if (horizontal) _gfx.Rect(s0, y, s1 - s0, f.Height, 0xFF000000);
                 else _gfx.Rect(x, s0, f.Width, s1 - s0, 0xFF000000);
             }
-            _taskbarShade[i].PlaceCut(x, y, f.Width, f.Height, s0, s1, horizontal, Shade[i]);
+            _taskbarShade[i].PlaceCut(x, y, f.Width, f.Height, s0, s1, horizontal, 1 - Shade[i] * depth);
         }
     }
 
