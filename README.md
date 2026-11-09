@@ -114,7 +114,7 @@ are on, in the middle: what is above and below you reads at a glance.
 
 **Click an app on the taskbar** that has two windows or more (on any desktops), and in place
 of Windows' row of previews a map of your desktops drops down over the screen, which stays as
-it is, a little darker. The lanes are as in the overview, about twice as big; each desktop
+it is, darker. The lanes are as in the overview, about twice as big; each desktop
 shows the app's windows, live, exactly where they are on it, and every other window as a pale
 shape, so you see where each one is. Desktops without the app's windows are dimmed. The
 pointer over a window lifts it a little and outlines it, and its desktop's name gives way to

@@ -1332,7 +1332,7 @@ sealed partial class Engine
         float s = _overlay.Scale;
         if (alpha < 0.01f) return;
         // The window they belong to, outlined (just outside it: its picture covers what is under it).
-        g.RoundRectOutline((float)b.X - 2 * s, (float)b.Y - 2 * s, (float)b.W + 4 * s, (float)b.H + 4 * s, 4 * s, A(0xB3FFFFFFu, alpha), 2 * s);
+        g.RoundRectOutline((float)b.X - 2 * s, (float)b.Y - 2 * s, (float)b.W + 4 * s, (float)b.H + 4 * s, 4 * s, A(0xE6FFFFFFu, alpha), 2 * s);
         var buttons = WindowButtons(b);
         for (int k = 0; k < buttons.Length; k++)
         {
@@ -1723,7 +1723,7 @@ sealed partial class Engine
         var page = o.Page;
         g.Begin(Gfx.Color(0xFF000000));
         if (Picture(_current) is { } screen) g.Image(screen, 0, 0, g.Width, g.Height);
-        g.Rect(0, 0, g.Width, g.Height, A(0xFF000000, 0.55f * pc));
+        g.Rect(0, 0, g.Width, g.Height, A(0xFF000000, 0.6f * pc));
         float sp = Math.Clamp(p / 0.6f, 0, 1), sq = 1 - MathF.Pow(1 - sp, 3);
         float slide = MathF.Round((1 - sq) * -(float)(o.Strip.Bottom + 2 * s));
         if (keep > 0.002f) DrawStrip(o, keep, slide, 0, null, p);

@@ -49,13 +49,14 @@ public sealed class Strip
     // top and take about a third of the `room` below that (by default the whole height), as the
     // Spaces bar does in Mission Control, leaving the rest to the windows. `open` is counted as
     // DropFor counts it, without the `dragged` desktop. For one app's map (`app`) the rows are
-    // all there is: tiles about twice as big, up to six tenths of the room, and no "+" or bin.
+    // all there is: tiles about twice as big, up to six tenths of the room, rows further apart
+    // (a name under each tile), and no "+" or bin.
     public static Strip Layout(LaneMap map, Guid current, double width, double height, double s, bool dragging = false,
         double offset = 0, double? room = null, bool bin = false, DeskDrop? open = null, Guid dragged = default, bool app = false)
     {
         var strip = new Strip();
         int n = map.Lanes.Count;
-        double gap = 16 * s, rowGap = 14 * s, pad = 18 * s, top = offset + pad, slot = 32 * s, caption = 20 * s, plus = 32 * s;
+        double gap = 16 * s, rowGap = (app ? 26 : 14) * s, pad = 18 * s, top = offset + pad, slot = 32 * s, caption = 20 * s, plus = 32 * s;
         double tw = app ? Math.Min(300 * s, width / 6.5) : 160 * s, aspect = height / width, limit = (room ?? height) * (app ? 0.6 : 0.36);
         double Height(double w) => n * (w * aspect + caption) + (n - 1) * rowGap;
         while (tw > 96 * s && pad + Height(tw) > limit) tw -= 4 * s;
