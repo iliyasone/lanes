@@ -250,6 +250,43 @@ sealed class Gfx : IDisposable
         }
     }
 
+    // A window's shadow, cheap at any size: the shadow of a small rounded square, drawn once
+    // (PrepareShadow, outside a frame), is cut into corners and sides that are stretched along
+    // the window's edges; the middle, under the window, is left out.
+    readonly Dictionary<(int R, int Blur), ID2D1Bitmap1> _shadows = new();
+
+    public void PrepareShadow(float r, float blur)
+    {
+        var key = ((int)MathF.Ceiling(r), (int)MathF.Ceiling(blur));
+        if (_shadows.ContainsKey(key)) return;
+        int c = 2 * key.Item1 + 4, t = c + key.Item2;
+        var format = new D2DPixelFormat(Format.B8G8R8A8_UNorm, D2DAlpha.Premultiplied);
+        var bmp = Dc.CreateBitmap(new SizeI(t, t), IntPtr.Zero, 0, new BitmapProperties1(format, 96, 96, BitmapOptions.Target));
+        Dc.Target = bmp;
+        Dc.BeginDraw();
+        Dc.Clear(new Color4(0, 0, 0, 0));
+        Shadow(key.Item2 / 2f, key.Item2 / 2f, c, c, key.Item1, key.Item2, 0, 1);
+        Dc.EndDraw();
+        Dc.Target = _target;
+        _shadows[key] = bmp;
+    }
+
+    public void WindowShadow(float x, float y, float w, float h, float r, float blur, float dy, float alpha)
+    {
+        var key = ((int)MathF.Ceiling(r), (int)MathF.Ceiling(blur));
+        if (!_shadows.TryGetValue(key, out var bmp)) return;
+        float t = bmp.PixelSize.Width, k = key.Item2 / 2f + key.Item1 + 1;
+        float x0 = x - key.Item2 / 2f, x1 = x + w + key.Item2 / 2f, y0 = y + dy - key.Item2 / 2f, y1 = y + h + dy + key.Item2 / 2f;
+        if (x1 - x0 < 2 * k || y1 - y0 < 2 * k) return;
+        float[] sx = { 0, k, t - k, t }, sy = sx, dx = { x0, x0 + k, x1 - k, x1 }, dyy = { y0, y0 + k, y1 - k, y1 };
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+            {
+                if (i == 1 && j == 1) continue;
+                Image(bmp, dx[i], dyy[j], dx[i + 1] - dx[i], dyy[j + 1] - dyy[j], new Vortice.RawRectF(sx[i], sy[j], sx[i + 1], sy[j + 1]), alpha);
+            }
+    }
+
     public void Image(ID2D1Bitmap1 bmp, float x, float y, float w, float h, float opacity = 1) =>
         Dc.DrawBitmap(bmp, new Vortice.RawRectF(x, y, x + w, y + h), opacity, Vortice.Direct2D1.InterpolationMode.Linear, null, null);
 

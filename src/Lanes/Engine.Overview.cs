@@ -154,6 +154,8 @@ sealed partial class Engine
         o.Page = NewPage(_current, o.Strip);
         _overview = o;
         _gfx.Frames.Clear();
+        _gfx.PrepareShadow(8 * _overlay.Scale, 28 * _overlay.Scale);
+        _gfx.PrepareShadow(8 * _overlay.Scale, 46 * _overlay.Scale);
         _overlay.Place();
         RenderOverview();
         _overlay.Show();
@@ -1131,7 +1133,7 @@ sealed partial class Engine
         float sa = keep * Math.Clamp(p, 0, 1);
         void Lift(Box b, bool high)
         {
-            if (sa > 0.002f) g.Shadow((float)b.X, (float)b.Y, (float)b.W, (float)b.H, 8 * s, (high ? 46 : 28) * s, (high ? 16 : 10) * s, (high ? 0.9f : 0.6f) * sa);
+            if (sa > 0.002f) g.WindowShadow((float)b.X, (float)b.Y, (float)b.W, (float)b.H, 8 * s, (high ? 46 : 28) * s, (high ? 16 : 10) * s, (high ? 0.9f : 0.6f) * sa);
         }
         // Going up or down, windows pass under the band.
         float clip = vertical ? band : float.NegativeInfinity;
