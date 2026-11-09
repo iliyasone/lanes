@@ -323,9 +323,13 @@ sealed partial class Engine
         return all.SelectMany(d => d.Value.Where(w => AppIds.Is(w.Handle, app)).Select(w => (w, d.Key))).ToList();
     }
 
-    // Each window's place in the spread.
-    void Lay(Page page, Strip strip) =>
-        page.To = Spread.Layout(page.From, SpreadArea(strip), 40 * _overlay.Scale).ToList();
+    // Each window's place in the spread; one app's windows leave room for the title under each.
+    void Lay(Page page, Strip strip)
+    {
+        var area = SpreadArea(strip);
+        if (page.Map) area = area with { H = area.H - 28 * _overlay.Scale };
+        page.To = Spread.Layout(page.From, area, (page.Map ? 56 : 40) * _overlay.Scale).ToList();
+    }
 
     // A page, and the taskbar's place among the window pictures: over them, as on the screen,
     // except on a desktop with a full-screen window, which lies over the taskbar; opening the
