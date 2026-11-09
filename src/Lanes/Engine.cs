@@ -349,6 +349,7 @@ sealed partial class Engine : IGestureSink
         {
             _lastWindowCheck = now;
             CheckOtherDesktops();
+            ForgetClosed();
         }
         if (now - _lastSnapshot < 5000) return;
         _lastSnapshot = now;
@@ -357,6 +358,48 @@ sealed partial class Engine : IGestureSink
         Remember(_current, Capture.ScreenWithout(PointerMonitor().Monitor, _overlay.Handle, out _));
         Warm();
         TakeDesk();
+    }
+
+    // A desktop that was closed leaves its pictures behind (some 50 MB on a 1080p screen):
+    // they go. A wallpaper replaced by a newer one may still be read by a picture being made on
+    // the thread pool, so it goes a few seconds later.
+    readonly List<(Pixels Pixels, long At)> _retired = new();
+
+    void Retire(Pixels p)
+    {
+        lock (_retired) _retired.Add((p, Environment.TickCount64));
+    }
+
+    void ForgetClosed()
+    {
+        var all = Desktops.All().ToHashSet();
+        // Windows did not answer (Explorer restarting): nothing is known to be closed.
+        if (all.Count == 0) return;
+        List<Guid> walls;
+        lock (_wallpaperPixels) walls = _wallpaperPixels.Keys.ToList();
+        foreach (var d in _snapshots.Keys.Concat(walls).Concat(_deskPixels.Keys).Concat(_bitmaps.Keys)
+            .Concat(_tilePictures.Keys).Concat(_wallpapers.Keys).Concat(_deskBitmaps.Keys).Where(d => !all.Contains(d)).Distinct().ToList())
+        {
+            if (_snapshots.Remove(d, out var snap)) snap.Dispose();
+            if (_bitmaps.Remove(d, out var bmp)) bmp.Dispose();
+            if (_tilePictures.Remove(d, out var tile)) tile.Dispose();
+            if (_wallpapers.Remove(d, out var w)) { w.Sharp.Dispose(); w.Blurred.Dispose(); }
+            if (_deskPixels.Remove(d, out var desk)) desk.Pixels.Dispose();
+            if (_deskBitmaps.Remove(d, out var db)) db.Dispose();
+            lock (_wallpaperPixels)
+                if (_wallpaperPixels.Remove(d, out var wp)) { Retire(wp.Sharp); Retire(wp.Blurred); }
+            _windowsSeen.Remove(d);
+            _fullScreen.Remove(d);
+            _appOf.Remove(d);
+            Log.Write("pictures of a closed desktop let go");
+        }
+        lock (_retired)
+            for (int i = _retired.Count - 1; i >= 0; i--)
+                if (Environment.TickCount64 - _retired[i].At > 10000)
+                {
+                    _retired[i].Pixels.Dispose();
+                    _retired.RemoveAt(i);
+                }
     }
 
     // The desktop under the windows (wallpaper and icons), taken now and then on the thread pool:
@@ -453,8 +496,19 @@ sealed partial class Engine : IGestureSink
             if (_tilePictures.Remove(d, out var tile)) tile.Dispose();
             _fullScreen[d] = full;
             if (front != null) _appOf[d] = front.App; else _appOf.Remove(d);
+            Repicture(d);
             Log.Write($"picture of desktop {Desktops.IndexOf(d) + 1} {(start != null ? $"took in {string.Join(", ", came!.Select(w => w.App))}" : "made again from its windows")}");
         }));
+    }
+
+    // A desktop's picture changed while the overview is open: its tile shows the new one.
+    void Repicture(Guid d)
+    {
+        if (_overview?.Strip.Tiles.FirstOrDefault(x => x.Kind == TileKind.Desktop && x.Desktop == d) is { } tile)
+        {
+            TilePicture(d, (float)tile.Rect.W, (float)tile.Rect.H);
+            _redraw = true;
+        }
     }
 
     // The wallpaper of a desktop on this monitor, made now if Lanes has none of that size yet.
@@ -506,12 +560,17 @@ sealed partial class Engine : IGestureSink
         if (_bitmaps.Remove(desktop, out var bmp)) bmp.Dispose();
         if (_tilePictures.Remove(desktop, out var tile)) tile.Dispose();
         // The app in front names the desktop in the overview; with only the desktop itself or the
-        // taskbar in front it goes by its number.
+        // taskbar in front it goes by its number. Something over the apps that is not one of them
+        // (the Snipping Tool's veil, a menu) names nothing: the app under it does.
         var fg = GetForegroundWindow();
         if (fg == IntPtr.Zero || ClassName(fg) is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "XamlExplorerHostIslandWindow")
             _appOf.Remove(desktop);
         else if (fg != _overlay.Handle && Desktops.OnCurrent(fg))
-            _appOf[desktop] = ClassName(fg) == "CabinetWClass" ? "File Explorer" : AppWindows.AppName(fg);
+        {
+            var front = AppWindows.OnScreen(PointerMonitor().Monitor, _overlay.Handle).LastOrDefault();
+            if (front == null) _appOf.Remove(desktop);
+            else _appOf[desktop] = ClassName(front.Handle) == "CabinetWClass" ? "File Explorer" : front.App;
+        }
         _fullScreen[desktop] = FullScreenInFront(pixels.Width, pixels.Height);
         var monitor = PointerMonitor().Monitor;
         if (!_fullScreen[desktop] && monitor.Width == pixels.Width && monitor.Height == pixels.Height && TaskbarOn(monitor) is RECT bar)
@@ -723,7 +782,11 @@ sealed partial class Engine : IGestureSink
         string? path = Capture.WallpaperPath(desktop);
         using var full = Capture.Wallpaper(path, monitor.Width, monitor.Height);
         var px = (Capture.FromBitmap(full), Capture.Blurred(full), path);
-        lock (_wallpaperPixels) _wallpaperPixels[desktop] = px;
+        lock (_wallpaperPixels)
+        {
+            if (_wallpaperPixels.Remove(desktop, out var old)) { Retire(old.Sharp); Retire(old.Blurred); }
+            _wallpaperPixels[desktop] = px;
+        }
         return px;
     }
 
@@ -755,6 +818,7 @@ sealed partial class Engine : IGestureSink
                         if (_tilePictures.Remove(d, out var tile)) tile.Dispose();
                         _fullScreen[d] = full;
                         if (front != null) _appOf.TryAdd(d, front.App);
+                        Repicture(d);
                     });
                 }
                 catch (Exception e) { Log.Write($"picture of desktop {Desktops.IndexOf(d) + 1}: {e.Message}"); }

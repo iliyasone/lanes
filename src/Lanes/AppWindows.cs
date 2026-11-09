@@ -70,26 +70,28 @@ static class AppWindows
         return new AppWindow(h, f, title, AppName(h));
     }
 
-    // "Telegram Desktop", "Google Chrome": the product name of the window's program.
+    // "Telegram Desktop", "Google Chrome": the product name of the window's program. Store apps
+    // (Settings, Photos) all run in one host program, "Application Frame Host": their windows go
+    // by their titles, which are the apps' names.
     public static string AppName(IntPtr hwnd)
     {
         GetWindowThreadProcessId(hwnd, out uint pid);
-        if (AppNames.TryGetValue(pid, out var name)) return name;
+        if (AppNames.TryGetValue(pid, out var name)) return name.Length > 0 ? name : WindowText(hwnd);
         name = "";
         try
         {
             using var p = Process.GetProcessById((int)pid);
             string? path = p.MainModule?.FileName;
-            if (path != null)
+            if (path != null && !Path.GetFileNameWithoutExtension(path).Equals("ApplicationFrameHost", StringComparison.OrdinalIgnoreCase))
             {
                 var info = FileVersionInfo.GetVersionInfo(path);
                 name = !string.IsNullOrWhiteSpace(info.FileDescription) ? info.FileDescription! : Path.GetFileNameWithoutExtension(path);
             }
-            else name = p.ProcessName;
+            else if (path == null) name = p.ProcessName;
         }
         catch { }
-        if (name.Length == 0 || name == "ApplicationFrameHost") name = WindowText(hwnd);
-        return AppNames[pid] = name;
+        AppNames[pid] = name;
+        return name.Length > 0 ? name : WindowText(hwnd);
     }
 
     // Brings a window to the front; Windows allows it because Lanes just got the click.

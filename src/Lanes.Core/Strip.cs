@@ -1,10 +1,11 @@
 namespace Lanes.Core;
 
-public enum TileKind { Desktop, Plus, NewLane, Trash }
+public enum TileKind { Desktop, Plus, NewLane, Trash, NewDesk }
 
 // One box in the overview's lane rows: a desktop, the "+" (Lane is your lane, which it adds
-// to), a slot for a new lane (Lane is where the new lane would be inserted), or the bin a
-// dragged desktop is dropped in to close it.
+// to), a slot for a new lane (Lane is where the new lane would be inserted), a slot for a new
+// desktop at one end of a lane (Index is where in the lane it would go), or the bin a dragged
+// desktop is dropped in to close it.
 public sealed record StripTile(TileKind Kind, int Lane, int Index, Guid Desktop, Box Rect);
 
 // Where a dragged desktop would go: into a lane at an index (counted without the dragged
@@ -17,7 +18,8 @@ public readonly record struct DeskDrop(int Lane, int Index, bool NewLane);
 // run off the screen's sides when long. One "+" in the top right corner adds a desktop at the
 // end of your lane; a bin just below it (`bin`: there is more than one desktop) takes a
 // desktop dropped on it and closes it. While something is dragged, a slot for a new lane opens
-// above the rows and one below them.
+// above the rows and one below them; while a window is dragged, each row also has a slot for a
+// new desktop at its left end and one at its right end.
 public sealed class Strip
 {
     public List<StripTile> Tiles { get; } = new();
@@ -37,7 +39,7 @@ public sealed class Strip
     // Tiles have the screen's shape (`width` x `height`); the rows start `offset` down from its
     // top and take about a third of the `room` below that (by default the whole height), as the
     // Spaces bar does in Mission Control, leaving the rest to the windows.
-    public static Strip Layout(LaneMap map, Guid current, double width, double height, double s, bool dragging = false, double offset = 0, double? room = null, bool bin = false)
+    public static Strip Layout(LaneMap map, Guid current, double width, double height, double s, bool dragging = false, double offset = 0, double? room = null, bool bin = false, bool window = false)
     {
         var strip = new Strip();
         int n = map.Lanes.Count;
@@ -62,8 +64,10 @@ public sealed class Strip
             int c = Math.Max(0, lane.Desktops.IndexOf(anchor));
             double y = y0 + l * (rowH + rowGap), x = column - c * (tw + gap);
             strip._rowY.Add(y);
+            if (dragging && window) strip.Tiles.Add(new StripTile(TileKind.NewDesk, l, 0, Guid.Empty, new Box(x - gap - slotH, y, slotH, th)));
             for (int i = 0; i < lane.Desktops.Count; i++, x += tw + gap)
                 strip.Tiles.Add(new StripTile(TileKind.Desktop, l, i, lane.Desktops[i], new Box(x, y, tw, th)));
+            if (dragging && window) strip.Tiles.Add(new StripTile(TileKind.NewDesk, l, lane.Desktops.Count, Guid.Empty, new Box(x, y, slotH, th)));
         }
         double rowsEnd = y0 + n * (rowH + rowGap) - rowGap;
         if (dragging) strip.Tiles.Add(new StripTile(TileKind.NewLane, n, 0, Guid.Empty, new Box(column, rowsEnd + rowGap, tw, slotH)));

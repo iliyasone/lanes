@@ -65,7 +65,8 @@ static class Desktops
     public static List<Guid> All()
     {
         int n = GetDesktopCount();
-        var ids = new List<Guid>(n);
+        // -1 while Explorer restarts.
+        var ids = new List<Guid>(Math.Max(0, n));
         for (int i = 0; i < n; i++) ids.Add(GetDesktopIdByNumber(i));
         if (ids.Count > 0 && ids.All(g => g != Guid.Empty) && ids.Distinct().Count() == ids.Count) return ids;
         return FromRegistry();

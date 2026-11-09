@@ -44,15 +44,39 @@ public class SpreadTests
     }
 
     [Fact]
-    public void WindowsAlreadyApartKeepTheirPlacesAndSize()
+    public void SmallWindowsAreNotEnlarged()
     {
         var wins = new[] { new Box(100, 200, 400, 300), new Box(900, 120, 400, 300) };
         var r = Spread.Layout(wins, new Box(0, 0, 1600, 900));
         Assert.Equal(400, r[0].W, 3);
         Assert.Equal(400, r[1].W, 3);
-        // Same distance apart as on the screen.
-        Assert.Equal(800, r[1].X - r[0].X, 3);
-        Assert.Equal(-80, r[1].Y - r[0].Y, 3);
+        Apart(r);
+    }
+
+    [Fact]
+    public void WindowsTakeTheRoomTheyHaveAndKeepTheirOrder()
+    {
+        // Two browsers and a narrow chat window, as on a busy desktop.
+        var wins = new[] { new Box(80, 60, 1400, 820), new Box(1480, 20, 420, 1000), new Box(500, 240, 1300, 780) };
+        var area = new Box(72, 300, 1776, 700);
+        var r = Spread.Layout(wins, area);
+        Inside(r, area);
+        Apart(r);
+        Assert.True(r[0].W > 700, $"{r[0]}");
+        // In one row, left to right as their middles are on the screen.
+        Assert.True(r[0].X < r[2].X && r[2].X < r[1].X, string.Join(" ", r));
+    }
+
+    [Fact]
+    public void ManySmallWindowsGoInRows()
+    {
+        var wins = Enumerable.Range(0, 6).Select(i => new Box(100 + i * 20, 100 + i * 20, 900, 600)).ToArray();
+        var area = new Box(0, 0, 1800, 800);
+        var r = Spread.Layout(wins, area);
+        Inside(r, area);
+        Apart(r);
+        Assert.True(r.Select(b => Math.Round(b.Y)).Distinct().Count() >= 2);
+        Assert.True(r[0].W > 400, $"{r[0]}");
     }
 
     [Fact]

@@ -43,6 +43,21 @@ public class StripTests
     }
 
     [Fact]
+    public void ADraggedWindowGetsANewDesktopSlotAtEachEndOfEachRow()
+    {
+        var m = Sample();
+        Assert.DoesNotContain(Strip.Layout(m, B, 1920, 1080, 1, dragging: true).Tiles, t => t.Kind == TileKind.NewDesk);
+        var s = Strip.Layout(m, B, 1920, 1080, 1, dragging: true, window: true);
+        var middle = s.Tiles.Where(t => t.Kind == TileKind.NewDesk && t.Lane == 1).OrderBy(t => t.Rect.X).ToList();
+        Assert.Equal(2 * m.Lanes.Count, s.Tiles.Count(t => t.Kind == TileKind.NewDesk));
+        Assert.Equal(2, middle.Count);
+        Assert.Equal(0, middle[0].Index);
+        Assert.Equal(m.Lanes[1].Desktops.Count, middle[1].Index);
+        Assert.True(middle[0].Rect.Right < Of(s, A).X && middle[1].Rect.X > Of(s, C).Right);
+        Assert.Equal(middle[0], s.Hit(middle[0].Rect.X + 2, middle[0].Rect.Y + 2));
+    }
+
+    [Fact]
     public void OnePlusInTheTopRightCornerAddsToYourLane()
     {
         var s = Strip.Layout(Sample(), B, 1920, 1080, 1);

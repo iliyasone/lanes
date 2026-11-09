@@ -53,7 +53,9 @@ If you change that setting later, Lanes leaves it as you set it.
 ### The overview
 
 A three-finger swipe up opens it, again following the fingers: the windows travel from
-where they are into a spread, and the lanes come down above them. Each lane's row is shifted
+where they are into rows, as large as the room below the lanes allows (never larger than
+they are), each about where it was, and the lanes come down above them. Each window casts a
+soft shadow, which deepens under the pointer. Each lane's row is shifted
 so that the desktop a swipe up or down would land on sits in one column with the desktop you
 are on, in the middle: what is above and below you reads at a glance.
 
@@ -65,8 +67,10 @@ are on, in the middle: what is above and below you reads at a glance.
 - **Drag a desktop** to another place in its lane or into another lane; a blue bar shows
   where it goes. While you drag, a **New lane** opens above the lanes too, and dropping on
   either one makes a lane for it. A lane left without desktops goes away.
-- **Drag a window** onto a desktop to move it there, onto a lane's **+** to move it to a new
-  desktop at the end of that lane, or onto **New lane** for a new lane with it.
+- **Drag a window** onto a desktop to move it there (it shrinks into that desktop's
+  picture), onto the place that opens at either end of a lane's row for a new desktop there,
+  onto **+** for a new desktop at the end of your lane, or onto **New lane** for a new lane
+  with it. A window let go anywhere else springs back to its place.
 - **Middle-click** a window to close it, or a desktop to close the desktop (its windows go to
   the desktop next to it), as in Task View.
 - **Click a window** to bring it to the front and close the overview; **click a desktop** to
