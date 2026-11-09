@@ -364,34 +364,30 @@ static class Demo
         await Task.Delay(2500);
         Log.Write($"after a click on Agent there: {(Desktops.Current == agent ? "on its desktop" : "on another desktop")}, \"{Native.WindowText(GetForegroundWindow())}\" in front");
         engine.Screenshot(Path.Combine(dir, "18b-after-app-click.png"));
-        // Back over the button, then a click on File Explorer's button through the map: the map
-        // goes and File Explorer opens.
+        // A click on Chrome's button through the map: the map goes and Chrome comes to the front,
+        // as it does with no map (tried first, to compare).
         Desktops.Switch(editor);
         await Task.Delay(2000);
-        var files = Enumerable.Range(0, Screen.PrimaryScreen!.Bounds.Width / 8)
+        var chromeAt = Enumerable.Range(0, Screen.PrimaryScreen!.Bounds.Width / 8)
             .Select(i => new Native.POINT { X = i * 8, Y = cy })
-            .FirstOrDefault(p => engine.Buttons!.Under(p) is { } b && (b.App.Id + b.App.Name).Contains("Explorer", StringComparison.OrdinalIgnoreCase));
-        if (files.X == 0) Log.Write("app map: no File Explorer button on the taskbar");
-        // The same click with no map first, to know what it does here.
-        var start = TopWindows();
-        Click(files.X, files.Y);
-        await Task.Delay(2500);
-        var opened = TopWindows().Where(w => !start.Contains(w)).ToList();
-        Log.Write($"app map: a click on File Explorer's button with no map opens: {string.Join(", ", opened.Take(5).Select(Describe))}");
-        foreach (var w in opened.Where(w => Native.ClassName(w) == "CabinetWClass")) PostMessage(w, 0x10, IntPtr.Zero, IntPtr.Zero);
-        await Task.Delay(1000);
+            .FirstOrDefault(p => engine.Buttons!.Under(p) is { } b && b.App.Name.Contains("Chrome") && b.Windows == 1);
+        if (chromeAt.X == 0) Log.Write("app map: no button of Chrome with one window on the taskbar");
+        var editorForm = Application.OpenForms.Cast<Form>().First(f => f.Text == "Editor");
+        editorForm.Activate();
+        await Task.Delay(800);
+        Click(chromeAt.X, chromeAt.Y);
+        await Task.Delay(1500);
+        Log.Write($"app map: with no map, a click on Chrome's button puts in front: {Describe(GetForegroundWindow())}");
+        editorForm.Activate();
+        await Task.Delay(800);
         await Rest();
-        start = TopWindows();
-        SetCursorPos(files.X, files.Y);
+        SetCursorPos(chromeAt.X, chromeAt.Y);
         mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
         await Task.Delay(150);
-        Log.Write($"app map: pressed on File Explorer's button through the map; under the pointer now: {Describe(Native.GetAncestor(WindowFromPoint(files), 2))}");
         mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
-        await Task.Delay(2500);
-        opened = TopWindows().Where(w => !start.Contains(w)).ToList();
-        Log.Write($"app map: after the click: the map is {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STILL OPEN")}; new windows: {string.Join(", ", opened.Take(5).Select(Describe))}");
+        await Task.Delay(1500);
+        Log.Write($"app map: after a click on Chrome's button through it, the map is {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STILL OPEN")}; in front: {Describe(GetForegroundWindow())}");
         engine.Screenshot(Path.Combine(dir, "18d-taskbar-click-through-map.png"));
-        foreach (var w in opened.Where(w => Native.ClassName(w) == "CabinetWClass")) PostMessage(w, 0x10, IntPtr.Zero, IntPtr.Zero);
         SendKeys.SendWait("{ESC}");
         await Task.Delay(800);
         try { browser?.Kill(entireProcessTree: true); } catch { }
