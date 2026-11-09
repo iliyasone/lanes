@@ -612,10 +612,12 @@ sealed partial class Engine : IGestureSink
         _taskbarShade.Clear();
     }
 
-    // Thin slices of the taskbar next to a full-screen window lying over it, each over black and
-    // a little less faded than the last: the window's shadow on the taskbar.
+    // Thin slices of the taskbar near the edge of a full-screen window lying over it, each over
+    // black and a little less faded than the last: the window's shadow, falling on the taskbar
+    // from as far as `ShadeReach` away, darkest at the edge.
     readonly List<Thumbnail> _taskbarShade = new();
-    static readonly float[] Shade = { 0.42f, 0.56f, 0.68f, 0.79f, 0.88f, 0.95f };
+    static readonly float[] Shade = Enumerable.Range(0, 12).Select(i => 1 - 0.62f * MathF.Pow(1 - (i + 0.5f) / 12, 2)).ToArray();
+    const float ShadeReach = 64;
 
     void PlaceTaskbar(float opacity)
     {
@@ -633,14 +635,14 @@ sealed partial class Engine : IGestureSink
         var f = Frame(t.Window);
         float x = f.Left - _overlay.Area.Left, y = f.Top - _overlay.Area.Top;
         float a0 = horizontal ? x : y, a1 = a0 + (horizontal ? f.Width : f.Height);
-        bool shadeStart = false, shadeEnd = false;
-        foreach (var (c0, c1) in covers)
+        var all = covers.ToList();
+        foreach (var (c0, c1) in all)
         {
             if (c1 <= a0 || c0 >= a1) continue;
-            if (c0 <= a0) { a0 = Math.Max(a0, c1); shadeStart = true; }
-            else if (c1 >= a1) { a1 = Math.Min(a1, c0); shadeEnd = true; }
-            else if (c0 - a0 >= a1 - c1) { a1 = c0; shadeEnd = true; }
-            else { a0 = c1; shadeStart = true; }
+            if (c0 <= a0) a0 = Math.Max(a0, c1);
+            else if (c1 >= a1) a1 = Math.Min(a1, c0);
+            else if (c0 - a0 >= a1 - c1) a1 = c0;
+            else a0 = c1;
         }
         // Wholly under full-screen windows.
         if (a1 - a0 < 0.5f)
@@ -649,14 +651,23 @@ sealed partial class Engine : IGestureSink
             foreach (var slice in _taskbarShade) slice.Place(0, 0, 1, 1, 0);
             return;
         }
-        float step = 2.5f * _overlay.Scale, width = Shade.Length * step;
-        float m0 = shadeStart ? a0 + width : a0, m1 = shadeEnd && !shadeStart ? a1 - width : a1;
+        // The nearest window edge that faces the visible part, and which way its shadow falls.
+        float reach = ShadeReach * _overlay.Scale, edge = 0;
+        int way = 0;
+        foreach (var (c0, c1) in all)
+        {
+            if (c1 <= a0 + 0.5f && a0 - c1 < reach && (way == 0 || a0 - c1 < Math.Abs(edge - (way > 0 ? a0 : a1)))) { edge = c1; way = 1; }
+            else if (c0 >= a1 - 0.5f && c0 - a1 < reach && (way == 0 || c0 - a1 < Math.Abs(edge - (way > 0 ? a0 : a1)))) { edge = c0; way = -1; }
+        }
+        float m0 = way > 0 ? Math.Max(a0, edge + reach) : a0, m1 = way < 0 ? Math.Min(a1, edge - reach) : a1;
         t.PlaceCut(x, y, f.Width, f.Height, m0, Math.Max(m0, m1), horizontal);
+        float step = reach / _taskbarShade.Count;
         for (int i = 0; i < _taskbarShade.Count; i++)
         {
-            if (!(shadeStart || shadeEnd)) { _taskbarShade[i].Place(0, 0, 1, 1, 0); continue; }
-            float s0 = shadeStart ? a0 + i * step : a1 - (i + 1) * step, s1 = s0 + step;
-            s0 = Math.Clamp(s0, a0, a1); s1 = Math.Clamp(s1, a0, a1);
+            if (way == 0) { _taskbarShade[i].Place(0, 0, 1, 1, 0); continue; }
+            float s0 = way > 0 ? edge + i * step : edge - (i + 1) * step, s1 = s0 + step;
+            s0 = Math.Clamp(s0, a0, a1);
+            s1 = Math.Clamp(s1, a0, a1);
             if (s1 - s0 >= 0.5f)
             {
                 if (horizontal) _gfx.Rect(s0, y, s1 - s0, f.Height, 0xFF000000);
@@ -791,6 +802,9 @@ sealed partial class Engine : IGestureSink
         _lastReport[device] = Environment.TickCount64;
         _fingersOn.TryGetValue(device, out int before);
         _fingersOn[device] = fingers;
+        // Fingers on the pad over a desktop in the overview are there to slide its lane, not to
+        // look at it: no waiting to show its windows.
+        if (fingers >= 2 && _overview != null) _overview.Dwell = null;
         // Three or more fingers just landed: take a picture of the screen now, while they
         // travel far enough for the swipe to be recognised.
         if (fingers >= 3 && before < 3 && !_overlay.Shown && _switch == null)

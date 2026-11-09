@@ -91,40 +91,12 @@ static class Desktops
 
     public static int IndexOf(Guid desktop) => All().IndexOf(desktop);
 
-    // Switches at once, without Windows' own slide. Asked by Lanes, which is not the program in
-    // front, Windows may not let the new desktop's window come forward, and flashes its taskbar
-    // button instead, as if it wanted attention. So the taskbar is brought to the front first and
-    // gives the focus away after, as the VirtualDesktop tool does: Windows then hands it to the
-    // new desktop's window itself.
+    // Switches at once, without Windows' own slide.
     public static bool Switch(Guid desktop)
     {
         int i = IndexOf(desktop);
-        if (i < 0) return false;
-        IntPtr bar = FindWindow("Shell_TrayWnd", null);
-        if (bar != IntPtr.Zero) Forward(bar);
-        bool ok = GoToDesktopNumber(i) >= 0;
-        if (bar != IntPtr.Zero) ShowWindow(bar, 6 /* SW_MINIMIZE */);
-        return ok;
+        return i >= 0 && GoToDesktopNumber(i) >= 0;
     }
-
-    static void Forward(IntPtr hwnd)
-    {
-        uint target = GetWindowThreadProcessId(hwnd, out _), front = GetWindowThreadProcessId(GetForegroundWindow(), out _), me = GetCurrentThreadId();
-        if (target == 0 || front == 0 || front == me) return;
-        AttachThreadInput(target, me, true);
-        AttachThreadInput(front, me, true);
-        SetForegroundWindow(hwnd);
-        AttachThreadInput(front, me, false);
-        AttachThreadInput(target, me, false);
-    }
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string? name);
-    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
-    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")] static extern bool AttachThreadInput(uint from, uint to, bool attach);
-    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hwnd);
-    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hwnd, int cmd);
-    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
 
     // The name Windows shows for the desktop; empty goes back to "Desktop N".
     public static void Rename(Guid desktop, string name)

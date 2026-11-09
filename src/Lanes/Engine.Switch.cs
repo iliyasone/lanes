@@ -120,14 +120,15 @@ sealed partial class Engine
         Log.Write($"switch {axis} from {Title(_current)}; previous {(s.Previous is Guid a ? Title(a) : "-")}, next {(s.Next is Guid b ? Title(b) : "-")}; {CaptureNote}");
     }
 
-    // A desktop beside you: its own picture (wallpaper and icons) under live pictures of its
-    // windows, which keep drawing there (see Awake); Lanes knows them from its look at the other
-    // desktops each second. Else the picture from when you were last there.
+    // A desktop beside you: live pictures of its windows, which keep drawing there (see Awake),
+    // over the picture Lanes has of that desktop, with the same windows in the same places, its
+    // icons and the windows' shadows (should a live picture miss a frame, the window is still
+    // there). Lanes knows the windows from its look at the other desktops each second.
     ID2D1Bitmap1? Beside(Guid desktop, List<(AppWindow, Thumbnail)> live)
     {
-        if (!_windowsSeen.TryGetValue(desktop, out var seen)) return Picture(desktop);
-        foreach (var w in seen) live.Add((w, new Thumbnail(_overlay.Handle, w.Handle)));
-        return DeskPicture(desktop);
+        if (_windowsSeen.TryGetValue(desktop, out var seen))
+            foreach (var w in seen) live.Add((w, new Thumbnail(_overlay.Handle, w.Handle)));
+        return Picture(desktop);
     }
 
     double Along(double dx, double dy, Axis axis)
@@ -152,10 +153,6 @@ sealed partial class Engine
         s.Spring = new Spring(s.Offset, speed, target, _tuning.SwitchResponse);
         s.SpringStart = Now;
         Log.Write($"release at {s.Offset / s.Track.Page:0.00} screen, {speed / s.Track.Page:0.00} screens/s: {outcome}{Reported()}");
-        // Windows switches as soon as the landing is known: the desktop's window takes the focus
-        // and redraws as the focused one (its title bar, a page under the pointer) while it is
-        // still coming in, not as it lands.
-        SwitchNow(s);
     }
 
     void StepSwitch(double now)
@@ -166,6 +163,11 @@ sealed partial class Engine
         s.Offset = s.Spring.At(t);
         bool done = s.Spring.Done(t);
         if (done) s.Offset = s.Spring.Target;
+        // Windows switches as the picture comes to rest, a few pixels short of it (switching while
+        // the desktops still move would make Windows' own work show in the motion): its pill then
+        // comes up where Lanes' copy has arrived, and Windows has a moment to draw the new desktop
+        // before the picture goes.
+        if (!s.Switched && Math.Abs(s.Offset - s.Spring.Target) < 0.004 * s.Track.Page) SwitchNow(s);
         if (!done) return;
         if (s.Switched && (now - s.SwitchedAt < 0.2 || !_switching.IsCompleted)) return;
         RenderSwitch();

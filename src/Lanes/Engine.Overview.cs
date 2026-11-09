@@ -154,14 +154,15 @@ sealed partial class Engine
         o.Page = NewPage(_current, o.Strip);
         _overview = o;
         _gfx.Frames.Clear();
-        _gfx.PrepareShadow(8 * _overlay.Scale, 28 * _overlay.Scale);
-        _gfx.PrepareShadow(8 * _overlay.Scale, 46 * _overlay.Scale);
+        _gfx.PrepareShadow(8 * _overlay.Scale, ShadowBlur * _overlay.Scale);
         _overlay.Place();
         RenderOverview();
         _overlay.Show();
         _map.Hide();
         Log.Write($"overview: {o.Page.Windows.Count} windows; {CaptureNote}");
     }
+
+    const float ShadowBlur = 36;
 
     static string Key(StripTile t) => t.Kind switch
     {
@@ -175,7 +176,7 @@ sealed partial class Engine
     {
         double spreadTop = o.Strip?.SpreadTop ?? double.NaN;
         o.Strip = Strip.Layout(_lanes, o.Going ?? _current, _gfx.Width, _gfx.Height, _overlay.Scale, dragging: o.Drag != null,
-            offset: WorkTop, room: WorkBottom - WorkTop, bin: o.Drag is { Window: < 0 } && Desktops.Count > 1);
+            offset: WorkTop, room: WorkBottom - WorkTop, bin: Desktops.Count > 1);
         if (snap) o.TileShown.Clear();
         foreach (var t in o.Strip.Tiles) o.TileShown.TryAdd(Key(t), t.Rect);
         foreach (var t in o.Strip.Tiles)
@@ -447,6 +448,8 @@ sealed partial class Engine
         _overview = null;
         _overlay.Hole(null);
         _overlay.Hide();
+        // A window may have been moved to another desktop: the next swipe shows it there.
+        CheckOtherDesktops();
         DropTaskbar();
         Hook(false);
         Log.Write($"overview drawn: {_gfx.FrameStats()}");
@@ -703,7 +706,7 @@ sealed partial class Engine
     void Aim(OverviewState o, Drag d)
     {
         var t = o.Strip.Hit(d.X, d.Y);
-        if (d.Window >= 0) d.Target = t is { Kind: TileKind.Desktop } && t.Desktop == o.Page.Desktop ? null : t;
+        if (d.Window >= 0) d.Target = t is { Kind: TileKind.Desktop } && t.Desktop == o.Page.Desktop || t is { Kind: TileKind.Trash } ? null : t;
         else if (t is { Kind: TileKind.Trash })
         {
             // Over the bin: let go, and the desktop closes.
@@ -774,6 +777,8 @@ sealed partial class Engine
                 // Its windows are shown already (the pointer passed over it): the overview closes there.
                 if (t.Desktop == o.Page.Desktop) CloseOverview();
                 else GoTo(o, t.Desktop);
+                return;
+            case { Kind: TileKind.Trash }:
                 return;
             case { Kind: TileKind.Plus } t:
                 if (NewDesktop(t.Lane, false) is Guid made)
@@ -1129,11 +1134,11 @@ sealed partial class Engine
         if (a > 0.002f) DrawStrip(o, a, dy, f, toward, p);
 
         // The windows of this desktop, and of the one a four-finger swipe brings in, each with
-        // its shadow, a deeper one under the pointer. No names: the windows speak for themselves.
+        // its shadow all round, a little deeper below. No names: the windows speak for themselves.
         float sa = keep * Math.Clamp(p, 0, 1);
-        void Lift(Box b, bool high)
+        void Lift(Box b)
         {
-            if (sa > 0.002f) g.WindowShadow((float)b.X, (float)b.Y, (float)b.W, (float)b.H, 8 * s, (high ? 46 : 28) * s, (high ? 16 : 10) * s, (high ? 0.9f : 0.6f) * sa);
+            if (sa > 0.002f) g.WindowShadow((float)b.X, (float)b.Y, (float)b.W, (float)b.H, 8 * s, ShadowBlur * s, 4 * s, 0.55f * sa);
         }
         // Going up or down, windows pass under the band.
         float clip = vertical ? band : float.NegativeInfinity;
@@ -1142,7 +1147,7 @@ sealed partial class Engine
         {
             if (o.Drag?.Window == i) continue;
             var b = boxes[i] with { X = boxes[i].X + ox, Y = boxes[i].Y + oy };
-            Lift(b, o.Hover == i && o.Idle);
+            Lift(b);
             page.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep, clip);
         }
         foreach (var unused in new[] { sw?.PreviousPage, sw?.NextPage })
@@ -1152,7 +1157,7 @@ sealed partial class Engine
             for (int i = 0; i < other.Thumbs.Count; i++)
             {
                 var b = other.To[i] with { X = other.To[i].X + ox + (vertical ? 0 : step), Y = other.To[i].Y + oy + (vertical ? step : 0) };
-                Lift(b, false);
+                Lift(b);
                 other.Thumbs[i].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H, keep, clip);
             }
         }
