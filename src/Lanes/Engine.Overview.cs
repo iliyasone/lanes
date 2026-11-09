@@ -84,6 +84,7 @@ sealed partial class Engine
     {
         // The desktop itself (wallpaper and icons), live: it fades as the overview opens.
         public Thumbnail? Desk;
+        public bool TaskbarFades;
         public Page Page = null!;
         public Strip Strip = null!;
         public readonly Dictionary<string, Box> TileShown = new();
@@ -129,12 +130,15 @@ sealed partial class Engine
         _current = Desktops.Current;
         Remember(_current, TakeTouchCapture());
         RefreshTitles();
-        UseArea(FullScreen(_current));
+        UseArea();
         var o = new OverviewState { Tracking = true, Track = new OverviewTrack(0, _tuning), LastStep = Now };
         Relayout(o, snap: true);
         // Registered first, so the windows are drawn over it.
         if (FindWindow("Progman", null) is var progman && progman != IntPtr.Zero) o.Desk = new Thumbnail(_overlay.Handle, progman, _overlay.Area);
         o.Page = MakePage(_current, o.Strip);
+        RaiseTaskbar();
+        // Behind a full-screen window the taskbar was hidden: it comes in as the overview opens.
+        o.TaskbarFades = FullScreen(_current);
         _overview = o;
         _gfx.Frames.Clear();
         _overlay.Place();
@@ -150,7 +154,8 @@ sealed partial class Engine
     void Relayout(OverviewState o, bool snap = false)
     {
         double spreadTop = o.Strip?.SpreadTop ?? double.NaN;
-        o.Strip = Strip.Layout(_lanes, o.Going ?? _current, _gfx.Width, _gfx.Height, _overlay.Scale, dragging: o.Drag != null);
+        o.Strip = Strip.Layout(_lanes, o.Going ?? _current, _gfx.Width, _gfx.Height, _overlay.Scale, dragging: o.Drag != null,
+            offset: WorkTop, room: WorkBottom - WorkTop);
         if (snap) o.TileShown.Clear();
         foreach (var t in o.Strip.Tiles) o.TileShown.TryAdd(Key(t), t.Rect);
         foreach (var t in o.Strip.Tiles)
@@ -163,7 +168,7 @@ sealed partial class Engine
     Box SpreadArea(Strip strip)
     {
         float s = _overlay.Scale;
-        return new Box(72 * s, strip.SpreadTop, _gfx.Width - 144 * s, _gfx.Height - strip.SpreadTop - 20 * s);
+        return new Box(72 * s, strip.SpreadTop, _gfx.Width - 144 * s, WorkBottom - strip.SpreadTop - 20 * s);
     }
 
     Page MakePage(Guid desktop, Strip strip)
@@ -292,6 +297,7 @@ sealed partial class Engine
         if (o == null) return;
         _overview = null;
         _overlay.Hide();
+        DropTaskbar();
         Hook(false);
         Log.Write($"overview drawn: {_gfx.FrameStats()}");
         o.Desk?.Dispose();
@@ -401,6 +407,7 @@ sealed partial class Engine
         sw.Track = new SwipeTrack(page, sw.Previous != null, sw.Next != null, _tuning);
         if (sw.Previous is Guid p) sw.PreviousPage = MakePage(p, o.Strip);
         if (sw.Next is Guid n) sw.NextPage = MakePage(n, o.Strip);
+        RaiseTaskbar();
         o.Swipe = sw;
         _gfx.Frames.Clear();
         Log.Write($"overview swipe {axis}: previous {(sw.Previous is Guid a ? Title(a) : "-")}, next {(sw.Next is Guid b ? Title(b) : "-")}; windows ready in {Environment.TickCount64 - t0} ms");
@@ -671,13 +678,15 @@ sealed partial class Engine
         Log.Write($"overview right click: {HitName(o, w, x, y)}");
         if (w >= 0 || o.Strip.Hit(x, y) is not { Kind: TileKind.Desktop } t || Desktops.Count <= 1) return;
         float s = _overlay.Scale;
-        double mw = _gfx.TextWidth(CloseDesktopText, PillFont()) + 40 * s, mh = 40 * s;
+        double mw = _gfx.TextWidth(CloseDesktopText, MenuFont()) + 40 * s, mh = 40 * s;
         o.MenuFor = t.Desktop;
         o.MenuBox = new Box(Math.Clamp(x, 0, _gfx.Width - mw), Math.Clamp(y, 0, _gfx.Height - mh), mw, mh);
         o.MenuHover = Inside(o.MenuBox, x, y);
     }
 
     const string CloseDesktopText = "Close desktop";
+
+    IDWriteTextFormat MenuFont() => _gfx.Font(14 * _overlay.Scale, FontWeight.Normal, family: "Segoe UI Variable Text");
 
     void DrawMenu(OverviewState o)
     {
@@ -688,7 +697,7 @@ sealed partial class Engine
         g.RoundRect(x, y, w, h, 8 * s, 0xFF2C2C2C);
         g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, 8 * s, 0x26FFFFFF, 1);
         if (o.MenuHover) g.RoundRect(x + 4 * s, y + 4 * s, w - 8 * s, h - 8 * s, 4 * s, 0x1AFFFFFF);
-        g.Text(CloseDesktopText, PillFont(), x + 20 * s, y, w - 40 * s, h, 0xFFFFFFFF);
+        g.Text(CloseDesktopText, MenuFont(), x + 20 * s, y, w - 40 * s, h, 0xFFFFFFFF);
     }
 
     static bool Inside(Box b, int x, int y) => x >= b.X && x < b.Right && y >= b.Y && y < b.Bottom;
@@ -724,6 +733,7 @@ sealed partial class Engine
             var old = o.Page;
             o.Page = MakePage(_current, o.Strip);
             old.Dispose();
+            RaiseTaskbar();
         }
         o.HoverTile = null;
         _redraw = true;
@@ -885,6 +895,9 @@ sealed partial class Engine
         }
 
         if (o.MenuFor != null && o.Idle) DrawMenu(o);
+        float bar = o.TaskbarFades ? Math.Clamp(p / 0.35f, 0, 1) : 1;
+        if (o.Zoom is { } zz && FullScreen(zz.Target)) bar *= 1 - Math.Clamp(z, 0, 1);
+        PlaceTaskbar(bar);
 
         if (o.Zoom is { } zoom && Picture(zoom.Target) is { } target)
         {

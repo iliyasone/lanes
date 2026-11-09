@@ -16,7 +16,7 @@ sealed class Overlay : NativeWindow
     public event Action<int, int>? RightUp;
 
     // The monitor the overlay is on, its work area (without the taskbar), and the part the
-    // overlay covers: the work area, or the whole monitor when a full-screen window is involved.
+    // overlay covers: the whole monitor (Lanes shows the taskbar in it, see Engine.RaiseTaskbar).
     public RECT Monitor { get; private set; }
     public RECT Work { get; private set; }
     public RECT Area { get; private set; }
@@ -50,13 +50,13 @@ sealed class Overlay : NativeWindow
         DwmSetWindowAttribute(Handle, 13 /* DWMWA_CLOAK */, ref v, 4);
     }
 
-    // The monitor the pointer is on; the overlay covers its work area, or all of it.
-    public RECT PickArea(bool full = false)
+    // The monitor the pointer is on.
+    public RECT PickArea()
     {
         var mi = PointerMonitor();
         Monitor = mi.Monitor;
         Work = mi.Work;
-        Area = full ? mi.Monitor : mi.Work;
+        Area = mi.Monitor;
         return Area;
     }
 
@@ -172,6 +172,8 @@ sealed class MapWindow : NativeWindow
         Cloak(false);
         Shown = true;
     }
+
+    public void Move(int x, int y) => SetWindowPos(Handle, IntPtr.Zero, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 
     public void Fade(float alpha)
     {

@@ -7,8 +7,9 @@ namespace Lanes;
 // Windows shows a "Desktop N" pill for about two seconds after every switch, above every other
 // window. During its own swipes Lanes shows its pill in that place instead, so Windows' one is
 // kept away: Explorer draws it in the same window as the volume and brightness pop-ups, and that
-// window shows nothing while it is minimized (as HideVolumeOSD and FluentFlyout do it). The
-// window is put back a few seconds after the last switch, so those pop-ups work between swipes.
+// window shows nothing while it is minimized (as HideVolumeOSD and FluentFlyout do it). Half a
+// second after a switch, once Windows has asked for its pill, the window is put back hidden, so
+// the pill never shows and the volume and brightness pop-ups work again.
 static class WindowsPill
 {
     static IntPtr _window;
@@ -80,6 +81,14 @@ static class WindowsPill
         ShowWindow(w, SW_HIDE);
         SetWindowLongPtr(w, GWL_EXSTYLE, (IntPtr)(_exStyle & ~(long)(WS_EX_LAYERED | WS_EX_TRANSPARENT)));
         SetWindowPos(w, IntPtr.Zero, _rect.Left, _rect.Top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
+    // Where Explorer's pop-up is while it shows one (the volume, the brightness), or null.
+    public static RECT? ShownAt()
+    {
+        var w = _window;
+        if (Hidden || w == IntPtr.Zero || !IsWindowVisible(w) || IsIconic(w) || !GetWindowRect(w, out var r)) return null;
+        return r;
     }
 
     // After Lanes stopped without putting it back (a crash): Explorer's window is still minimized.

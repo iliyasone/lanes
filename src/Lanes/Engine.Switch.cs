@@ -9,6 +9,8 @@ sealed partial class Engine
 {
     sealed class SwitchState
     {
+        // The live taskbar is shown over the desktops (none of them has a full-screen window).
+        public bool TaskbarStays;
         public Axis Axis;
         public SwipeTrack Track = null!;
         public Guid From;
@@ -23,8 +25,6 @@ sealed partial class Engine
         // Windows has switched to where the picture is landing.
         public bool Switched;
         public double SwitchedAt;
-        // The map columns this swipe can need, around the blue cell (see PillFor).
-        public int Lo, Hi;
     }
 
     // When Windows last switched desktops; its "Desktop N" pill stays about two seconds.
@@ -58,20 +58,22 @@ sealed partial class Engine
             Previous = _lanes.Neighbor(_current, axis == Axis.Horizontal ? Direction.Left : Direction.Up),
             Next = _lanes.Neighbor(_current, axis == Axis.Horizontal ? Direction.Right : Direction.Down),
         };
-        if (!_overlay.Shown) UseArea(FullScreen(s.From) || FullScreen(s.Previous) || FullScreen(s.Next));
+        // With a full-screen window on any of the desktops, each desktop's picture brings its own
+        // taskbar, or none; otherwise the live taskbar stays over all of them.
+        s.TaskbarStays = !(FullScreen(s.From) || FullScreen(s.Previous) || FullScreen(s.Next));
+        if (!_overlay.Shown) UseArea();
         // A whole step is a screen plus the gap between screens, so a finished swipe ends exactly in place.
         double page = (axis == Axis.Horizontal ? _gfx.Width : _gfx.Height) + GapDip * _overlay.Scale;
         s.Track = new SwipeTrack(page, s.Previous != null, s.Next != null, _tuning);
         s.FromPicture = from ?? Picture(_current)!;
         s.PreviousPicture = s.Previous is Guid p ? Picture(p) : null;
         s.NextPicture = s.Next is Guid n ? Picture(n) : null;
-        (s.Lo, s.Hi) = MapColumns(s);
         _switch = s;
-        if (!pillUp) _pillShown = null;
         _gfx.Frames.Clear();
         if (!_overlay.Shown)
         {
             _overlay.Place();
+            RaiseTaskbar();
             RenderSwitch();
             _overlay.Show();
             _map.Hide();
@@ -143,8 +145,9 @@ sealed partial class Engine
         SwitchNow(s);
         _switch = null;
         if (keepOverlay) return;
-        if (s.Switched) LingerPill(s);
+        LingerPill(s);
         _overlay.Hide();
+        DropTaskbar();
         if (_lanesChanged) Settings.SaveLanes(_lanes);
         _lanesChanged = false;
         Log.Write($"switch drawn: {_gfx.FrameStats()}{(s.Switched ? $"; Windows switched {(Now - s.SwitchedAt) * 1000:0} ms before the picture went" : "")}");
@@ -164,15 +167,20 @@ sealed partial class Engine
         float otherAt = o < 0 ? o + page + gap : o - page - gap;
         if (other != null) Draw(other, otherAt);
 
-        // Each desktop darkens toward the edge that faces the gap, so the two read as separate sheets.
-        float sh = 24 * scale;
-        if (o < 0) { EdgeShadow(o + page - sh, false); if (other != null) EdgeShadow(otherAt, true); }
-        if (o > 0) { EdgeShadow(o, true); if (other != null) EdgeShadow(otherAt + page - sh, false); }
+        // Side by side, each desktop darkens toward the edge that faces the gap, so the two read
+        // as separate sheets; the darkening goes as the gap reaches the screen's edge, so nothing
+        // is left of it once a desktop is in place. Desktops one above the other go without it.
+        float sh = 24 * scale, dark = 0.35f * Math.Clamp(Math.Min(Math.Abs(o), page + gap - Math.Abs(o)) / (80 * scale), 0, 1);
+        if (horizontal && dark > 0.002f)
+        {
+            if (o < 0) { EdgeShadow(o + page - sh, false); if (other != null) EdgeShadow(otherAt, true); }
+            if (o > 0) { EdgeShadow(o, true); if (other != null) EdgeShadow(otherAt + page - sh, false); }
+        }
 
         // Lanes' pill stays put over both desktops.
-        var pill = Glide(PillFor(s));
         float hud = HudAlpha(s);
-        if (hud > 0.002f) DrawPill(s, pill, hud);
+        if (hud > 0.002f) DrawPill(s, PillFor(), hud);
+        PlaceTaskbar(s.TaskbarStays ? 1 : 0);
         g.End();
 
         void Draw(ID2D1Bitmap1 bmp, float at)
@@ -182,21 +190,11 @@ sealed partial class Engine
         }
 
         // A strip `sh` wide starting at `at`; dark at its start when `darkFirst`, else at its end.
-        void EdgeShadow(float at, bool darkFirst)
-        {
-            if (horizontal) g.Fade(at, 0, sh, h, true, darkFirst, 0.35f);
-            else g.Fade(0, at, w, sh, false, darkFirst, 0.35f);
-        }
+        void EdgeShadow(float at, bool darkFirst) => g.Fade(at, 0, sh, h, true, darkFirst, dark);
     }
 
-    // Lanes' pill comes in quickly as a swipe starts. After a switch it stays (see LingerPill); a
-    // swipe that goes back to where it started takes it away as it settles.
-    float HudAlpha(SwitchState s)
-    {
-        float a = (float)Math.Clamp((Now - s.Start) / 0.12, 0, 1);
-        if (s.Spring == null || s.Outcome != Outcome.Stay) return a;
-        return a * (float)Math.Clamp(1 - (Now - s.SpringStart) / 0.25, 0, 1);
-    }
+    // Lanes' pill comes in quickly as a swipe starts, and stays after it (see LingerPill).
+    float HudAlpha(SwitchState s) => (float)Math.Clamp((Now - s.Start) / 0.12, 0, 1);
 
     // A copy of the pill Windows shows after a switch, in the same place and the same look; the
     // overview shows it as it zooms into a desktop, and Windows' own one comes up over it.
@@ -218,134 +216,98 @@ sealed partial class Engine
     // The bottom of the screen above the taskbar, in the overlay's own coordinates.
     float WorkBottom => _overlay.Work.Bottom - _overlay.Area.Top;
 
-    // Lanes' pill, in the place of Windows' "Desktop N" one: the lanes in miniature, then the
-    // name of the desktop you are on. In the map a blue cell is where you are, your lane is light
-    // grey and the others darker. The pill stays put over the moving desktops and its map follows
-    // the fingers: a sideways swipe slides your lane under the blue cell, one up or down carries
-    // the blue cell to the next lane. The name changes when Windows switches. Should Windows' pill
-    // still come up (Lanes could not find its window), the map goes above it, without the name.
-    sealed record Pill(float X, float Y, float W, float H, float Lo, string Name);
+    // Lanes' pill, in the place of Windows' "Desktop N" one: the lanes in miniature, each lane a
+    // row of its desktops, centred under each other. A blue cell is where you are and your lane
+    // is lighter. The pill keeps its size and place; the blue cell follows the fingers to the
+    // desktop the swipe goes to, and the lighter row goes with it to another lane. Should Windows'
+    // pill still come up (Lanes could not find its window), Lanes' one goes above it.
+    sealed record Pill(float X, float Y, float W, float H);
 
-    const float Cell = 14, CellH = 9, CellGap = 3;
+    const float Cell = 14, CellH = 9, CellGap = 3, PillPad = 12;
 
-    // Which desktop of lane `l` sits under the blue cell's column: the one you are on in your
-    // lane, the one each other lane would take you to.
-    int Anchor(int l, int fromLane, int fromIndex) =>
-        l == fromLane ? fromIndex : Math.Max(0, _lanes.Lanes[l].Desktops.IndexOf(_lanes.CurrentOf(l) ?? Guid.Empty));
-
-    // The map's columns this swipe can use, counted from the blue cell's: every lane as it lies,
-    // and your lane also one step to either side the swipe can take it. Worked out once per swipe,
-    // so the pill keeps its size while the lane slides and nothing is cut off at its ends.
-    (int Lo, int Hi) MapColumns(SwitchState sw)
+    Pill PillFor()
     {
-        if (_lanes.Locate(sw.From) is not var (fromLane, fromIndex)) return (0, 0);
-        int lo = 0, hi = 0;
-        for (int l = 0; l < _lanes.Lanes.Count; l++)
-        {
-            int a = Anchor(l, fromLane, fromIndex), first = -a, last = _lanes.Lanes[l].Desktops.Count - 1 - a;
-            if (l == fromLane && sw.Axis == Axis.Horizontal)
-            {
-                if (sw.Next != null) first--;
-                if (sw.Previous != null) last++;
-            }
-            lo = Math.Min(lo, first);
-            hi = Math.Max(hi, last);
-        }
-        return (lo, hi);
-    }
-
-    float MapHeight(float s) { int n = _lanes.Lanes.Count; return (n * CellH + (n - 1) * CellGap) * s; }
-
-    IDWriteTextFormat PillFont() => _gfx.Font(14 * _overlay.Scale, FontWeight.Normal, family: "Segoe UI Variable Text");
-
-    Pill PillFor(SwitchState sw)
-    {
-        var g = _gfx;
         float s = _overlay.Scale;
-        int cols = sw.Hi - sw.Lo + 1;
-        float mapW = (cols * Cell + (cols - 1) * CellGap) * s, mapH = MapHeight(s);
-        if (!WindowsPill.Hidden)
-        {
-            float pw = mapW + 20 * s, ph = mapH + 20 * s;
-            return new Pill((g.Width - pw) / 2, MathF.Round(WorkBottom - 77 * s - ph), pw, ph, sw.Lo, "");
-        }
-        Guid? to = sw.Outcome == Outcome.Next ? sw.Next : sw.Outcome == Outcome.Previous ? sw.Previous : null;
-        string name = WindowsName(sw.Switched && to is Guid t ? t : sw.From);
-        float w = 16 * s + mapW + 14 * s + g.TextWidth(name, PillFont()) + 20 * s, h = MathF.Max(48 * s, mapH + 18 * s);
-        return new Pill((g.Width - w) / 2, MathF.Round(WorkBottom - 13 * s - h), w, h, sw.Lo, name);
+        int n = _lanes.Lanes.Count, cols = Math.Max(1, _lanes.Lanes.Max(l => l.Desktops.Count));
+        float w = MathF.Round((cols * Cell + (cols - 1) * CellGap + 2 * PillPad) * s);
+        float h = MathF.Round((n * CellH + (n - 1) * CellGap + 2 * PillPad) * s);
+        float bottom = WorkBottom - (WindowsPill.Hidden ? 13 : 77) * s;
+        return new Pill(MathF.Round((_gfx.Width - w) / 2), MathF.Round(bottom - h), w, h);
     }
 
-    // Where the pill is drawn: it glides to a new size and place (a longer name, a swipe that needs
-    // more columns) instead of jumping.
-    sealed class PillShown { public float X, W, Lo; public double At; }
-    PillShown? _pillShown;
-
-    Pill Glide(Pill to)
+    // Where desktop `i` of lane `l` is drawn in the pill.
+    (float X, float Y) CellAt(Pill p, int l, float i)
     {
-        double now = Now;
-        if (_pillShown is not { } p) _pillShown = p = new PillShown { X = to.X, W = to.W, Lo = to.Lo, At = now };
-        float k = 1 - MathF.Exp(-(float)(now - p.At) / 0.06f);
-        p.X += (to.X - p.X) * k;
-        p.W += (to.W - p.W) * k;
-        p.Lo += (to.Lo - p.Lo) * k;
-        p.At = now;
-        _pillDrawn = to with { X = p.X, W = p.W, Lo = p.Lo };
-        return _pillDrawn;
+        float s = _overlay.Scale;
+        int cols = Math.Max(1, _lanes.Lanes.Max(x => x.Desktops.Count));
+        float indent = (cols - _lanes.Lanes[l].Desktops.Count) / 2f;
+        return (p.X + (PillPad + (indent + i) * (Cell + CellGap)) * s, p.Y + (PillPad + l * (CellH + CellGap)) * s);
     }
-
-    Pill? _pillDrawn;
 
     void DrawPill(SwitchState sw, Pill p, float alpha)
     {
         var g = _gfx;
-        float s = _overlay.Scale;
+        float s = _overlay.Scale, cell = Cell * s, cellH = CellH * s;
         g.RoundRect(p.X, p.Y, p.W, p.H, 8 * s, A(0x332C2C2C, alpha));
         g.RoundRect(p.X + 1, p.Y + 1, p.W - 2, p.H - 2, 7 * s, A(0xF52C2C2C, alpha));
         if (_lanes.Locate(sw.From) is not var (fromLane, fromIndex)) return;
-        float cell = Cell * s, cellH = CellH * s, step = (Cell + CellGap) * s, row = (CellH + CellGap) * s;
-        float x0 = p.X + (p.Name.Length > 0 ? 16 : 10) * s - p.Lo * step, y0 = MathF.Round(p.Y + (p.H - MapHeight(s)) / 2);
+        // How far the swipe has gone toward the desktop it would land on, 0..1.
         float f = (float)Math.Clamp(sw.Offset / sw.Track.Page, -1, 1);
-        float slide = sw.Axis == Axis.Horizontal ? f : 0;
+        Guid? toward = f < 0 ? sw.Next : f > 0 ? sw.Previous : null;
+        var (toLane, toIndex) = toward is Guid t && _lanes.Locate(t) is var (tl, ti) ? (tl, ti) : (fromLane, fromIndex);
+        float k = Math.Abs(f);
         for (int l = 0; l < _lanes.Lanes.Count; l++)
         {
-            int a = Anchor(l, fromLane, fromIndex);
+            float light = toLane == fromLane ? (l == fromLane ? 1 : 0) : l == fromLane ? 1 - k : l == toLane ? k : 0;
+            uint colour = A(0xFFFFFFFF, (0x24 + (0x59 - 0x24) * light) / 255f);
             for (int i = 0; i < _lanes.Lanes[l].Desktops.Count; i++)
-                g.RoundRect(x0 + (i - a + (l == fromLane ? slide : 0)) * step, y0 + l * row, cell, cellH, 2.5f * s,
-                    A(l == fromLane ? 0x59FFFFFFu : 0x24FFFFFFu, alpha));
+            {
+                var (x, y) = CellAt(p, l, i);
+                g.RoundRect(x, y, cell, cellH, 2.5f * s, A(colour, alpha));
+            }
         }
-        float my = y0 + fromLane * row;
-        Guid? toward = f < 0 ? sw.Next : f > 0 ? sw.Previous : null;
-        if (sw.Axis == Axis.Vertical && toward is Guid t && _lanes.Locate(t) is var (tl, _))
-            my += (tl - fromLane) * row * Math.Abs(f);
-        g.RoundRect(x0, my, cell, cellH, 2.5f * s, A(0xFF4CC2FF, alpha));
-        if (p.Name.Length > 0)
-        {
-            var font = PillFont();
-            float tw = g.TextWidth(p.Name, font);
-            g.Text(p.Name, font, p.X + p.W - 20 * s - tw, p.Y, tw + 1, p.H, A(0xFFFFFFFF, alpha));
-        }
+        // The blue cell: along your lane, or across to the other lane's desktop. At a lane's end
+        // it gives a little with the picture's stretch.
+        var from = CellAt(p, fromLane, fromIndex);
+        var to = toward != null ? CellAt(p, toLane, toIndex) : CellAt(p, fromLane, fromIndex - f);
+        float bx = from.X + (to.X - from.X) * (toward != null ? k : 1), by = from.Y + (to.Y - from.Y) * (toward != null ? k : 1);
+        g.RoundRect(bx, by, cell, cellH, 2.5f * s, A(0xFF4CC2FF, alpha));
     }
 
-    // After a switch the pill stays over the desktop as long as Windows' own would (about two
-    // seconds), in a small window of its own, then fades.
+    // After a swipe the pill stays over the desktop as long as Windows' own would (about two
+    // seconds), in a small window of its own, then fades. A swipe that went back stays too.
     const double PillStays = 2.0, PillFades = 0.25;
     double _pillSince;
+    Pill? _pillLingering;
 
     void LingerPill(SwitchState s)
     {
-        if (_pillDrawn is not { } p) return;
-        int x = (int)MathF.Floor(p.X) - 1, y = (int)MathF.Floor(p.Y) - 1;
-        int w = (int)MathF.Ceiling(p.X + p.W) + 1 - x, h = (int)MathF.Ceiling(p.Y + p.H) + 1 - y;
-        using var pixels = _gfx.Offscreen(x, y, w, h, () => DrawPill(s, p, HudAlpha(s)));
-        _map.Show(pixels, _overlay.Area.Left + x, _overlay.Area.Top + y);
-        _pillSince = s.SwitchedAt;
+        var p = PillFor();
+        using var pixels = _gfx.Offscreen((int)p.X, (int)p.Y, (int)p.W, (int)p.H, () => DrawPill(s, p, HudAlpha(s)));
+        _map.Show(pixels, _overlay.Area.Left + (int)p.X, _overlay.Area.Top + (int)p.Y);
+        // Shown before the overlay goes, so no frame has neither.
+        DwmFlush();
+        _pillLingering = p;
+        _pillShownX = _overlay.Area.Left + p.X;
+        _pillSince = s.Switched ? s.SwitchedAt : Now;
     }
+
+    float _pillShownX;
 
     void StepLingeringPill(double now)
     {
         double t = now - _pillSince;
-        if (t >= PillStays + PillFades) _map.Hide();
-        else if (t > PillStays) _map.Fade((float)(1 - (t - PillStays) / PillFades));
+        if (t >= PillStays + PillFades) { _map.Hide(); return; }
+        if (t > PillStays) _map.Fade((float)(1 - (t - PillStays) / PillFades));
+        // Windows' volume or brightness pop-up comes up where the pill is: the pill moves aside.
+        if (_pillLingering is not { } p) return;
+        float home = _overlay.Area.Left + p.X, x = home;
+        if (WindowsPill.ShownAt() is { } osd && osd.Left < home + p.W && osd.Right > home)
+            x = osd.Left - 12 * _overlay.Scale - p.W;
+        if (Math.Abs(x - _pillShownX) < 0.5f) return;
+        _pillShownX += (x - _pillShownX) * 0.35f;
+        if (Math.Abs(x - _pillShownX) < 0.5f) _pillShownX = x;
+        _map.Move((int)MathF.Round(_pillShownX), _overlay.Area.Top + (int)p.Y);
     }
 
     static uint A(uint argb, float alpha) => ((uint)Math.Clamp((argb >> 24) * alpha, 0, 255) << 24) | (argb & 0xFFFFFF);

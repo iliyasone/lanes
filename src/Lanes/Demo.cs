@@ -9,6 +9,9 @@ namespace Lanes;
 // touchpad, such as the CI runner; never run on a machine someone is using.
 static class Demo
 {
+    // Finger travel that moves the picture by a whole screen.
+    static readonly double FullSwipe = new Tuning().FullSwipe;
+
     [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint ms);
 
     public static async Task Run(Engine engine, string dir)
@@ -49,27 +52,27 @@ static class Demo
             await Task.Delay(350);
             engine.Screenshot(Path.Combine(dir, "pill-windows.png"));
             await Task.Delay(3200);
-            await Swipe(engine, 4, -1, 0, 0.42 * 0.15, hold: async () => { engine.Screenshot(Path.Combine(dir, "pill-lanes.png")); await Task.Delay(400); });
+            await Swipe(engine, 4, -1, 0, FullSwipe * 0.15, hold: async () => { engine.Screenshot(Path.Combine(dir, "pill-lanes.png")); await Task.Delay(400); });
             await Task.Delay(1500);
             ComparePills(dir);
 
             // Four fingers down, held at about 40%: the Top lane comes down; then on and let go.
             var rec = new Recorder();
             rec.Start();
-            await Swipe(engine, 4, 0, 1, 0.42 * 0.42, hold: async () => { engine.Screenshot(Path.Combine(dir, "1-vertical-swipe.png")); await Task.Delay(600); }, release: false);
-            await Swipe(engine, 4, 0, 1, 0.42 * 0.8, continueFrom: 0.42 * 0.42);
+            await Swipe(engine, 4, 0, 1, FullSwipe * 0.42, hold: async () => { engine.Screenshot(Path.Combine(dir, "1-vertical-swipe.png")); await Task.Delay(600); }, release: false);
+            await Swipe(engine, 4, 0, 1, FullSwipe * 0.8, continueFrom: FullSwipe * 0.42);
             await Task.Delay(1500);
             // Back down to Main with four fingers up, a short flick.
-            await Swipe(engine, 4, 0, -1, 0.42 * 0.3, speed: 1.6);
+            await Swipe(engine, 4, 0, -1, FullSwipe * 0.3, speed: 1.6);
             await Task.Delay(1500);
             // Four fingers left in Main: Editor to Research, held at about 60%, then let go there.
-            await Swipe(engine, 4, -1, 0, 0.42 * 0.58, hold: async () => { engine.Screenshot(Path.Combine(dir, "2-horizontal-swipe.png")); await Task.Delay(600); });
+            await Swipe(engine, 4, -1, 0, FullSwipe * 0.58, hold: async () => { engine.Screenshot(Path.Combine(dir, "2-horizontal-swipe.png")); await Task.Delay(600); });
             await Task.Delay(1500);
             rec.Stop(dir, "frames-switch");
             // Right, past the end of the lane... first back to Editor, then once more into the stretch.
-            await Swipe(engine, 4, 1, 0, 0.42 * 0.8, earlyShot: Path.Combine(dir, "7-switch-early.png"));
+            await Swipe(engine, 4, 1, 0, FullSwipe * 0.8, earlyShot: Path.Combine(dir, "7-switch-early.png"));
             await Task.Delay(1500);
-            await Swipe(engine, 4, 1, 0, 0.42 * 0.5, hold: async () => { engine.Screenshot(Path.Combine(dir, "2b-end-of-lane.png")); await Task.Delay(300); });
+            await Swipe(engine, 4, 1, 0, FullSwipe * 0.5, hold: async () => { engine.Screenshot(Path.Combine(dir, "2b-end-of-lane.png")); await Task.Delay(300); });
             await Task.Delay(1500);
 
             // Three fingers up: the overview, held at 45%, then opened fully.
@@ -83,12 +86,12 @@ static class Demo
 
             // Four fingers inside the overview: to Research and held halfway, then up to the
             // top lane and back down, without leaving it.
-            await Swipe(engine, 4, -1, 0, 0.42 * 0.5, hold: async () => { engine.Screenshot(Path.Combine(dir, "9-overview-swipe.png")); await Task.Delay(500); }, release: false);
-            await Swipe(engine, 4, -1, 0, 0.42 * 0.8, continueFrom: 0.42 * 0.5);
+            await Swipe(engine, 4, -1, 0, FullSwipe * 0.5, hold: async () => { engine.Screenshot(Path.Combine(dir, "9-overview-swipe.png")); await Task.Delay(500); }, release: false);
+            await Swipe(engine, 4, -1, 0, FullSwipe * 0.8, continueFrom: FullSwipe * 0.5);
             await Task.Delay(1200);
-            await Swipe(engine, 4, 0, 1, 0.42 * 0.8);
+            await Swipe(engine, 4, 0, 1, FullSwipe * 0.8);
             await Task.Delay(1200);
-            await Swipe(engine, 4, 0, -1, 0.42 * 0.8);
+            await Swipe(engine, 4, 0, -1, FullSwipe * 0.8);
             await Task.Delay(1200);
             rec.Stop(dir, "frames-overview");
             engine.Screenshot(Path.Combine(dir, "10-overview-after-swipes.png"));

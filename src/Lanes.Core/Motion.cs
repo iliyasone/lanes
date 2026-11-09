@@ -46,11 +46,11 @@ public sealed class Spring
 public sealed class Tuning
 {
     // Finger travel, in pad widths, that moves the picture by a whole screen.
-    public double FullSwipe = 0.42;
+    public double FullSwipe = 0.37;
     // Finger travel, in pad widths, that opens the overview fully.
     public double FullOverview = 0.28;
     // A release this fast (screens per second, toward a neighbour) switches even when short.
-    public double FlickSpeed = 0.8;
+    public double FlickSpeed = 0.7;
     // How far, as a share of the screen, the picture stretches where there is no neighbour.
     public double RubberBand = 0.08;
     public double SwitchResponse = 0.34;

@@ -29,6 +29,9 @@ static class AppWindows
             long ex = GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64();
             if ((ex & WS_EX_TOOLWINDOW) != 0 && (ex & WS_EX_APPWINDOW) == 0) return true;
             if (GetWindow(h, GW_OWNER) != IntPtr.Zero && (ex & WS_EX_APPWINDOW) == 0) return true;
+            // A window that never takes focus is something over the apps (a dictation pill, an
+            // on-screen keyboard), not one of them.
+            if ((ex & WS_EX_NOACTIVATE) != 0) return true;
             if (ShellClasses.Contains(ClassName(h))) return true;
             string title = WindowText(h);
             if (title.Length == 0) return true;

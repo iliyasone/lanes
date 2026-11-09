@@ -181,8 +181,9 @@ sealed partial class Engine : IGestureSink
         if (_overview != null) StepOverview(now);
         if (_retakeAt > 0 && now >= _retakeAt) Retake();
         if (_map.Shown && _switch == null) StepLingeringPill(now);
-        // Windows' pill is given back a while after the last switch, once its time would be over.
-        if (WindowsPill.Hidden && _switch == null && now - _lastSwitchAt > 3) WindowsPill.Restore();
+        // Explorer's pop-up window goes back half a second after the last switch: Windows has
+        // asked for its pill by then, and the window comes back hidden.
+        if (WindowsPill.Hidden && _switch == null && now - _lastSwitchAt > 0.5) WindowsPill.Restore();
     }
 
     // When Lanes itself changed what is on this desktop while the overview is up (a window moved
@@ -204,10 +205,11 @@ sealed partial class Engine : IGestureSink
         }
         var desktop = _current;
         var monitor = _overlay.Monitor;
+        var own = _overlay.Handle;
         Task.Run(() =>
         {
             DwmFlush();
-            return Capture.Screen(monitor);
+            return Capture.ScreenWithout(monitor, own, out _);
         }).ContinueWith(t => Post(() =>
         {
             _overlay.LeaveOutOfPictures(false);
@@ -319,7 +321,8 @@ sealed partial class Engine : IGestureSink
         long now = Environment.TickCount64;
         if (now - _lastSnapshot < 5000 || Touching) return;
         _lastSnapshot = now;
-        Remember(_current, Capture.Screen(PointerMonitor().Monitor));
+        // As at touch time, windows that leave themselves out of Lanes' pictures (Ciao) do.
+        Remember(_current, Capture.ScreenWithout(PointerMonitor().Monitor, _overlay.Handle, out _));
         Warm();
     }
 
@@ -342,8 +345,13 @@ sealed partial class Engine : IGestureSink
         _snapshots[desktop] = pixels;
         if (_bitmaps.Remove(desktop, out var bmp)) bmp.Dispose();
         if (_tilePictures.Remove(desktop, out var tile)) tile.Dispose();
+        // The app in front names the desktop in the overview; with only the desktop itself or the
+        // taskbar in front it goes by its number.
         var fg = GetForegroundWindow();
-        if (fg != IntPtr.Zero && Desktops.OnCurrent(fg)) _appOf[desktop] = AppWindows.AppName(fg);
+        if (fg == IntPtr.Zero || ClassName(fg) is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "XamlExplorerHostIslandWindow")
+            _appOf.Remove(desktop);
+        else if (fg != _overlay.Handle && Desktops.OnCurrent(fg))
+            _appOf[desktop] = ClassName(fg) == "CabinetWClass" ? "File Explorer" : AppWindows.AppName(fg);
         _fullScreen[desktop] = FullScreenInFront(pixels.Width, pixels.Height);
     }
 
@@ -390,12 +398,10 @@ sealed partial class Engine : IGestureSink
 
     bool FullScreen(Guid? desktop) => desktop is Guid d && _fullScreen.GetValueOrDefault(d);
 
-    // The overlay covers the work area, or the whole monitor when a desktop the gesture shows
-    // has a full-screen window: then each desktop's picture brings its own taskbar, or none,
-    // instead of the real taskbar staying over all of them. Call while the overlay is hidden.
-    void UseArea(bool full)
+    // The overlay covers the monitor the pointer is on. Call while the overlay is hidden.
+    void UseArea()
     {
-        var area = _overlay.PickArea(full);
+        var area = _overlay.PickArea();
         if (area.Left == _picturesFor.Left && area.Top == _picturesFor.Top && area.Right == _picturesFor.Right && area.Bottom == _picturesFor.Bottom
             && _gfx.Width == area.Width && _gfx.Height == area.Height) return;
         foreach (var b in _bitmaps.Values) b.Dispose();
@@ -405,6 +411,43 @@ sealed partial class Engine : IGestureSink
         _picturesFor = area;
         _gfx.Attach(_overlay.Handle, area.Width, area.Height);
     }
+
+    // The taskbar, as a live picture where it is: it stays put while desktops move under it, as
+    // the real one would. Lanes covers the whole monitor so that nothing else shows in the
+    // taskbar's place (a full-screen video behind the window in front). Registered after the
+    // windows' pictures, so it is drawn over them; call again after new ones.
+    Thumbnail? _taskbar;
+
+    void RaiseTaskbar()
+    {
+        _taskbar?.Dispose();
+        _taskbar = null;
+        var m = _overlay.Monitor;
+        foreach (var cls in new[] { "Shell_TrayWnd", "Shell_SecondaryTrayWnd" })
+            for (IntPtr h = IntPtr.Zero; (h = FindWindowEx(IntPtr.Zero, h, cls, null)) != IntPtr.Zero;)
+            {
+                var f = Frame(h);
+                if (!IsWindowVisible(h) || f.Right <= m.Left || f.Left >= m.Right || f.Bottom <= m.Top || f.Top >= m.Bottom) continue;
+                _taskbar = new Thumbnail(_overlay.Handle, h);
+                return;
+            }
+    }
+
+    void DropTaskbar()
+    {
+        _taskbar?.Dispose();
+        _taskbar = null;
+    }
+
+    void PlaceTaskbar(float opacity)
+    {
+        if (_taskbar is not { } t) return;
+        var f = Frame(t.Window);
+        t.Place(f.Left - _overlay.Area.Left, f.Top - _overlay.Area.Top, f.Width, f.Height, opacity);
+    }
+
+    // The top of the screen below the taskbar, in the overlay's own coordinates.
+    float WorkTop => _overlay.Work.Top - _overlay.Area.Top;
 
     // The overlay's part of the monitor, in the pixels of a picture of the whole monitor.
     RECT Inner => new(_overlay.Area.Left - _overlay.Monitor.Left, _overlay.Area.Top - _overlay.Monitor.Top,
