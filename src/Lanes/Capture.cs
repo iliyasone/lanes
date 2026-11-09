@@ -105,11 +105,15 @@ static class Capture
                         for (int x = l; x < r; x += 16, seen++)
                             if ((src[(long)(y - wr.Top) * wr.Width + (x - wr.Left)] & 0xFFFFFF) > 0x0A0A0A) lit++;
                     if (seen > 0 && lit * 50 > seen)
+                    {
+                        // Its shadow on what is under it first, as the desktop shows it.
+                        if (DesktopShadows.Casts(w.Handle, f)) DesktopShadows.DrawInto(p, monitor, f, Math.Max(96, GetDpiForWindow(w.Handle)) / 96.0);
                         for (int y = t; y < b; y++)
                         {
                             uint* from = src + (long)(y - wr.Top) * wr.Width + (l - wr.Left), to = dst + (long)(y - monitor.Top) * mw + (l - monitor.Left);
                             for (int x = 0; x < r - l; x++) to[x] = from[x] | 0xFF000000;
                         }
+                    }
                 }
             }
             SelectObject(mem, old);

@@ -251,67 +251,24 @@ sealed class Gfx : IDisposable
     }
 
     // A window's shadow, cheap at any size: the shadow of a rounded square with corners of
-    // radius `r`, blurred once (PrepareShadow, outside a frame) as light spreads, a Gaussian of
-    // width `sigma`, is cut into corners and sides that are stretched along the window's edges;
-    // the middle, under the window, is left out. `grow` draws it larger (a wider, softer shadow).
+    // radius `r`, blurred once (PrepareShadow, outside a frame; see ShadowShape), is cut into
+    // corners and sides that are stretched along the window's edges; the middle, under the
+    // window, is left out. `grow` draws it larger (a wider, softer shadow).
     readonly Dictionary<(int R, int Sigma), ID2D1Bitmap1> _shadows = new();
 
     public void PrepareShadow(float r, float sigma)
     {
         var key = ((int)MathF.Ceiling(r), Math.Max(1, (int)MathF.Ceiling(sigma)));
         if (_shadows.ContainsKey(key)) return;
-        var (rr, sg) = key;
-        int m = 3 * sg, c = 2 * rr + 2 * m + 4, t = c + 2 * m;
-        var a = new float[t * t];
-        // The square, its corners rounded and their edges smoothed.
-        for (int y = 0; y < c; y++)
-            for (int x = 0; x < c; x++)
-            {
-                float dx = Math.Max(0, Math.Max(rr - x - 0.5f, x + 0.5f - (c - rr))), dy = Math.Max(0, Math.Max(rr - y - 0.5f, y + 0.5f - (c - rr)));
-                a[(y + m) * t + x + m] = Math.Clamp(rr + 0.5f - MathF.Sqrt(dx * dx + dy * dy), 0, 1);
-            }
-        // Three box blurs one after another come within a hair of a Gaussian.
-        var tmp = new float[t * t];
-        foreach (int box in Boxes(sg))
-        {
-            Blur(a, tmp, t, (box - 1) / 2, true);
-            Blur(tmp, a, t, (box - 1) / 2, false);
-        }
+        var shape = new Lanes.Core.ShadowShape(key.Item1, key.Item2);
+        int t = shape.Size;
         using var p = new Pixels(t, t, opaque: false);
         unsafe
         {
             var px = (uint*)p.Data;
-            for (int i = 0; i < t * t; i++) px[i] = (uint)Math.Clamp(a[i] * 255 + 0.5f, 0, 255) << 24;
+            for (int i = 0; i < t * t; i++) px[i] = (uint)Math.Clamp(shape.Alpha[i] * 255 + 0.5f, 0, 255) << 24;
         }
         _shadows[key] = Bitmap(p);
-    }
-
-    static int[] Boxes(double sigma)
-    {
-        double ideal = Math.Sqrt(12 * sigma * sigma / 3 + 1);
-        int wl = (int)Math.Floor(ideal);
-        if (wl % 2 == 0) wl--;
-        int wu = wl + 2;
-        int mm = (int)Math.Round((12 * sigma * sigma - 3 * wl * wl - 12 * wl - 9) / (-4.0 * wl - 4));
-        return new[] { 0, 1, 2 }.Select(i => i < mm ? wl : wu).ToArray();
-    }
-
-    // A running average over 2r+1 pixels along rows (or columns) of a t x t square; outside it is empty.
-    static void Blur(float[] src, float[] dst, int t, int r, bool rows)
-    {
-        float k = 1f / (2 * r + 1);
-        for (int line = 0; line < t; line++)
-        {
-            float sum = 0;
-            int At(int i) => rows ? line * t + i : i * t + line;
-            for (int i = 0; i < Math.Min(r, t); i++) sum += src[At(i)];
-            for (int i = 0; i < t; i++)
-            {
-                if (i + r < t) sum += src[At(i + r)];
-                dst[At(i)] = sum * k;
-                if (i - r >= 0) sum -= src[At(i - r)];
-            }
-        }
     }
 
     public void WindowShadow(float x, float y, float w, float h, float r, float sigma, float dy, float alpha, float grow = 1)

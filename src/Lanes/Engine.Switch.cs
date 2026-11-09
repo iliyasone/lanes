@@ -68,6 +68,7 @@ sealed partial class Engine
 
     void BeginSwitch(Axis axis)
     {
+        LookAtTheme();
         ID2D1Bitmap1? from = null;
         List<(AppWindow, Thumbnail)>? fromWindows = null;
         // Lanes' pill is already up from the last swipe: it carries on from where it is.
@@ -212,11 +213,14 @@ sealed partial class Engine
         float w = g.Width, h = g.Height, o = (float)s.Offset;
         bool horizontal = s.Axis == Axis.Horizontal;
         float page = horizontal ? w : h; // one screen; desktops lie edge to edge
-        g.Begin(Gfx.Color(0xFF0A0C10));
+        g.Begin(Gfx.Color(_light ? 0xFFD4D4D4 : 0xFF262626));
         Draw(s.FromPicture, o);
         ID2D1Bitmap1? other = o < 0 ? s.NextPicture : o > 0 ? s.PreviousPicture : null;
         float otherAt = o < 0 ? o + page : o - page;
         if (other != null) Draw(other, otherAt);
+        // Past the end of a lane the desktop gives a little, lifted off a plain backdrop: its edge
+        // casts a short shadow there.
+        else if (Math.Abs(o) >= 0.5f) EdgeShadow(o > 0 ? o : o + page, o > 0 ? -1 : 1, Math.Abs(o));
         Live(s.FromWindows, o);
         Live(s.PreviousWindows, o > 0 ? otherAt : null);
         Live(s.NextWindows, o < 0 ? otherAt : null);
@@ -229,7 +233,7 @@ sealed partial class Engine
         Guid? otherDesktop = o < 0 ? s.Next : o > 0 ? s.Previous : null;
         if (other != null && FullScreen(otherDesktop)) covers.Add((otherAt, otherAt + page));
         // The shadow comes as the desktops move, not at once at the first touch.
-        PlaceTaskbar(horizontal, covers, Math.Clamp(Math.Abs(o) / (0.3f * page), 0, 1));
+        PlaceTaskbar(horizontal, covers, Math.Clamp(Math.Abs(o) / (0.1f * page), 0, 1));
         g.End();
         // Lanes' pill stays put over both desktops, in its own window above the live pictures.
         float hud = HudAlpha(s);
@@ -239,6 +243,20 @@ sealed partial class Engine
         {
             if (horizontal) g.Image(bmp, at, 0, w, h);
             else g.Image(bmp, 0, at, w, h);
+        }
+
+        // From a desktop's edge at `at` over the backdrop beside it (`way` -1 before the edge,
+        // 1 after it, `room` wide): darkest at the edge, gone within EdgeReach.
+        void EdgeShadow(float at, int way, float room)
+        {
+            float reach = EdgeReach * _overlay.Scale;
+            for (int i = 0; i < reach && i < room; i++)
+            {
+                uint argb = A(0xFF000000, 0.5f * MathF.Pow(1 - (i + 0.5f) / reach, 2));
+                float line = way < 0 ? at - i - 1 : at + i;
+                if (horizontal) g.Rect(line, 0, 1, h, argb);
+                else g.Rect(0, line, w, 1, argb);
+            }
         }
 
         // Each window where it is on its desktop, cut at the desktop's edges.
@@ -253,6 +271,8 @@ sealed partial class Engine
             }
         }
     }
+
+    const float EdgeReach = 24;
 
     // Lanes' pill comes in quickly as a swipe starts, and stays after it (see LingerPill).
     float HudAlpha(SwitchState s) => (float)Math.Clamp((Now - s.Start) / 0.12, 0, 1);
@@ -316,8 +336,13 @@ sealed partial class Engine
     {
         var g = _gfx;
         float s = _overlay.Scale, cell = Cell * s, cellH = CellH * s;
-        g.RoundRect(p.X, p.Y, p.W, p.H, 8 * s, A(0x332C2C2C, alpha));
-        g.RoundRect(p.X + 1, p.Y + 1, p.W - 2, p.H - 2, 7 * s, A(0xF52C2C2C, alpha));
+        // In Windows' light or dark mode, as its own pop-ups are: on dark, light cells and your
+        // lane lighter; on light, dark cells and your lane darker.
+        var (edgeInk, fill, cellInk, laneInk, here) = _light
+            ? (0x1A000000u, 0xF5F9F9F9u, 0x1F000000u, 0x2E000000u, 0xFF005FB8u)
+            : (0x332C2C2Cu, 0xF52C2C2Cu, 0x24FFFFFFu, 0x3EFFFFFFu, 0xFF4CC2FFu);
+        g.RoundRect(p.X, p.Y, p.W, p.H, 8 * s, A(edgeInk, alpha));
+        g.RoundRect(p.X + 1, p.Y + 1, p.W - 2, p.H - 2, 7 * s, A(fill, alpha));
         if (_lanes.Locate(from) is not var (fromLane, fromIndex)) return;
         var (toLane, toIndex) = toward is Guid t && _lanes.Locate(t) is var (tl, ti) ? (tl, ti) : (fromLane, fromIndex);
         float middle = (PillColumns - 1) / 2f;
@@ -332,18 +357,30 @@ sealed partial class Engine
             for (int i = 0; i < desks.Count; i++)
             {
                 var (x, y) = CellAt(p, l, middle + i - anchor + (l == fromLane ? slide : 0));
-                g.RoundRect(x, y, cell, cellH, 2.5f * s, A(0x24FFFFFF, alpha));
-                // White at 0x3E over the cell's 0x24 makes the light cells' 0x59.
+                g.RoundRect(x, y, cell, cellH, 2.5f * s, A(cellInk, alpha));
+                // Your lane's cells: more of the same ink over them (on dark, white at 0x3E over
+                // the cell's 0x24 makes 0x59).
                 float top = Math.Max(y, lightY), bottom = Math.Min(y + cellH, lightY + cellH);
                 if (bottom - top < 0.05f) continue;
                 g.Clip(x, top, cell, bottom - top);
-                g.RoundRect(x, y, cell, cellH, 2.5f * s, A(0x3EFFFFFF, alpha));
+                g.RoundRect(x, y, cell, cellH, 2.5f * s, A(laneInk, alpha));
                 g.Unclip();
             }
         }
         var a = CellAt(p, fromLane, middle);
         var b = CellAt(p, toLane, middle);
-        g.RoundRect(a.X, a.Y + (b.Y - a.Y) * k, cell, cellH, 2.5f * s, A(0xFF4CC2FF, alpha));
+        g.RoundRect(a.X, a.Y + (b.Y - a.Y) * k, cell, cellH, 2.5f * s, A(here, alpha));
+    }
+
+    // Whether Windows is in light mode for its own parts (Settings > Personalization > Colors),
+    // which Lanes' pill and the backdrop of a swipe follow: looked at as a swipe or the overview
+    // starts, and each second in between.
+    bool _light;
+
+    void LookAtTheme()
+    {
+        try { _light = Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "SystemUsesLightTheme", 0) is int v && v != 0; }
+        catch { _light = false; }
     }
 
     // After a swipe (one that went back too) or a desktop picked in the overview, the pill stays

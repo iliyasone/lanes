@@ -55,19 +55,29 @@ static class AppWindows
     // The window as the overview lists it, or null for what is not an app's own window.
     static AppWindow? App(IntPtr h, RECT area)
     {
-        long ex = GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64();
-        if ((ex & WS_EX_TOOLWINDOW) != 0 && (ex & WS_EX_APPWINDOW) == 0) return null;
-        if (GetWindow(h, GW_OWNER) != IntPtr.Zero && (ex & WS_EX_APPWINDOW) == 0) return null;
-        // A window that never takes focus is something over the apps (a dictation pill, an
-        // on-screen keyboard), not one of them.
-        if ((ex & WS_EX_NOACTIVATE) != 0) return null;
-        if (ShellClasses.Contains(ClassName(h))) return null;
-        string title = WindowText(h);
-        if (title.Length == 0) return null;
-        var f = Frame(h);
-        if (f.Width < 40 || f.Height < 40) return null;
+        if (!IsApp(h, out var f, out string title)) return null;
         if (f.Right <= area.Left || f.Left >= area.Right || f.Bottom <= area.Top || f.Top >= area.Bottom) return null;
         return new AppWindow(h, f, title, AppName(h));
+    }
+
+    // Whether this is an app's own window (the ones the overview shows and the desktop gives
+    // shadows), with its frame and title: not a tool window, a pop-up of another window,
+    // something over the apps or a part of the shell.
+    public static bool IsApp(IntPtr h, out RECT frame, out string title)
+    {
+        frame = default;
+        title = "";
+        long ex = GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64();
+        if ((ex & WS_EX_TOOLWINDOW) != 0 && (ex & WS_EX_APPWINDOW) == 0) return false;
+        if (GetWindow(h, GW_OWNER) != IntPtr.Zero && (ex & WS_EX_APPWINDOW) == 0) return false;
+        // A window that never takes focus is something over the apps (a dictation pill, an
+        // on-screen keyboard), not one of them.
+        if ((ex & WS_EX_NOACTIVATE) != 0) return false;
+        if (ShellClasses.Contains(ClassName(h))) return false;
+        title = WindowText(h);
+        if (title.Length == 0) return false;
+        frame = Frame(h);
+        return frame.Width >= 40 && frame.Height >= 40;
     }
 
     // "Telegram Desktop", "Google Chrome": the product name of the window's program. Store apps

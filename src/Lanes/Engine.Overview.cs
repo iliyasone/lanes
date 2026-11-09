@@ -172,6 +172,7 @@ sealed partial class Engine
             return;
         }
         if (_switch != null) { _ignoring = true; return; }
+        LookAtTheme();
         _current = Desktops.Current;
         Remember(_current, TakeTouchCapture());
         RefreshTitles();
@@ -189,26 +190,27 @@ sealed partial class Engine
         Log.Write($"overview: {o.Page.Windows.Count} windows; {CaptureNote}");
     }
 
-    // A window's shadow, as on a Mac: a soft one well below it, deeper when the window is
-    // lifted (`lift` 1 under the pointer, 2 picked up), a short dark one tight round its edges,
-    // and a fine dark line along them.
-    const float ShadowSoft = 16, ShadowTight = 3, ShadowCorner = 6;
-
+    // A window's shadow, the same as on the desktop (ShadowLook) where it is there: deeper when
+    // the window is lifted (`lift` 1 under the pointer, 2 picked up), the soft one further below
+    // and wider; a fine dark line along the edges, where Windows draws its border. A window made
+    // smaller than it is in the overview (`size` below 1: dragged over the rows) casts a shadow
+    // as much smaller.
     void PrepareShadows()
     {
         float s = _overlay.Scale;
-        _gfx.PrepareShadow(ShadowCorner * s, ShadowSoft * s);
-        _gfx.PrepareShadow(ShadowCorner * s, ShadowTight * s);
+        _gfx.PrepareShadow((float)ShadowLook.Corner * s, (float)ShadowLook.SoftSigma * s);
+        _gfx.PrepareShadow((float)ShadowLook.Corner * s, (float)ShadowLook.TightSigma * s);
     }
 
-    void WindowShadow(Box b, double lift, float alpha)
+    void WindowShadow(Box b, double lift, float alpha, double size = 1)
     {
         if (alpha < 0.002f) return;
         var g = _gfx;
-        float s = _overlay.Scale, x = (float)b.X, y = (float)b.Y, w = (float)b.W, h = (float)b.H, l = (float)lift;
-        g.WindowShadow(x, y, w, h, ShadowCorner * s, ShadowSoft * s, (14 + 7 * l) * s, (0.42f + 0.1f * Math.Min(l, 1.5f)) * alpha, 1 + 0.22f * l);
-        g.WindowShadow(x, y, w, h, ShadowCorner * s, ShadowTight * s, 1 * s, 0.32f * alpha);
-        g.RoundRectOutline(x - 0.5f, y - 0.5f, w + 1, h + 1, 4 * s, A(0x59000000, alpha), 1);
+        float s = _overlay.Scale, x = (float)b.X, y = (float)b.Y, w = (float)b.W, h = (float)b.H, l = (float)lift, k = (float)Math.Clamp(size, 0.15, 1);
+        float corner = (float)ShadowLook.Corner * s, soft = (float)ShadowLook.SoftSigma * s, tight = (float)ShadowLook.TightSigma * s;
+        g.WindowShadow(x, y, w, h, corner, soft, ((float)ShadowLook.SoftDrop + 7 * l) * s * k, ((float)ShadowLook.SoftAlpha + 0.1f * Math.Min(l, 1.5f)) * alpha, (1 + 0.22f * l) * k);
+        g.WindowShadow(x, y, w, h, corner, tight, (float)ShadowLook.TightDrop * s * k, (float)ShadowLook.TightAlpha * alpha, k);
+        g.RoundRectOutline(x - 0.5f, y - 0.5f, w + 1, h + 1, 4 * s * k, A(0x59000000, alpha), 1);
     }
 
     static string Key(StripTile t) => t.Kind switch
@@ -1277,9 +1279,10 @@ sealed partial class Engine
 
         if (o.Drag is { Window: >= 0 } dw)
         {
-            // Picked up: it rises above the others, its shadow deeper and further below.
+            // Picked up: it rises above the others, its shadow deeper and further below; over the
+            // rows, where it shrinks, its shadow shrinks with it.
             var b = dw.Box;
-            Lift(b, 1 + Ease(Math.Min(1, (Now - dw.Since) / PickUp)));
+            WindowShadow(b, 1 + Ease(Math.Min(1, (Now - dw.Since) / PickUp)), sa, b.W / Math.Max(1, page.To[dw.Window].W));
             page.Thumbs[dw.Window].Place((float)b.X, (float)b.Y, (float)b.W, (float)b.H);
         }
         foreach (var l in o.Leaving)

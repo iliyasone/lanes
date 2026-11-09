@@ -110,6 +110,7 @@ sealed partial class Engine : IGestureSink
             _touchpad = new Touchpad(OnFrame);
             _touchpad.Register(_msg.Handle);
             _awake = new Awake();
+            _shadows = new DesktopShadows();
             if (Desktops.Load())
             {
                 Desktops.Pin(_overlay.Handle);
@@ -165,6 +166,7 @@ sealed partial class Engine : IGestureSink
             }
         }
         _awake?.Dispose();
+        _shadows?.Dispose();
         _overlay.Hide();
         _map.Hide();
         WindowsPill.Restore();
@@ -172,6 +174,7 @@ sealed partial class Engine : IGestureSink
 
     bool Animating => _switch != null || _overview is { } o && (o.Tracking || o.Spring != null || o.Zoom != null || o.Swipe != null || o.Moving || o.Added != null || o.Scroll != null || o.Dwell != null) || _redraw;
     Awake? _awake;
+    DesktopShadows? _shadows;
     bool _redraw;
 
     void Tick()
@@ -350,6 +353,7 @@ sealed partial class Engine : IGestureSink
             _lastWindowCheck = now;
             CheckOtherDesktops();
             ForgetClosed();
+            LookAtTheme();
         }
         if (now - _lastSnapshot < 5000) return;
         _lastSnapshot = now;
@@ -672,12 +676,14 @@ sealed partial class Engine : IGestureSink
     }
 
     // Thin slices of the taskbar near the edge of a full-screen window lying over it, each over
-    // black and a little less faded than the last: the window's shadow, falling on the taskbar
-    // from as far as `ShadeReach` away, darkest at the edge (`Shade` is how dark, 0..1).
+    // black and a little less faded than the last: the window's shadow on the taskbar, as far as
+    // `ShadeReach` from the edge, darkest at it (`Shade` is how dark, 0..1). Only the taskbar takes
+    // it, so it is there while the window lies over part of the taskbar and fades within
+    // `ShadeGap` of it leaving (or before it comes): a shadow further off would lie on the
+    // taskbar alone, a dark band with nothing above it.
     readonly List<Thumbnail> _taskbarShade = new();
     static readonly float[] Shade = Enumerable.Range(0, 16).Select(i => 0.5f * MathF.Pow(1 - (i + 0.5f) / 16, 2)).ToArray();
-    // Long enough that the taskbar darkens well before a window coming over it reaches it.
-    const float ShadeReach = 160;
+    const float ShadeReach = 72, ShadeGap = 24;
 
     void PlaceTaskbar(float opacity)
     {
@@ -713,13 +719,14 @@ sealed partial class Engine : IGestureSink
             return;
         }
         // The nearest window edge that faces the visible part, and which way its shadow falls.
-        float reach = ShadeReach * _overlay.Scale, edge = 0;
+        float reach = ShadeReach * _overlay.Scale, near = ShadeGap * _overlay.Scale, edge = 0;
         int way = 0;
         foreach (var (c0, c1) in all)
         {
-            if (c1 <= a0 + 0.5f && a0 - c1 < reach && (way == 0 || a0 - c1 < Math.Abs(edge - (way > 0 ? a0 : a1)))) { edge = c1; way = 1; }
-            else if (c0 >= a1 - 0.5f && c0 - a1 < reach && (way == 0 || c0 - a1 < Math.Abs(edge - (way > 0 ? a0 : a1)))) { edge = c0; way = -1; }
+            if (c1 <= a0 + 0.5f && a0 - c1 < near && (way == 0 || a0 - c1 < Math.Abs(edge - (way > 0 ? a0 : a1)))) { edge = c1; way = 1; }
+            else if (c0 >= a1 - 0.5f && c0 - a1 < near && (way == 0 || c0 - a1 < Math.Abs(edge - (way > 0 ? a0 : a1)))) { edge = c0; way = -1; }
         }
+        if (way != 0) depth *= 1 - Math.Clamp((way > 0 ? a0 - edge : edge - a1) / near, 0, 1);
         float m0 = way > 0 ? Math.Max(a0, edge + reach) : a0, m1 = way < 0 ? Math.Min(a1, edge - reach) : a1;
         t.PlaceCut(x, y, f.Width, f.Height, m0, Math.Max(m0, m1), horizontal);
         float step = reach / _taskbarShade.Count;

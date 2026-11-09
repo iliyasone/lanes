@@ -28,13 +28,28 @@ Messages is still above.
 The picture moves with the fingers the whole way: stop halfway and it stays, move back and
 it comes back, and the switch happens only when you let go past the middle or flick. Where
 there is no desktop (the end of a lane, above the top lane) the picture stretches a little
-and springs back.
+and springs back, lifted off a plain backdrop with a short shadow at its edge.
+
+A full-screen window lies over the taskbar, as on the screen: swiping away from it, the
+taskbar comes out from under the window with the window's shadow on it, which goes as the
+window's edge leaves the taskbar.
 
 At the bottom, Windows' own "Desktop N" pill stays the whole way: Lanes draws an exact copy
 of it in the same place until Windows switches and puts its own over it, which then goes
 away as it always does. Above it, a small map of the lanes moves with the fingers: the blue
-cell is where you are and your lane is light grey; a sideways swipe slides your lane under
-the blue cell, one up or down carries it to the next lane.
+cell is where you are and your lane stands out from the others; a sideways swipe slides your
+lane under the blue cell, one up or down carries it to the next lane. The map, like Windows'
+pop-ups, is light or dark as Windows is (Settings → Personalization → Colors).
+
+### Window shadows
+
+App windows on the desktop cast a shadow as on a Mac: a soft one well below the window and a
+short dark one tight round its edges, deeper than Windows' own thin one. The overview draws
+the same shadow, so nothing changes about it as the overview opens. Lanes keeps four
+see-through windows of its own round each app window, just under it, which clicks pass
+through and which follow the window as it moves (while it is dragged the shadow can be a
+frame behind). Maximized and full-screen windows, and windows kept on top of the others,
+have none.
 
 Windows switches the moment you let go, under the picture, so by the time the picture lands
 the new desktop is drawn, wallpaper included.
@@ -55,7 +70,7 @@ If you change that setting later, Lanes leaves it as you set it.
 A three-finger swipe up opens it, again following the fingers: the windows travel from
 where they are into rows, as large as the room below the lanes allows (never larger than
 they are), each about where it was, and the lanes come down above them. Each window casts a
-soft shadow, which deepens under the pointer. Each lane's row is shifted
+shadow, the same as on the desktop, which deepens under the pointer. Each lane's row is shifted
 so that the desktop a swipe up or down would land on sits in one column with the desktop you
 are on, in the middle: what is above and below you reads at a glance.
 
@@ -151,6 +166,8 @@ click it.
   open Settings → Touchpad once and Windows reloads them.
 - Windows' own Task View and Ctrl+Win+arrows still see one row of desktops.
 - Lanes' copy of Windows' "Desktop N" pill is drawn for the dark theme.
+- A window that is on every desktop ("Show this window on all desktops") gets its shadow back
+  a moment after each switch.
 
 ## How it works
 
@@ -160,7 +177,8 @@ click it.
   travel to the picture and decides where it goes on release, then moves it with a
   critically damped spring that starts at the fingers' speed; `LaneMap.cs` keeps the
   lanes; `Strip.cs` lays out the overview's lane rows and works out where a dragged desktop
-  goes; `Spread.cs` lays out its windows.
+  goes; `Spread.cs` lays out its windows; `Shadow.cs` works out a window's shadow, shared by
+  the desktop and the overview.
 - `src/Lanes`: `Touchpad.cs` reads raw HID reports; `Engine*.cs` runs everything a swipe
   needs on one thread: each frame is drawn right after the freshest report with Direct2D
   on a flip-model swap chain (`Gfx.cs`) in a topmost window shown on every desktop and
@@ -170,6 +188,8 @@ click it.
   elevation (telling Explorer to reload gesture settings, removing desktops on uninstall)
   runs through a second task, `Lanes session` (`SessionHelper.cs`). `Desktops.cs` talks to Windows' virtual desktops through
   [VirtualDesktopAccessor](https://github.com/Ciantic/VirtualDesktopAccessor) (embedded).
+  `DesktopShadows.cs` keeps the windows' shadows on the desktop on a thread of its own,
+  told of every move by a WinEvent hook.
 - CI (`.github/workflows/ci.yml`) runs `Lanes.exe --demo` on a Windows runner set to dark
   theme at 1920×1080: it sets up desktops with sample windows, performs the swipes with
   made-up touchpad reports, checks that clicks pass through Lanes' window between swipes,
