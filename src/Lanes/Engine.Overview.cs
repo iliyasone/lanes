@@ -320,11 +320,8 @@ sealed partial class Engine
     {
         z.SwitchedAt = Now;
         if (z.Target == _current) return;
-        // Here Windows' own pill comes up over Lanes' copy, as after a switch without Lanes.
-        WindowsPill.Restore();
-        if (!Desktops.Switch(z.Target)) Log.Write("switch failed");
+        SwitchTo(z.Target);
         _overlay.Place();
-        _lastSwitchAt = Now;
         _current = z.Target;
         _lanes.Visited(z.Target);
     }
@@ -335,6 +332,10 @@ sealed partial class Engine
         z.Z = 1;
         RenderOverview();
         Settings.SaveLanes(_lanes);
+        // Lanes' pill, as after a swipe, shows where you are now.
+        var target = z.Target;
+        _pillX = _pillAside = null;
+        LingerPill(p => DrawPill(p, target, null, 0, 0, 1), z.SwitchedAt);
         CloseOverviewNow();
     }
 
@@ -454,7 +455,7 @@ sealed partial class Engine
             if (p != null && p != arrived) p.Dispose();
         if (to is Guid target && arrived != null)
         {
-            if (!Desktops.Switch(target)) Log.Write("switch failed");
+            SwitchTo(target);
             _overlay.Place();
             _current = target;
             _lanes.Visited(target);
@@ -719,6 +720,8 @@ sealed partial class Engine
             ?? _lanes.Neighbor(desktop, Direction.Up) ?? _lanes.Neighbor(desktop, Direction.Down);
         if (fallback is not Guid to) return;
         bool here = desktop == _current;
+        // Windows moves to `to` and would show its pill.
+        if (here) { WindowsPill.Hide(); _lastSwitchAt = Now; }
         Desktops.Remove(desktop, to);
         Log.Write($"closed a desktop; its windows went to desktop {Desktops.IndexOf(to) + 1}");
         if (here)
@@ -903,8 +906,6 @@ sealed partial class Engine
         {
             var b = zoom.From.Lerp(new Box(0, 0, g.Width, g.Height), Math.Clamp(z, 0, 1));
             g.RoundImage(target, (float)b.X, (float)b.Y, (float)b.W, (float)b.H, 8 * s * keep, 1);
-            // As after a swipe, the desktop's pill: Windows' own comes up over it once it switched.
-            DesktopPill(zoom.Target, 0, Math.Clamp((z - 0.75f) / 0.25f, 0, 1));
         }
         g.End();
     }

@@ -103,6 +103,7 @@ sealed partial class Engine : IGestureSink
             _overlay.LeftUp += OnLeftUp;
             _overlay.MiddleUp += OnMiddleUp;
             _overlay.RightUp += OnRightUp;
+            _overlay.OverviewAsked += ToggleOverview;
             _touchpad = new Touchpad(OnFrame);
             _touchpad.Register(_msg.Handle);
             if (Desktops.Load())
@@ -110,6 +111,8 @@ sealed partial class Engine : IGestureSink
                 Desktops.Pin(_overlay.Handle);
                 Desktops.Pin(_map.Handle);
                 WindowsPill.Repair();
+                VolumeWatch.Changed += () => Post(OnVolumeChanged);
+                VolumeWatch.Watch();
                 Desktops.Listen(_msg.Handle, WM_DESKTOP_CHANGED);
                 SetUpLanes();
                 Ready = true;
@@ -144,7 +147,7 @@ sealed partial class Engine : IGestureSink
                 else
                 {
                     // Faster while Lanes' pill is fading after a switch.
-                    MessageLoop.Wait(_map.Shown ? 15u : 200u);
+                    MessageLoop.Wait(_map.Shown || _revealAt > 0 || WindowsPill.Hidden ? 15u : 200u);
                     if (!MessageLoop.Pump()) break;
                     Tick();
                     Idle();
@@ -181,9 +184,15 @@ sealed partial class Engine : IGestureSink
         if (_overview != null) StepOverview(now);
         if (_retakeAt > 0 && now >= _retakeAt) Retake();
         if (_map.Shown && _switch == null) StepLingeringPill(now);
-        // Explorer's pop-up window goes back half a second after the last switch: Windows has
-        // asked for its pill by then, and the window comes back hidden.
-        if (WindowsPill.Hidden && _switch == null && now - _lastSwitchAt > 0.5) WindowsPill.Restore();
+        // Explorer's pop-up window goes back once Windows' pill would be gone (it stays 2 to 2.5
+        // seconds), or for the volume a moment after it changed (Explorer has put it in by then).
+        WindowsPill.Watch();
+        if (WindowsPill.Hidden && _switch == null && now - _lastSwitchAt > 3) WindowsPill.Restore();
+        if (_revealAt > 0 && now >= _revealAt)
+        {
+            _revealAt = 0;
+            WindowsPill.Reveal();
+        }
     }
 
     // When Lanes itself changed what is on this desktop while the overview is up (a window moved
@@ -191,6 +200,15 @@ sealed partial class Engine : IGestureSink
     // of the desktop is taken again a moment later, from under the overlay; otherwise a later
     // swipe would show the desktop as it was.
     double _retakeAt;
+
+    // The volume changed while Windows' pill is kept away: its window comes back, showing the
+    // volume, unless Windows has not switched yet (its pill would then come up in it).
+    double _revealAt;
+
+    void OnVolumeChanged()
+    {
+        if (WindowsPill.Hidden && !(_switch is { Switched: false }) && Now - _lastSwitchAt > 0.15) _revealAt = Now + 0.06;
+    }
 
     void RetakeSoon() => _retakeAt = Now + 0.3;
 
@@ -633,14 +651,24 @@ sealed partial class Engine : IGestureSink
         return snap;
     }
 
-    public void OpenOverviewFromMenu() => Post(() =>
+    public void OpenOverviewFromMenu() => Post(OpenOverview);
+
+    void OpenOverview()
     {
         if (!Ready || _overview != null || _switch != null) return;
         _touchCaptureOf = _current;
         BeginOverview();
         _overview!.Tracking = false;
         SettleOverview(1, 0);
-    });
+    }
+
+    // The overview key: opens it, or closes it when it is open.
+    void ToggleOverview()
+    {
+        Log.Write("overview asked for by another program");
+        if (_overview != null) CloseOverview();
+        else OpenOverview();
+    }
 
     // Takes a screenshot of the whole screen, overlay included (demo runs only).
     public void Screenshot(string path) => Post(() =>

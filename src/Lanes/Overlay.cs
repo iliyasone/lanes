@@ -14,6 +14,10 @@ sealed class Overlay : NativeWindow
     public event Action<int, int>? LeftUp;
     public event Action<int, int>? MiddleUp;
     public event Action<int, int>? RightUp;
+    // Another program asked for the overview (an F3 key mapped to it, as on a Mac's keyboard):
+    // it posts the registered message "Lanes.Overview" to this window, titled "Lanes".
+    public event Action? OverviewAsked;
+    static readonly int OverviewMessage = RegisterWindowMessage("Lanes.Overview");
 
     // The monitor the overlay is on, its work area (without the taskbar), and the part the
     // overlay covers: the whole monitor (Lanes shows the taskbar in it, see Engine.RaiseTaskbar).
@@ -34,6 +38,8 @@ sealed class Overlay : NativeWindow
             Width = 1,
             Height = 1,
         });
+        // Lanes runs as administrator; programs that are not may still ask.
+        ChangeWindowMessageFilterEx(Handle, OverviewMessage, 1 /* MSGFLT_ALLOW */, IntPtr.Zero);
         int round = 1; // DWMWCP_DONOTROUND: square corners on a full-screen window
         DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, ref round, 4);
         // The window stays shown and is cloaked when not in use: a cloaked window takes no
@@ -88,6 +94,11 @@ sealed class Overlay : NativeWindow
 
     protected override void WndProc(ref Message m)
     {
+        if (m.Msg == OverviewMessage)
+        {
+            OverviewAsked?.Invoke();
+            return;
+        }
         switch (m.Msg)
         {
             case WM_MOUSEACTIVATE:

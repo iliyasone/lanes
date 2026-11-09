@@ -7,9 +7,9 @@ namespace Lanes;
 // Windows shows a "Desktop N" pill for about two seconds after every switch, above every other
 // window. During its own swipes Lanes shows its pill in that place instead, so Windows' one is
 // kept away: Explorer draws it in the same window as the volume and brightness pop-ups, and that
-// window shows nothing while it is minimized (as HideVolumeOSD and FluentFlyout do it). Half a
-// second after a switch, once Windows has asked for its pill, the window is put back hidden, so
-// the pill never shows and the volume and brightness pop-ups work again.
+// window shows nothing while it is minimized (as HideVolumeOSD and FluentFlyout do it). It is
+// minimized just before each switch Lanes makes and put back once the pill's time is over;
+// should the volume change meanwhile, it comes back at once, showing the volume instead.
 static class WindowsPill
 {
     static IntPtr _window;
@@ -18,6 +18,12 @@ static class WindowsPill
     static bool _missingLogged;
 
     public static bool Hidden { get; private set; }
+    // Explorer has hidden the window since Lanes minimized it: the pill's time is over, and
+    // whatever it shows from now on is something new.
+    static bool _pillOver;
+
+    // Lanes found the window, so it can keep Windows' pill away.
+    public static bool Available => Find() != IntPtr.Zero;
 
     // Explorer's pop-up window: an XAML island whose input site sits where the pop-up shows (the
     // full-screen island Explorer also has keeps its input site at 0,0).
@@ -61,6 +67,25 @@ static class WindowsPill
         SetWindowLongPtr(w, GWL_EXSTYLE, (IntPtr)(_exStyle | WS_EX_LAYERED | WS_EX_TRANSPARENT));
         ShowWindow(w, SW_SHOWMINNOACTIVE);
         Hidden = true;
+        _pillOver = false;
+        VolumeWatch.Watch();
+    }
+
+    // Called often while hidden: notes when Explorer hides the window, its pill's time over.
+    public static void Watch()
+    {
+        if (Hidden && !_pillOver && _window != IntPtr.Zero && !IsWindowVisible(_window)) _pillOver = true;
+    }
+
+    // Shows the window where Explorer put it, with what Explorer shows in it now (the volume).
+    public static void Reveal()
+    {
+        if (!Hidden) return;
+        Hidden = false;
+        var w = _window;
+        if (w == IntPtr.Zero || !IsWindow(w)) return;
+        SetWindowLongPtr(w, GWL_EXSTYLE, (IntPtr)(_exStyle & ~(long)(WS_EX_LAYERED | WS_EX_TRANSPARENT)));
+        ShowWindow(w, SW_SHOWNOACTIVATE);
     }
 
     // Back to how Explorer keeps it, hidden and not minimized, without showing on the way: it is
@@ -68,6 +93,12 @@ static class WindowsPill
     public static void Restore()
     {
         if (!Hidden) return;
+        // Explorer shows something new in it (the volume after the pill was gone): let it show.
+        if (_pillOver && _window != IntPtr.Zero && IsWindowVisible(_window))
+        {
+            Reveal();
+            return;
+        }
         Hidden = false;
         var w = _window;
         if (w == IntPtr.Zero || !IsWindow(w)) return;
