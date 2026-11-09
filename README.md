@@ -101,9 +101,11 @@ are on, in the middle: what is above and below you reads at a glance.
   an edge of the screen goes against the same edge in the other's place). A window let go
   anywhere else springs back to its place. The window you dragged comes to the front as the
   overview closes.
-- **The window under the pointer** gets three round buttons over its top right corner, as on
-  its title bar (which in the overview is only a picture): minimize (it leaves the overview),
-  maximize or restore (it takes its new shape among the others), and close.
+- **The window under the pointer** is outlined and gets three round buttons over its top right
+  corner, as on its title bar (which in the overview is only a picture): minimize (it leaves
+  the overview), maximize or restore (it takes its new shape among the others), and close.
+
+![A window's buttons in the overview](docs/screenshots/4d-window-buttons.png)
 - **Middle-click** a window to close it, or a desktop to close the desktop (its windows go to
   the desktop next to it), as in Task View.
 - **Click a window** to bring it to the front and close the overview; **click a desktop** to
@@ -115,8 +117,8 @@ of Windows' row of previews a map of your desktops drops down over the screen, w
 it is, a little darker. The lanes are as in the overview, about twice as big; each desktop
 shows the app's windows, live, exactly where they are on it, and every other window as a pale
 shape, so you see where each one is. Desktops without the app's windows are dimmed. The
-pointer over a window lifts it a little and outlines it and its desktop, whose name gives way
-to the window's title. Click a window to go to it (on another desktop, the map zooms into that
+pointer over a window lifts it a little and outlines it, and its desktop's name gives way to
+the window's title. Click a window to go to it (on another desktop, the map zooms into that
 desktop first), a desktop to go there; the same button again, Esc or a click elsewhere closes
 the map. An app with one window, a click with Shift, Ctrl or Alt held, the middle button and
 dragging a button along the taskbar work as in Windows.

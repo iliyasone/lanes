@@ -790,21 +790,20 @@ sealed partial class Engine : IGestureSink
         return _tilePictures[desktop] = _gfx.Scaled(full, (int)w, (int)h, 8 * _overlay.Scale);
     }
 
-    // A desktop itself (wallpaper and icons) at a tile's size, for an app's map; made again when
-    // that picture is new, but not while the tiles are still growing to their size.
+    // A desktop itself (wallpaper and icons) at a tile's size, for an app's map. Made between
+    // frames (MakeMapTile, as the tiles get their places): drawing it takes the drawing context.
     readonly Dictionary<Guid, (ID2D1Bitmap1 From, ID2D1Bitmap1 Small)> _mapTiles = new();
 
-    ID2D1Bitmap1? MapTilePicture(Guid desktop, float w, float h, bool moving)
+    void MakeMapTile(Guid desktop, float w, float h)
     {
-        var full = DeskPicture(desktop);
-        if (full == null) return null;
-        if (_mapTiles.TryGetValue(desktop, out var t) && t.From == full && Math.Abs(t.Small.PixelSize.Width - (int)w) <= 1) return t.Small;
-        if (moving) return null;
-        t.Small?.Dispose();
-        var small = _gfx.Scaled(full, (int)w, (int)h, 8 * _overlay.Scale);
-        _mapTiles[desktop] = (full, small);
-        return small;
+        if (DeskPicture(desktop) is not { } full || MapTile(desktop, w) != null) return;
+        if (_mapTiles.Remove(desktop, out var old)) old.Small.Dispose();
+        _mapTiles[desktop] = (full, _gfx.Scaled(full, (int)w, (int)h, 8 * _overlay.Scale));
     }
+
+    // The one made, if it is still of that desktop's picture and of this size.
+    ID2D1Bitmap1? MapTile(Guid desktop, float w) =>
+        _mapTiles.TryGetValue(desktop, out var t) && t.From == DeskPicture(desktop) && Math.Abs(t.Small.PixelSize.Width - (int)w) <= 1 ? t.Small : null;
 
     (ID2D1Bitmap1 Sharp, ID2D1Bitmap1 Blurred)? Wallpaper(Guid desktop)
     {
@@ -976,7 +975,7 @@ sealed partial class Engine : IGestureSink
     {
         var r = _recognizers.Values.FirstOrDefault(x => x.Reports > 0);
         if (r == null) return "";
-        return $" ({r.Reports} reports in {r.TrackedMs} ms, {(r.EndedBySilence ? "reports stopped" : "lift seen")}, {_touchpad.Dropped} empty reports so far)";
+        return $" ({r.Reports} reports in {r.TrackedMs} ms, {(r.EndedBySilence ? "reports stopped" : "lift seen")}, up to {_touchpad.Late()} ms late, {_touchpad.Dropped} empty reports so far)";
     }
 
     public void End(double vx, double vy)

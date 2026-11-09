@@ -277,7 +277,9 @@ sealed partial class Engine
         o.TileShown.TryAdd(ColumnKey, o.Strip.Column);
         o.TileShown.TryAdd(BandKey, Band(o.Strip));
         foreach (var t in o.Strip.Tiles)
-            if (t.Kind == TileKind.Desktop) TilePicture(t.Desktop, (float)t.Rect.W, (float)t.Rect.H);
+            if (t.Kind != TileKind.Desktop) continue;
+            else if (o.App != null) MakeMapTile(t.Desktop, (float)t.Rect.W, (float)t.Rect.H);
+            else TilePicture(t.Desktop, (float)t.Rect.W, (float)t.Rect.H);
         // More or fewer lanes move where the windows may go: they glide there too.
         if (o.Page != null && Math.Abs(o.Strip.SpreadTop - spreadTop) > 0.5) Respread(o.Page, o.Strip, o);
         o.Moving = true;
@@ -1278,7 +1280,7 @@ sealed partial class Engine
     Box[] WindowButtons(Box b)
     {
         float s = _overlay.Scale;
-        double d = 26 * s, gap = 6 * s, y = b.Y - d - 8 * s;
+        double d = 28 * s, gap = 8 * s, y = b.Y - d - 8 * s;
         return new[] { new Box(b.Right - 3 * d - 2 * gap, y, d, d), new Box(b.Right - 2 * d - gap, y, d, d), new Box(b.Right - d, y, d, d) };
     }
 
@@ -1329,14 +1331,16 @@ sealed partial class Engine
         var g = _gfx;
         float s = _overlay.Scale;
         if (alpha < 0.01f) return;
+        // The window they belong to, outlined (just outside it: its picture covers what is under it).
+        g.RoundRectOutline((float)b.X - 2 * s, (float)b.Y - 2 * s, (float)b.W + 4 * s, (float)b.H + 4 * s, 4 * s, A(0xB3FFFFFFu, alpha), 2 * s);
         var buttons = WindowButtons(b);
         for (int k = 0; k < buttons.Length; k++)
         {
             float x = (float)buttons[k].X, y = (float)buttons[k].Y, d = (float)buttons[k].W, r = d / 2, cx = x + r, cy = y + r, arm = 4.5f * s;
-            uint fill = k == under ? (k == 2 ? 0xFFC42B1Cu : 0xFF454545u) : 0xF0262626u;
-            g.Shadow(x, y, d, d, r, 8 * s, 2 * s, 0.5f * alpha);
+            uint fill = k == under ? (k == 2 ? 0xFFC42B1Cu : 0x66FFFFFFu) : 0x38FFFFFFu;
+            g.Shadow(x, y, d, d, r, 8 * s, 2 * s, 0.4f * alpha);
             g.RoundRect(x, y, d, d, r, A(fill, alpha));
-            g.RoundRectOutline(x + 0.5f, y + 0.5f, d - 1, d - 1, r, A(0x33FFFFFFu, alpha), 1);
+            g.RoundRectOutline(x + 0.5f, y + 0.5f, d - 1, d - 1, r, A(0x66FFFFFFu, alpha), 1);
             uint ink = A(0xFFFFFFFFu, alpha);
             float t = 1.25f * s;
             if (k == 0) g.Rect(cx - arm, cy - t / 2, 2 * arm, t, ink);
@@ -1719,7 +1723,7 @@ sealed partial class Engine
         var page = o.Page;
         g.Begin(Gfx.Color(0xFF000000));
         if (Picture(_current) is { } screen) g.Image(screen, 0, 0, g.Width, g.Height);
-        g.Rect(0, 0, g.Width, g.Height, A(0xFF000000, 0.45f * pc));
+        g.Rect(0, 0, g.Width, g.Height, A(0xFF000000, 0.55f * pc));
         float sp = Math.Clamp(p / 0.6f, 0, 1), sq = 1 - MathF.Pow(1 - sp, 3);
         float slide = MathF.Round((1 - sq) * -(float)(o.Strip.Bottom + 2 * s));
         if (keep > 0.002f) DrawStrip(o, keep, slide, 0, null, p);
@@ -1750,7 +1754,7 @@ sealed partial class Engine
     {
         var g = _gfx;
         float s = _overlay.Scale;
-        if (MapTilePicture(desktop, w, h, o.Moving) is { } small) g.Image(small, x, y, w, h, alpha);
+        if (MapTile(desktop, w) is { } small) g.Image(small, x, y, w, h, alpha);
         else if (DeskPicture(desktop) is { } full) g.RoundImage(full, x, y, w, h, 8 * s, alpha);
         if (!o.Others.TryGetValue(desktop, out var others)) return;
         float kx = w / g.Width, ky = h / g.Height;
@@ -1786,10 +1790,10 @@ sealed partial class Engine
         float shift = o.Swipe?.Axis == Axis.Horizontal ? f * (float)(strip.TileW + strip.Gap) : 0;
         // The column of current desktops as one object: what is above and below you.
         var column = o.TileShown.GetValueOrDefault(ColumnKey, strip.Column);
-        g.RoundRect((float)column.X, (float)column.Y + dy, (float)column.W, (float)column.H, 12 * s, A(0x0DFFFFFF, a));
+        if (!o.Page.Map) g.RoundRect((float)column.X, (float)column.Y + dy, (float)column.W, (float)column.H, 12 * s, A(0x0DFFFFFF, a));
         Box? ring = null, ringTo = null;
-        // On an app's map the desktops it has windows on stand out, and the one of the window
-        // under the pointer is outlined, its title in place of the desktop's name.
+        // On an app's map the desktops it has windows on stand out, and the window under the
+        // pointer gives its title in place of its desktop's name.
         var page = o.Page;
         var withApp = page.Map ? page.On.ToHashSet() : null;
         Guid? pointed = page.Map && o.Hover >= 0 && o.Hover < page.On.Count ? page.On[o.Hover] : null;
@@ -1850,10 +1854,10 @@ sealed partial class Engine
             g.Shadow(x, y, w, h, 8 * s, 18 * s, 6 * s, 0.4f * ta);
             if (page.Map) DrawMapTile(o, t.Desktop, x, y, w, h, ta);
             else DrawTilePicture(t.Desktop, x, y, w, h, ta);
-            g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, 8 * s, A(0x1FFFFFFF, ta), 1);
+            g.RoundRectOutline(x + 0.5f, y + 0.5f, w - 1, h - 1, 8 * s, A(page.Map ? 0x2EFFFFFFu : 0x1FFFFFFFu, ta), 1);
             if (targeted) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xFFFFFFFF, a), 2.5f * s);
             // White around the desktop whose windows are shown, when it is not the one you are on.
-            else if ((hover || t.Desktop == o.Page.Desktop || t.Desktop == pointed) && t.Desktop != _current) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xD9FFFFFF, a), 2 * s);
+            else if ((hover || t.Desktop == o.Page.Desktop) && t.Desktop != _current) g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xD9FFFFFF, a), 2 * s);
             if (o.Added == t.Desktop && 1 - (float)((Now - o.AddedAt) / 0.6) is var lit and > 0)
                 g.RoundRectOutline(x - 4 * s, y - 4 * s, w + 8 * s, h + 8 * s, 11 * s, A(0xFFFFFFFF, a * lit), 2 * s);
             if (o.Renaming == t.Desktop)
@@ -1868,7 +1872,8 @@ sealed partial class Engine
                 g.Rect(fx + 8 * s + nw + 1, fy + 4 * s, 1.5f * s, fh - 8 * s, A(0xFFFFFFFF, ta));
                 continue;
             }
-            string title = t.Desktop == pointed ? page.Windows[o.Hover].Title : Title(t.Desktop);
+            // On an app's map every desktop would be named after that app: its own name instead.
+            string title = t.Desktop == pointed ? page.Windows[o.Hover].Title : page.Map ? WindowsName(t.Desktop) : Title(t.Desktop);
             float cw = Math.Min(g.TextWidth(title, capFont), w);
             g.Text(title, capFont, x + (w - cw) / 2, y + h + 6 * s, cw, 18 * s, A(0xFFE6E6E6, ta));
         }
