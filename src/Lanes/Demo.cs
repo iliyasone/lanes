@@ -174,10 +174,14 @@ static class Demo
                 // First the taskbar as Windows ships it on a PC: this desktop's windows only.
                 using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"))
                     k.SetValue("VirtualDesktopTaskbarFilter", 1, Microsoft.Win32.RegistryValueKind.DWord);
+                long t0 = Environment.TickCount64;
                 SendMessageTimeout((IntPtr)0xFFFF, 0x001A, IntPtr.Zero, "TraySettings", 2, 3000, out _);
+                Log.Write($"demo: taskbar told of this desktop's windows only in {Environment.TickCount64 - t0} ms");
                 await Task.Delay(2000);
                 using var shotBefore = TaskbarShot(Path.Combine(dir, "16-taskbar-this-desktop.png"));
+                t0 = Environment.TickCount64;
                 TaskbarSetting.ShowAllDesktops();
+                Log.Write($"demo: taskbar told of all desktops' windows in {Environment.TickCount64 - t0} ms");
                 await Task.Delay(2000);
                 using var shotAfter = TaskbarShot(Path.Combine(dir, "17-taskbar-all-desktops.png"));
                 int changed = 0;
