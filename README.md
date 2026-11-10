@@ -149,7 +149,9 @@ precision touchpad. A Magic Trackpad becomes one with the
 Download `Lanes.exe` from the [latest release](https://github.com/iliyasone/lanes/releases/latest)
 and run `Lanes.exe --install` (it asks for administrator rights). It copies itself to
 `C:\Program Files\Lanes` and starts with Windows through a Task Scheduler task that runs
-elevated, so swipes also work while an administrator window is in front.
+elevated, so swipes also work while an administrator window is in front. It also adds **Lanes** to
+Start: search for it to start Lanes again after you quit it (it starts through the same task,
+without a prompt; if Lanes is already running, nothing happens).
 
 It sets Windows' own four-finger swipes and three-finger up/down to
 *Nothing* (Settings → Bluetooth & devices → Touchpad → Advanced gestures) so the two never
@@ -158,7 +160,7 @@ left/right and taps stay with Windows.
 
 `Lanes.exe --uninstall` stops it, gives the gestures and the taskbar setting back (and
 tells Windows to use them again at once), removes the desktops Lanes made — their windows move to one of yours — and
-removes Lanes. The log and settings stay in `%LOCALAPPDATA%\Lanes`.
+removes Lanes and its Start entry. The log and settings stay in `%LOCALAPPDATA%\Lanes`.
 
 ## Updates
 
