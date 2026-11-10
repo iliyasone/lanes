@@ -11,8 +11,9 @@ static class Install
     public const string TaskName = "Lanes", SessionTask = "Lanes session";
     static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Lanes");
     public static string Exe => Path.Combine(Dir, "Lanes.exe");
+    static readonly string Shortcut = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), "Lanes.lnk");
 
-    static bool Elevated => new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
+    public static bool Elevated => new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
 
     static bool Relaunched(string arg)
     {
@@ -62,6 +63,11 @@ static class Install
             """, System.Text.Encoding.Unicode);
         Schtasks($"/Create /TN \"{SessionTask}\" /XML \"{xml}\" /F");
         File.Delete(xml);
+        // So that Lanes can be found and started from Start; see Program.Main.
+        dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!)!;
+        var link = shell.CreateShortcut(Shortcut);
+        link.TargetPath = Exe;
+        link.Save();
         Schtasks($"/Run /TN {TaskName}");
         Log.Write($"installed {Program.Version} to {Dir}");
         return 0;
@@ -84,17 +90,18 @@ static class Install
         }
         Schtasks($"/Delete /TN {TaskName} /F");
         Schtasks($"/Delete /TN \"{SessionTask}\" /F");
+        File.Delete(Shortcut);
         // The folder may hold this very program; remove it once it has exited.
         Process.Start(new ProcessStartInfo("cmd.exe", $"/c timeout /t 2 /nobreak >nul & rmdir /s /q \"{Dir}\"") { CreateNoWindow = true, UseShellExecute = false });
         Log.Write("uninstalled");
         return 0;
     }
 
-    public static bool RunSessionTask()
+    public static bool RunTask(string name)
     {
         try
         {
-            using var p = Process.Start(new ProcessStartInfo("schtasks.exe", $"/Run /TN \"{SessionTask}\"") { CreateNoWindow = true, UseShellExecute = false })!;
+            using var p = Process.Start(new ProcessStartInfo("schtasks.exe", $"/Run /TN \"{name}\"") { CreateNoWindow = true, UseShellExecute = false })!;
             p.WaitForExit(5000);
             return p.ExitCode == 0;
         }

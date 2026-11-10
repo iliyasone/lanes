@@ -15,7 +15,7 @@ static class SessionHelper
         {
             Directory.CreateDirectory(Log.Dir);
             File.WriteAllText(Request, what);
-            if (!Install.RunSessionTask()) return false;
+            if (!Install.RunTask(Install.SessionTask)) return false;
             for (int t = 0; t < waitMs; t += 200)
             {
                 Thread.Sleep(200);

@@ -14,6 +14,10 @@ static class Program
         if (args.Contains("--install")) return Install.Run();
         if (args.Contains("--uninstall")) return Install.Remove();
         if (args.Contains("--session")) return SessionHelper.Run();
+        // Started from Start, the installed copy runs through its task, elevated as at logon (once: the task
+        // ignores a second start).
+        if (args.Length == 0 && !Install.Elevated && string.Equals(Environment.ProcessPath, Install.Exe, StringComparison.OrdinalIgnoreCase)
+            && Install.RunTask(Install.TaskName)) return 0;
         bool demo = args.Contains("--demo");
 
         _single = new Mutex(true, @"Local\Lanes", out bool owned);
