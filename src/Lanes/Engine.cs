@@ -62,6 +62,7 @@ sealed partial class Engine : IGestureSink
     public long Heartbeat;
     public IntPtr OverlayHandle => _overlay?.Handle ?? IntPtr.Zero;
     public TaskbarButtons? Buttons { get; private set; }
+    WinTab? _winTab;
     public event Action<string>? Status;
 
     public Engine(Settings settings, bool demo)
@@ -123,6 +124,7 @@ sealed partial class Engine : IGestureSink
                 SetUpLanes();
                 Ready = true;
                 Buttons = new TaskbarButtons();
+                _winTab = new WinTab(() => Post(ToggleOverview));
             }
             else Status?.Invoke("This Windows version is not supported");
             PrepareWallpapers();
@@ -1054,7 +1056,7 @@ sealed partial class Engine : IGestureSink
     // The overview key: opens it, or closes it when it is open.
     void ToggleOverview()
     {
-        Log.Write("overview asked for by another program");
+        Log.Write("overview asked for by a key");
         if (_overview != null) CloseOverview();
         else OpenOverview();
     }

@@ -20,14 +20,15 @@ static class AppWindows
     static readonly ConcurrentDictionary<uint, string> AppNames = new();
 
     // The windows you see on the current desktop on this monitor area, back to front; or, with
-    // `desktop`, the windows that are on that other desktop (Windows keeps them cloaked).
+    // `desktop`, the windows that are on that other desktop (Windows keeps them cloaked, but
+    // not yet in the moment after it was left: then they are still the ones on the screen).
     public static List<AppWindow> OnScreen(RECT area, IntPtr own, Guid? desktop = null)
     {
         var list = new List<AppWindow>();
         EnumWindows((h, _) =>
         {
             if (h == own || !IsWindowVisible(h) || IsIconic(h)) return true;
-            if (desktop == null ? Cloaked(h) : !CloakedByShell(h) || Desktops.WindowDesktop(h) != desktop) return true;
+            if (desktop == null ? Cloaked(h) : Cloaked(h) && !CloakedByShell(h) || Desktops.WindowDesktop(h) != desktop) return true;
             if (App(h, area) is { } w) list.Add(w);
             return true;
         }, IntPtr.Zero);
@@ -121,7 +122,8 @@ static class AppWindows
 
     // Windows put in full screen with the overview's button, as with the green button on a Mac:
     // without their frame, over the whole monitor and the taskbar, the way Chrome goes full
-    // screen. Each goes to a desktop of its own next to the one it was on (`Desk`, made by the
+    // screen. A browser (and an app built on one) is asked for its own full screen instead, as
+    // F11 does, which also hides its tabs and address bar; kept as `Style` -1. Each goes to a desktop of its own next to the one it was on (`Desk`, made by the
     // engine; `Home` is where it was), as a full-screen app has a Space of its own on a Mac. What
     // each had before (styles, place, maximized) is kept in a file with those, so it comes back
     // even after Lanes restarted.
@@ -174,6 +176,19 @@ static class AppWindows
     public static void FullScreen(IntPtr hwnd, Guid home = default, Guid desk = default)
     {
         bool max = IsZoomed(hwnd);
+        if (ClassName(hwnd) is "Chrome_WidgetWin_1" or "MozillaWindowClass")
+        {
+            GetWindowRect(hwnd, out var before);
+            PressF11(hwnd);
+            for (int i = 0; i < 40 && !CoversMonitor(hwnd); i++) Thread.Sleep(10);
+            Log.Write($"full screen: the app's own, as by F11: {(CoversMonitor(hwnd) ? "taken" : "NOT TAKEN, the frame is taken off instead")}");
+            if (CoversMonitor(hwnd))
+            {
+                Full[hwnd] = (-1, 0, before, max, home, desk);
+                SaveFull();
+                return;
+            }
+        }
         if (max) SendMessageTimeout(hwnd, WM_SYSCOMMAND, (IntPtr)SC_RESTORE, IntPtr.Zero, SMTO_ABORTIFHUNG, 1000, out _);
         GetWindowRect(hwnd, out var r);
         long style = GetWindowLongPtr(hwnd, GWL_STYLE).ToInt64(), ex = GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64();
@@ -185,11 +200,34 @@ static class AppWindows
         SetWindowPos(hwnd, IntPtr.Zero, m.Left, m.Top, m.Width, m.Height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
 
+    static void PressF11(IntPtr hwnd)
+    {
+        PostMessage(hwnd, 0x0100 /* WM_KEYDOWN */, (IntPtr)0x7A, (IntPtr)0x00570001);
+        PostMessage(hwnd, 0x0101 /* WM_KEYUP */, (IntPtr)0x7A, unchecked((IntPtr)(long)0xC0570001));
+    }
+
+    static bool CoversMonitor(IntPtr hwnd)
+    {
+        var m = MonitorOf(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)).Monitor;
+        var f = Frame(hwnd);
+        return f.Left <= m.Left && f.Top <= m.Top && f.Right >= m.Right && f.Bottom >= m.Bottom;
+    }
+
     // Back as it was; hands back where it was before and the desktop made for it.
     public static (Guid Home, Guid Desk) LeaveFullScreen(IntPtr hwnd)
     {
         if (!Full.Remove(hwnd, out var was)) return default;
         SaveFull();
+        if (was.Style == -1)
+        {
+            // Unless it has left its full screen by itself (Esc, F11).
+            if (CoversMonitor(hwnd))
+            {
+                PressF11(hwnd);
+                for (int i = 0; i < 40 && CoversMonitor(hwnd); i++) Thread.Sleep(10);
+            }
+            return (was.Home, was.Desk);
+        }
         SetWindowLongPtr(hwnd, GWL_STYLE, (IntPtr)was.Style);
         SetWindowLongPtr(hwnd, GWL_EXSTYLE, (IntPtr)was.Ex);
         SetWindowPos(hwnd, IntPtr.Zero, was.Rect.Left, was.Rect.Top, was.Rect.Width, was.Rect.Height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);

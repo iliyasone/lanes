@@ -383,7 +383,11 @@ sealed partial class Engine
                 if (front == was) AppWindows.Activate(bar);
                 return;
             }
-            _lifted = (bar, front, false);
+            // The window to make active again afterwards is the full-screen one, whatever is
+            // active now (the taskbar itself, after a swipe here from another desktop).
+            var full = AppWindows.OnScreen(_overlay.Monitor, _overlay.Handle).LastOrDefault(w =>
+                w.Frame.Left <= _overlay.Monitor.Left && w.Frame.Top <= _overlay.Monitor.Top && w.Frame.Right >= _overlay.Monitor.Right && w.Frame.Bottom >= _overlay.Monitor.Bottom);
+            _lifted = (bar, full?.Handle ?? front, false);
             AppWindows.Activate(bar);
             // The overlay stays over it, but where the hole is.
             _overlay.Place();

@@ -70,7 +70,7 @@ If you change that setting later, Lanes leaves it as you set it.
 
 ### The overview
 
-A three-finger swipe up opens it, again following the fingers: the windows travel from
+A three-finger swipe up, or Win+Tab, opens it, again following the fingers: the windows travel from
 where they are into rows, as large as the room below the lanes allows (never larger than
 they are), each about where it was, and the lanes come down above them. Smaller windows
 shrink less than big ones, and a small one keeps its size where its row has room. Each window
@@ -104,7 +104,8 @@ are on, in the middle: what is above and below you reads at a glance.
 - **The window under the pointer** is outlined and gets three round buttons over its top right
   corner, as on its title bar (which in the overview is only a picture): minimize (it flies
   into its app's taskbar button), full screen, as the green button on a Mac (the window loses
-  its frame, covers the whole screen and the taskbar and goes to a new desktop of its own,
+  its frame and covers the whole screen and the taskbar; a browser, or an app built on one,
+  goes into its own full screen instead, as by F11, without its tabs and address bar; it goes to a new desktop of its own,
   next to the one it was on, where Lanes takes you; pressed again in the overview there, it
   comes back as it was to the desktop it came from, and the desktop made for it goes, as it
   does when the window is closed), and close.

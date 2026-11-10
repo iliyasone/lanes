@@ -412,12 +412,39 @@ static class Demo
         await Swipe(engine, 3, 0, 1, 0.28 * 0.8);
         await Task.Delay(1500);
         Log.Write($"full screen: after the overview closed: {Under()}; in front: {Front()}");
+        if (browser != null)
+        {
+            // Lanes' full screen on a browser is the browser's own (F11): out of the one Chrome
+            // started in, a window with a frame; in by Lanes, the whole screen again; out by Lanes.
+            SendKeys.SendWait("{F11}");
+            await Task.Delay(1500);
+            string windowed = Describe(full);
+            AppWindows.FullScreen(full);
+            await Task.Delay(1000);
+            string inFull = Describe(full);
+            AppWindows.LeaveFullScreen(full);
+            await Task.Delay(1000);
+            Log.Write($"full screen: Chrome in a window {windowed}; by Lanes {inFull}; back {Describe(full)}");
+            // Win+Tab opens the overview and closes it.
+            async Task WinTab()
+            {
+                keybd_event(0x5B, 0, 0, IntPtr.Zero); keybd_event(0x09, 0, 0, IntPtr.Zero);
+                keybd_event(0x09, 0, 2, IntPtr.Zero); keybd_event(0x5B, 0, 2, IntPtr.Zero);
+                await Task.Delay(1500);
+            }
+            await WinTab();
+            int open = (await engine.OverviewLayout()).Windows.Count;
+            engine.Screenshot(Path.Combine(dir, "20-win-tab.png"));
+            await WinTab();
+            Log.Write($"win+tab: the overview {(open > 0 ? "opened" : "DID NOT OPEN")}, then {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STAYED OPEN")}; in front {Describe(GetForegroundWindow())}");
+        }
         form?.Close();
         try { browser?.Kill(entireProcessTree: true); } catch { }
         await Task.Delay(800);
     }
 
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extra);
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Native.POINT pt);
 
     static async Task<string> LanesNow(Engine engine) =>
