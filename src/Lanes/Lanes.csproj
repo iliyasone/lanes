@@ -3,6 +3,8 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
+    <!-- For UI Automation (the taskbar's buttons), which comes with WPF. -->
+    <UseWPF>true</UseWPF>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -12,10 +14,15 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <ApplicationIcon>../../assets/icon.ico</ApplicationIcon>
     <NoWarn>CA1416</NoWarn>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- WPF leaves these out of the usual implicit usings. -->
+    <Using Include="System.IO" />
+    <Using Include="System.Net.Http" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />

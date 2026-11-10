@@ -7,7 +7,7 @@ public readonly record struct Finger(uint Id, double X, double Y);
 // One report from the touchpad: when it came (ms) and the fingers whose positions it carries.
 public readonly record struct TouchFrame(long Time, Finger[] Fingers);
 
-public enum GestureKind { Switch, Overview }
+public enum GestureKind { Switch, Overview, Scroll }
 public enum Axis { Horizontal, Vertical }
 
 public interface IGestureSink
@@ -21,7 +21,9 @@ public interface IGestureSink
 }
 
 // Turns touchpad reports into swipes. Four fingers make a Switch swipe on either axis; three
-// fingers make an Overview swipe, vertical only (three fingers sideways stay with Windows).
+// fingers make an Overview swipe, vertical only (three fingers sideways stay with Windows); two
+// fingers make a Scroll on either axis, only while `TwoFingers` is set (the overview is open;
+// elsewhere two fingers scroll the window under the pointer and Lanes leaves them alone).
 // Travel is measured per finger by contact ID, so a finger landing late or lifting early
 // does not make the picture jump.
 public sealed class GestureRecognizer
@@ -47,6 +49,9 @@ public sealed class GestureRecognizer
 
     public bool Tracking => _state == State.Tracking;
 
+    public bool TwoFingers;
+    int Least => TwoFingers ? 2 : 3;
+
     // About the last swipe, for the log: reports while tracking, and whether the fingers were
     // seen lifting or the reports just stopped.
     public int Reports { get; private set; }
@@ -65,13 +70,13 @@ public sealed class GestureRecognizer
         switch (_state)
         {
             case State.Idle:
-                if (count >= 3) Start(fingers);
+                if (count >= Least) Start(fingers);
                 break;
 
             case State.Pending:
                 Accumulate(fingers);
                 _maxFingers = Math.Max(_maxFingers, count);
-                if (count < 3) { _state = count == 0 ? State.Idle : State.Ignored; break; }
+                if (count < Least) { _state = count == 0 ? State.Idle : State.Ignored; break; }
                 if (Math.Sqrt(_tx * _tx + _ty * _ty) >= LockDistance) Lock(frame.Time);
                 break;
 
@@ -117,7 +122,7 @@ public sealed class GestureRecognizer
 
     void Lock(long time)
     {
-        Kind = _maxFingers >= 4 ? GestureKind.Switch : GestureKind.Overview;
+        Kind = _maxFingers >= 4 ? GestureKind.Switch : _maxFingers == 3 ? GestureKind.Overview : GestureKind.Scroll;
         Axis = Math.Abs(_tx) >= Math.Abs(_ty) ? Axis.Horizontal : Axis.Vertical;
         if (Kind == GestureKind.Overview && Axis == Axis.Horizontal) { _state = State.Ignored; return; }
         _state = State.Tracking;

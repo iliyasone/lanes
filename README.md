@@ -4,7 +4,7 @@ Lanes of virtual desktops on Windows 11, one above the other, moved between with
 four-finger swipes that follow your fingers, and an overview of every lane on a
 three-finger swipe up. Made for an Apple Magic Trackpad; works with any precision touchpad.
 
-![Four fingers down: the lane above comes down](docs/screenshots/1-vertical-swipe.png)
+![Three fingers up for the overview, then four fingers to the next desktop and to the lane above and back, without leaving it](docs/screenshots/overview.gif)
 
 ## What it does
 
@@ -18,6 +18,7 @@ it works in all four directions:
 | 4 fingers down / up | The lane above / below, on the desktop you last used there |
 | 3 fingers up | The overview: every lane, and this desktop's windows spread out |
 | 3 fingers down | Closes the overview |
+| 4 fingers in the overview | The next desktop or lane, and the overview stays open |
 
 Each lane remembers where you were. Say Messages lives in the lane above: from any desktop
 of your lane, a swipe down brings Messages. Go down to the lane below, open a code agent
@@ -27,8 +28,34 @@ Messages is still above.
 The picture moves with the fingers the whole way: stop halfway and it stays, move back and
 it comes back, and the switch happens only when you let go past the middle or flick. Where
 there is no desktop (the end of a lane, above the top lane) the picture stretches a little
-and springs back. While you swipe, a small pill near the bottom shows the lanes and where
-you are going.
+and springs back, lifted off a plain backdrop with a short shadow at its edge.
+
+A full-screen window lies over the taskbar, as on the screen: swiping away from it, the
+taskbar comes out from under the window with the window's light shadow on it, which goes as
+the window's edge leaves the taskbar and as the desktops come to rest.
+
+At the bottom, in the place of Windows' "Desktop N" pill (which Lanes keeps away), a small
+map of the lanes rises in, moves with the fingers and stays as long as Windows' pill would,
+then goes down out of sight (or with the fingers, if they open the overview first): the blue
+cell is where you are and your lane stands out from the others; a sideways swipe slides your
+lane under the blue cell, one up or down carries it to the next lane. The map, like Windows'
+pop-ups, is light or dark as Windows is (Settings → Personalization → Colors). When Windows'
+volume or brightness pop-up shows in the same place, the map glides aside, and back once the
+pop-up has gone.
+
+### Window shadows
+
+App windows on the desktop cast a shadow as on a Mac: a soft one well below the window and a
+short dark one tight round its edges, deeper than Windows' own thin one. The overview shows
+the same shadow, over the windows behind too, so nothing changes about it as the overview
+opens. Lanes keeps four
+see-through windows of its own round each app window, just under it, which clicks pass
+through and which follow the window as it moves (while it is dragged the shadow can be a
+frame behind). Maximized and full-screen windows, and windows kept on top of the others,
+have none.
+
+Windows switches the moment you let go, under the picture, so by the time the picture lands
+the new desktop is drawn, wallpaper included.
 
 ![Four fingers left in a lane](docs/screenshots/2-horizontal-swipe.png)
 
@@ -36,24 +63,64 @@ you are going.
 fingers down pull the lane above into view. Turn it off to swap up and down.
 
 On first start Lanes puts all your desktops in one lane and makes one new desktop above and
-one below.
+one below. It also turns on Windows' "Show all open windows on the taskbar: on all desktops"
+(Settings → System → Multitasking), so the taskbar keeps every app whatever desktop you are
+on, as the Dock does on a Mac; clicking an app that is on another desktop takes you there.
+If you change that setting later, Lanes leaves it as you set it.
 
 ### The overview
 
-A three-finger swipe up opens it, again following the fingers: the windows travel from
-where they are into a spread, and the lanes come down above them. Each lane's row is shifted
+A three-finger swipe up, or Win+Tab, opens it, again following the fingers: the windows travel from
+where they are into rows, as large as the room below the lanes allows (never larger than
+they are), each about where it was, and the lanes come down above them. Smaller windows
+shrink less than big ones, and a small one keeps its size where its row has room. Each window
+casts a shadow, the same as on the desktop, which grows and deepens under the pointer. Over a
+full-screen window the taskbar slides in from the screen's edge as the overview opens and back
+out as it closes; while it is open the taskbar is the active window, which Windows keeps in
+front of the full-screen one, so it takes clicks as it does anywhere else (the full-screen
+window is active again after, unless you picked another). Each lane's row is shifted
 so that the desktop a swipe up or down would land on sits in one column with the desktop you
 are on, in the middle: what is above and below you reads at a glance.
 
 ![The overview](docs/screenshots/4-overview-open.png)
 
-- **Click a window** to bring it to the front and close the overview.
-- **Click a desktop** to go there; the overview zooms into it.
-- **Click +** at the end of a lane to make a new desktop there; **New lane** under the last
-  lane starts a new lane.
-- **Right-click a desktop** to move it to the lane above or below, to a new lane, left or
-  right, or to close it. A lane left without desktops goes away.
+- **Four fingers** move to the next desktop or lane as they do outside it, and the overview
+  stays: the windows of the next desktop slide in with the fingers, your lane slides under
+  the blue ring (or the ring moves to the next lane), and Windows switches when you let go.
+- **Drag a desktop** to another place in its lane or into another lane. As you pick it up,
+  thin bars come in on every side: above the top lane and below the bottom one (a **New
+  lane**) and at both ends of each lane. Wherever you hold it, its place opens: the desktops
+  beside it move apart, or the lanes below a new lane move down and the band grows, and a
+  blue block grows where it will go. A lane left without desktops goes away.
+- **Drag a window** onto a desktop to move it there (it shrinks into that desktop's
+  picture). Held over a bar, at a lane's end or above or below the lanes, it opens a place
+  there for a new desktop (or lane) with it, the same way; held a moment by the gap between
+  two desktops, it opens one between them. **+** also takes it, for a new desktop at the end
+  of your lane. Held over another window of the same desktop, that window moves over to its
+  place; let go, and the two change places on the desktop, each keeping its size (one against
+  an edge of the screen goes against the same edge in the other's place). A window let go
+  anywhere else springs back to its place. The window you dragged comes to the front as the
+  overview closes.
+- **The window under the pointer** is outlined and gets three round buttons over its top right
+  corner, as on its title bar (which in the overview is only a picture): minimize (it flies
+  into its app's taskbar button), full screen, as the green button on a Mac (the window loses
+  its frame and covers the whole screen and the taskbar; a browser, or an app built on one,
+  goes into its own full screen instead, as by F11, without its tabs and address bar; it goes to a new desktop of its own,
+  next to the one it was on, where Lanes takes you; pressed again in the overview there, it
+  comes back as it was to the desktop it came from, and the desktop made for it goes, as it
+  does when the window is closed), and close.
+
+![A window's buttons in the overview](docs/screenshots/4d-window-buttons.png)
+- **Middle-click** a window to close it, or a desktop to close the desktop (its windows go to
+  the desktop next to it), as in Task View.
+- **Click a window** to bring it to the front and close the overview; **click a desktop** to
+  go there (the overview zooms into it); **click +** for a new desktop at the end of your lane.
 - **Esc**, a click on empty space or **three fingers down** close it.
+
+The icons on your desktop stay where they are as the fingers start and fade as the overview
+opens.
+
+![Dragging a desktop into another lane](docs/screenshots/11-drag-desktop.png)
 
 The blue ring is the desktop you are on; the column it stands in holds, in every lane, the
 desktop a swipe up or down lands on.
@@ -61,6 +128,8 @@ desktop a swipe up or down lands on.
 ### Tray menu
 
 ![Tray menu](docs/screenshots/6-tray-menu.png)
+
+It opens against the taskbar, wherever the taskbar is.
 
 - **Gestures** — off gives the swipes back to Windows until you turn it on again.
 - **Content follows fingers** — see above.
@@ -87,8 +156,8 @@ It sets Windows' own four-finger swipes and three-finger up/down to
 react to the same swipe, and puts back what you had when it quits. Three-finger
 left/right and taps stay with Windows.
 
-`Lanes.exe --uninstall` stops it, gives the gestures back (and tells Windows to use them
-again at once), removes the desktops Lanes made — their windows move to one of yours — and
+`Lanes.exe --uninstall` stops it, gives the gestures and the taskbar setting back (and
+tells Windows to use them again at once), removes the desktops Lanes made — their windows move to one of yours — and
 removes Lanes. The log and settings stay in `%LOCALAPPDATA%\Lanes`.
 
 ## Updates
@@ -107,7 +176,8 @@ click it.
 - `lanes.json` — which desktop is in which lane (by Windows' desktop ID), where each lane
   was last, and which desktops Lanes made;
 - `settings.json` — the tray menu switches;
-- `windows-gestures.txt` — your Windows gesture settings while Lanes holds them.
+- `windows-gestures.txt` — your Windows gesture settings while Lanes holds them;
+- `taskbar.txt` — the taskbar setting you had before Lanes turned it on.
 
 ## Limits
 
@@ -120,9 +190,8 @@ click it.
   the same undocumented interface the Settings app uses. If a future Windows breaks that,
   open Settings → Touchpad once and Windows reloads them.
 - Windows' own Task View and Ctrl+Win+arrows still see one row of desktops.
-- After a switch Windows shows its own "Desktop N" label at the bottom for about two
-  seconds, as after its own swipe. It is not a window Lanes can hide; naming desktops in
-  Task View makes it say something useful.
+- A window that is on every desktop ("Show this window on all desktops") gets its shadow back
+  a moment after each switch.
 
 ## How it works
 
@@ -131,16 +200,21 @@ click it.
   landing late or lifting early does not make the picture jump; `Motion.cs` maps finger
   travel to the picture and decides where it goes on release, then moves it with a
   critically damped spring that starts at the fingers' speed; `LaneMap.cs` keeps the
-  lanes; `Spread.cs` lays out the overview.
+  lanes; `Strip.cs` lays out the overview's lane rows and works out where a dragged desktop
+  goes; `Spread.cs` lays out its windows; `Shadow.cs` works out a window's shadow, shared by
+  the desktop and the overview.
 - `src/Lanes`: `Touchpad.cs` reads raw HID reports; `Engine*.cs` runs everything a swipe
   needs on one thread: each frame is drawn right after the freshest report with Direct2D
   on a flip-model swap chain (`Gfx.cs`) in a topmost window shown on every desktop and
-  left out of screen captures (`Overlay.cs`). When the swipe ends on another desktop,
-  Lanes switches to it underneath the picture and then removes the picture. The overview's
-  windows are live DWM thumbnails. Work that must happen in your own session without
+  shown in screenshots (`Overlay.cs`). When a swipe is let go toward another desktop, Lanes
+  switches to it at once underneath the picture, and removes the picture once it has landed. The overview's
+  windows are live DWM thumbnails, and so are their shadows (`ShadowSprite.cs`), so that a
+  shadow lies over the windows behind it. Work that must happen in your own session without
   elevation (telling Explorer to reload gesture settings, removing desktops on uninstall)
   runs through a second task, `Lanes session` (`SessionHelper.cs`). `Desktops.cs` talks to Windows' virtual desktops through
   [VirtualDesktopAccessor](https://github.com/Ciantic/VirtualDesktopAccessor) (embedded).
+  `DesktopShadows.cs` keeps the windows' shadows on the desktop on a thread of its own,
+  told of every move by a WinEvent hook.
 - CI (`.github/workflows/ci.yml`) runs `Lanes.exe --demo` on a Windows runner set to dark
   theme at 1920×1080: it sets up desktops with sample windows, performs the swipes with
   made-up touchpad reports, checks that clicks pass through Lanes' window between swipes,

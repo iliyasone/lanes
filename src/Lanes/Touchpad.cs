@@ -28,6 +28,15 @@ sealed class Touchpad
 
     // Reports that carried a contact count but no readable finger, for the log.
     public int Dropped;
+    // How long the latest reports waited for Lanes, at most, since the log last said (Late()).
+    long _late;
+
+    public long Late()
+    {
+        long late = _late;
+        _late = 0;
+        return late;
+    }
 
     public void Register(IntPtr hwnd)
     {
@@ -53,13 +62,27 @@ sealed class Touchpad
             uint reportSize = (uint)Marshal.ReadInt32(buf, (int)headerSize);
             uint count = (uint)Marshal.ReadInt32(buf, (int)headerSize + 4);
             IntPtr report = buf + (int)headerSize + 8;
-            long now = Environment.TickCount64;
+            long now = ArrivedAt();
             for (uint i = 0; i < count; i++, report += (int)reportSize)
                 if (Parse(pad, report, reportSize, out var frame))
                     _onFrame(header.Device, frame with { Time = now });
         }
         finally { Marshal.FreeHGlobal(buf); }
     }
+
+    // When Windows got the report, not when Lanes got to it: reports wait while Lanes is busy
+    // (starting a swipe takes it a moment), and a swipe's speed is measured from their times;
+    // stamped all at once, a quick swipe would seem to have stopped, and stay where it was.
+    long ArrivedAt()
+    {
+        long now = Environment.TickCount64;
+        uint late = unchecked((uint)Environment.TickCount - (uint)GetMessageTime());
+        if (late >= 2000) return now;
+        _late = Math.Max(_late, late);
+        return now - late;
+    }
+
+    [DllImport("user32.dll")] static extern int GetMessageTime();
 
     bool Parse(Pad pad, IntPtr report, uint length, out TouchFrame frame)
     {

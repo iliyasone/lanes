@@ -62,6 +62,22 @@ public class GestureTests
     }
 
     [Fact]
+    public void TwoFingersSwipeOnlyWhenAllowed()
+    {
+        var off = new Sink();
+        var g = new GestureRecognizer(off);
+        foreach (var f in Swipe(2, 0.01, 0, 10)) g.OnFrame(f);
+        g.OnFrame(Lift(100));
+        Assert.Empty(off.Log);
+
+        var on = new Sink();
+        g = new GestureRecognizer(on) { TwoFingers = true };
+        foreach (var f in Swipe(2, 0, 0.01, 10)) g.OnFrame(f);
+        g.OnFrame(Lift(100));
+        Assert.Equal(new[] { "begin Scroll Vertical", "end" }, on.Log);
+    }
+
+    [Fact]
     public void SmallJitterIsNotASwipe()
     {
         var sink = new Sink();

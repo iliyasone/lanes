@@ -33,6 +33,7 @@ static class Program
         var engine = new Engine(settings, demo);
         engine.Start();
         if (settings.Gestures && engine.Ready && !demo) WindowsGestures.TakeOver();
+        if (engine.Ready && !demo) TaskbarSetting.ShowAllDesktops();
         // Whatever ends Lanes, Windows gets its gestures back.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => { if (!demo) WindowsGestures.GiveBack(); };
 

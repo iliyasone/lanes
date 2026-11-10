@@ -27,6 +27,142 @@ static class Capture
         return p;
     }
 
+    [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr hwnd, IntPtr dc, uint flags);
+    [DllImport("user32.dll")] static extern bool IsHungAppWindow(IntPtr hwnd);
+
+    // A picture of a desktop you are not on: its wallpaper with its windows' own pictures over
+    // it, back to front. Windows keeps what each window last showed while its desktop is hidden,
+    // and PrintWindow hands that over. A window that hands over nothing (not drawn since it
+    // opened) is left out. `wallpaper` is the size of `monitor`.
+    public static Pixels Composed(Pixels wallpaper, IReadOnlyList<AppWindow> windows, RECT monitor)
+    {
+        int mw = monitor.Width, mh = monitor.Height;
+        var p = new Pixels(mw, mh);
+        unsafe { Buffer.MemoryCopy((void*)wallpaper.Data, (void*)p.Data, (long)mw * mh * 4, (long)mw * mh * 4); }
+        DrawWindows(p, windows, monitor);
+        return p;
+    }
+
+    // The desktop itself on this monitor, wallpaper and icons, without any window: the shell's
+    // own window drawn by PrintWindow (about 45 ms on a 1080p screen).
+    public static Pixels? Desktop(RECT monitor)
+    {
+        IntPtr shell = GetShellWindow();
+        if (shell == IntPtr.Zero || !GetWindowRect(shell, out var wr) || wr.Width <= 0 || wr.Height <= 0) return null;
+        int l = Math.Max(monitor.Left, wr.Left), t = Math.Max(monitor.Top, wr.Top), r = Math.Min(monitor.Right, wr.Right), b = Math.Min(monitor.Bottom, wr.Bottom);
+        if (r - l != monitor.Width || b - t != monitor.Height) return null;
+        IntPtr screen = GetDC(IntPtr.Zero), mem = CreateCompatibleDC(screen);
+        var bi = new BITMAPINFOHEADER { Size = Marshal.SizeOf<BITMAPINFOHEADER>(), Width = wr.Width, Height = -wr.Height, Planes = 1, BitCount = 32 };
+        IntPtr dib = CreateDIBSection(mem, ref bi, 0, out IntPtr bits, IntPtr.Zero, 0);
+        Pixels? p = null;
+        if (dib != IntPtr.Zero)
+        {
+            IntPtr old = SelectObject(mem, dib);
+            if (PrintWindow(shell, mem, 2 /* PW_RENDERFULLCONTENT */))
+            {
+                p = new Pixels(monitor.Width, monitor.Height);
+                unsafe
+                {
+                    uint* src = (uint*)bits, dst = (uint*)p.Data;
+                    for (int y = 0; y < monitor.Height; y++)
+                    {
+                        uint* from = src + (long)(y + monitor.Top - wr.Top) * wr.Width + (monitor.Left - wr.Left), to = dst + (long)y * monitor.Width;
+                        for (int x = 0; x < monitor.Width; x++) to[x] = from[x] | 0xFF000000;
+                    }
+                }
+            }
+            SelectObject(mem, old);
+            DeleteObject(dib);
+        }
+        DeleteDC(mem);
+        ReleaseDC(IntPtr.Zero, screen);
+        return p;
+    }
+
+    // Draws these windows over `p` (a picture of `monitor`), back to front.
+    public static void DrawWindows(Pixels p, IReadOnlyList<AppWindow> windows, RECT monitor)
+    {
+        int mw = monitor.Width;
+        IntPtr screen = GetDC(IntPtr.Zero), mem = CreateCompatibleDC(screen);
+        foreach (var w in windows)
+        {
+            if (IsHungAppWindow(w.Handle) || !GetWindowRect(w.Handle, out var wr) || wr.Width <= 0 || wr.Height <= 0) continue;
+            var bi = new BITMAPINFOHEADER { Size = Marshal.SizeOf<BITMAPINFOHEADER>(), Width = wr.Width, Height = -wr.Height, Planes = 1, BitCount = 32 };
+            IntPtr dib = CreateDIBSection(mem, ref bi, 0, out IntPtr bits, IntPtr.Zero, 0);
+            if (dib == IntPtr.Zero) continue;
+            IntPtr old = SelectObject(mem, dib);
+            if (PrintWindow(w.Handle, mem, 2 /* PW_RENDERFULLCONTENT */))
+            {
+                // Only the visible frame: the window's rectangle has invisible borders for resizing.
+                var f = w.Frame;
+                int l = Math.Max(f.Left, monitor.Left), t = Math.Max(f.Top, monitor.Top);
+                int r = Math.Min(f.Right, monitor.Right), b = Math.Min(f.Bottom, monitor.Bottom);
+                unsafe
+                {
+                    uint* src = (uint*)bits, dst = (uint*)p.Data;
+                    long lit = 0, seen = 0;
+                    for (int y = t; y < b; y += 16)
+                        for (int x = l; x < r; x += 16, seen++)
+                            if ((src[(long)(y - wr.Top) * wr.Width + (x - wr.Left)] & 0xFFFFFF) > 0x0A0A0A) lit++;
+                    if (seen > 0 && lit * 50 > seen)
+                    {
+                        // Its shadow on what is under it first, as the desktop shows it.
+                        if (DesktopShadows.Casts(w.Handle, f)) DesktopShadows.DrawInto(p, monitor, f, Math.Max(96, GetDpiForWindow(w.Handle)) / 96.0);
+                        for (int y = t; y < b; y++)
+                        {
+                            uint* from = src + (long)(y - wr.Top) * wr.Width + (l - wr.Left), to = dst + (long)(y - monitor.Top) * mw + (l - monitor.Left);
+                            for (int x = 0; x < r - l; x++) to[x] = from[x] | 0xFF000000;
+                        }
+                    }
+                }
+            }
+            SelectObject(mem, old);
+            DeleteObject(dib);
+        }
+        DeleteDC(mem);
+        ReleaseDC(IntPtr.Zero, screen);
+    }
+
+    // Windows that stay live over Lanes' animations, such as a status pill shown on every
+    // desktop. Right before a picture of the screen, Lanes sends the registered message
+    // "Lanes.ScreenPicture" with wParam 1 to each visible topmost window. A window that wants to
+    // stay over the animation leaves itself out of screen pictures before it returns
+    // (SetWindowDisplayAffinity with WDA_EXCLUDEFROMCAPTURE); Lanes then keeps it above the
+    // overlay until the gesture ends. After the picture, wParam 0 tells it that it may show in
+    // pictures again, so screenshots and screen sharing keep it.
+    public static readonly int ScreenPictureMessage = RegisterWindowMessage("Lanes.ScreenPicture");
+
+    // A picture of `area` without the windows that asked to stay live; `keepUnder` is the lowest
+    // of those, for the overlay to go just under.
+    public static Pixels ScreenWithout(RECT area, IntPtr own, out IntPtr keepUnder)
+    {
+        var asked = new List<IntPtr>();
+        IntPtr lowest = IntPtr.Zero;
+        bool pastTopmost = false;
+        EnumWindows((h, _) =>
+        {
+            if (h == own || !IsWindowVisible(h) || Cloaked(h)) return true;
+            // Lanes' own windows (its pill after a switch) are never in the picture anyway.
+            if (GetWindowThreadProcessId(h, out uint pid) != 0 && pid == Environment.ProcessId) return true;
+            if ((GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64() & WS_EX_TOPMOST) == 0) { pastTopmost = true; return true; }
+            // A window marked topmost that its program has put under ordinary windows (Ciao's
+            // overlay after Ciao restarts) is not kept: the overlay would go under them with it.
+            if (pastTopmost) return true;
+            var f = Frame(h);
+            if (f.Right <= area.Left || f.Left >= area.Right || f.Bottom <= area.Top || f.Top >= area.Bottom) return true;
+            SendMessageTimeout(h, ScreenPictureMessage, (IntPtr)1, IntPtr.Zero, 0x2 /* SMTO_ABORTIFHUNG */, 50, out _);
+            asked.Add(h);
+            // Front to back, so the last one found is the lowest.
+            if (GetWindowDisplayAffinity(h, out uint a) && a == WDA_EXCLUDEFROMCAPTURE) lowest = h;
+            return true;
+        }, IntPtr.Zero);
+        if (lowest != IntPtr.Zero) DwmFlush();
+        var p = Screen(area);
+        foreach (var h in asked) PostMessage(h, ScreenPictureMessage, IntPtr.Zero, IntPtr.Zero);
+        keepUnder = lowest;
+        return p;
+    }
+
     public static Pixels FromBitmap(Bitmap bmp)
     {
         var p = new Pixels(bmp.Width, bmp.Height);
@@ -42,21 +178,29 @@ static class Capture
 
     // The desktop's wallpaper as Windows draws it on a monitor of this size (Fill, Fit, Stretch,
     // Centre or Tile), or a dark plain colour when there is none.
-    public static Bitmap Wallpaper(Guid desktop, int width, int height, int left = 0, int top = 0)
+    // The picture file Windows shows on this desktop: its own, else the one for all desktops.
+    public static string? WallpaperPath(Guid desktop)
+    {
+        string? path = OwnWallpaperPath(desktop) ?? Registry.GetValue(@"HKEY_CURRENT_USER\Control Panel\Desktop", "WallPaper", null) as string;
+        return string.IsNullOrEmpty(path) || !File.Exists(path) ? null : path;
+    }
+
+    public static string? OwnWallpaperPath(Guid desktop)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey($@"Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops\Desktops\{{{desktop.ToString().ToUpperInvariant()}}}");
+            return key?.GetValue("Wallpaper") is string path && File.Exists(path) ? path : null;
+        }
+        catch { return null; }
+    }
+
+    public static Bitmap Wallpaper(string? path, int width, int height)
     {
         var bmp = new Bitmap(width, height, PixelFormat.Format32bppPArgb);
         using var g = Graphics.FromImage(bmp);
         g.Clear(BackgroundColour());
-        string? path = null;
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey($@"Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops\Desktops\{{{desktop.ToString().ToUpperInvariant()}}}");
-            path = key?.GetValue("Wallpaper") as string;
-        }
-        catch { }
-        if (string.IsNullOrEmpty(path) || !File.Exists(path))
-            path = Registry.GetValue(@"HKEY_CURRENT_USER\Control Panel\Desktop", "WallPaper", null) as string;
-        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return bmp;
+        if (path == null) return bmp;
         string style = Registry.GetValue(@"HKEY_CURRENT_USER\Control Panel\Desktop", "WallpaperStyle", "10") as string ?? "10";
         string tile = Registry.GetValue(@"HKEY_CURRENT_USER\Control Panel\Desktop", "TileWallpaper", "0") as string ?? "0";
         try

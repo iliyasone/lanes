@@ -20,6 +20,7 @@ static class Desktops
     [DllImport(Dll)] static extern int MoveWindowToDesktopNumber(IntPtr hwnd, int number);
     [DllImport(Dll)] static extern int GoToDesktopNumber(int number);
     [DllImport(Dll)] static extern int GetDesktopName(int number, byte[] utf8, nuint length);
+    [DllImport(Dll)] static extern int SetDesktopName(int number, byte[] utf8);
     [DllImport(Dll)] static extern int RegisterPostMessageHook(IntPtr hwnd, uint messageOffset);
     [DllImport(Dll)] static extern int PinWindow(IntPtr hwnd);
     [DllImport(Dll)] static extern int IsPinnedWindow(IntPtr hwnd);
@@ -64,7 +65,8 @@ static class Desktops
     public static List<Guid> All()
     {
         int n = GetDesktopCount();
-        var ids = new List<Guid>(n);
+        // -1 while Explorer restarts.
+        var ids = new List<Guid>(Math.Max(0, n));
         for (int i = 0; i < n; i++) ids.Add(GetDesktopIdByNumber(i));
         if (ids.Count > 0 && ids.All(g => g != Guid.Empty) && ids.Distinct().Count() == ids.Count) return ids;
         return FromRegistry();
@@ -95,6 +97,13 @@ static class Desktops
     {
         int i = IndexOf(desktop);
         return i >= 0 && GoToDesktopNumber(i) >= 0;
+    }
+
+    // The name Windows shows for the desktop; empty goes back to "Desktop N".
+    public static void Rename(Guid desktop, string name)
+    {
+        int i = IndexOf(desktop);
+        if (i >= 0) SetDesktopName(i, Encoding.UTF8.GetBytes(name + "\0"));
     }
 
     public static Guid Create()

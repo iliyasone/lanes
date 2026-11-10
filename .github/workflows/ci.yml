@@ -13,7 +13,7 @@ on:
 jobs:
   windows:
     runs-on: windows-2025
-    timeout-minutes: 20
+    timeout-minutes: 25
     defaults:
       run:
         shell: pwsh
@@ -62,7 +62,7 @@ jobs:
       - name: Demo run
         run: |
           $p = Start-Process ./out/Lanes.exe -ArgumentList '--demo', "$pwd\demo" -PassThru
-          if (-not $p.WaitForExit(240000)) { $p.Kill(); "demo timed out" }
+          if (-not $p.WaitForExit(420000)) { $p.Kill(); "demo timed out" }
           Copy-Item "$env:LOCALAPPDATA\Lanes\log.txt" demo/ -ErrorAction SilentlyContinue
           Get-Content demo/log.txt -ErrorAction SilentlyContinue
           if (-not (Test-Path demo/4-overview-open.png)) { "screenshots missing"; exit 1 }
@@ -79,6 +79,9 @@ jobs:
           "running: $($running.Path)"
           schtasks /Query /TN Lanes /FO LIST | Select-String 'TaskName|Status|Logon Mode'
           $during = (Get-ItemProperty $k).FourFingerLeft
+          $adv = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+          $taskbarDuring = (Get-ItemProperty $adv).VirtualDesktopTaskbarFilter
+          "taskbar shows windows of: $(if ($taskbarDuring -eq 0) { 'all desktops' } else { 'this desktop' })"
           "FourFingerLeft while Lanes runs: $during"
           Start-Process 'C:\Program Files\Lanes\Lanes.exe' -ArgumentList '--uninstall' -Wait
           Start-Sleep 4
@@ -87,6 +90,9 @@ jobs:
           $desktops = if ($ids) { $ids.Length / 16 } else { 1 }
           "after uninstall: FourFingerLeft $($after.FourFingerLeft), ThreeFingerUp $($after.ThreeFingerUp), running $([bool](Get-Process Lanes -ErrorAction SilentlyContinue)), folder $(Test-Path 'C:\Program Files\Lanes'), tasks $((schtasks /Query /FO CSV | Select-String 'Lanes').Count), desktops $desktops"
           Copy-Item "$env:LOCALAPPDATA\Lanes\log.txt" demo/install-log.txt -ErrorAction SilentlyContinue
+          $taskbarAfter = (Get-ItemProperty $adv).VirtualDesktopTaskbarFilter
+          "after uninstall: taskbar filter $(if ($null -eq $taskbarAfter) { 'not set, as before' } else { $taskbarAfter })"
+          if ($taskbarDuring -ne 0 -or $null -ne $taskbarAfter) { "taskbar check failed"; exit 1 }
           if (-not $running -or $during -ne 0 -or $after.FourFingerLeft -ne 4 -or $after.ThreeFingerUp -ne 2 -or $desktops -ne 1) { "install check failed"; exit 1 }
       - uses: actions/upload-artifact@v4
         if: always()

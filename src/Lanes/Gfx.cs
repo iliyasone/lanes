@@ -26,7 +26,7 @@ sealed class Gfx : IDisposable
     public int Width { get; private set; }
     public int Height { get; private set; }
     public readonly bool Software;
-    readonly Dictionary<(float, FontWeight, bool), IDWriteTextFormat> _formats = new();
+    readonly Dictionary<(float, FontWeight, bool, string?), IDWriteTextFormat> _formats = new();
     readonly Dictionary<uint, ID2D1SolidColorBrush> _brushes = new();
 
     public Gfx()
@@ -93,16 +93,22 @@ sealed class Gfx : IDisposable
 
     public void Begin(Color4 clear)
     {
+        Thumbnail.Hold();
         Dc.BeginDraw();
         Dc.Transform = Matrix3x2.Identity;
         Dc.Clear(clear);
     }
 
+    // The frame goes to the screen, then the live window pictures (DWM's, see Thumbnail) move:
+    // DWM moves them at its first composition after being told, but shows a frame Lanes drew
+    // only once it is handed over, so told while the frame was still being drawn they could run
+    // a frame ahead of what Lanes draws round them (their shadows).
     public void End()
     {
         Dc.EndDraw();
         _swap!.Present(1, PresentFlags.None);
         Frames.Add(System.Diagnostics.Stopwatch.GetTimestamp());
+        Thumbnail.Release();
     }
 
     // When each frame was handed over, for the timing line in the log after each animation.
@@ -120,6 +126,15 @@ sealed class Gfx : IDisposable
         Dc.CreateBitmap(new SizeI(p.Width, p.Height), p.Data, (uint)(p.Width * 4),
             new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, p.Opaque ? D2DAlpha.Ignore : D2DAlpha.Premultiplied), 96, 96, BitmapOptions.None));
 
+    // Only the part of the pixels inside `crop` (clamped to them).
+    public ID2D1Bitmap1 Bitmap(Pixels p, Native.RECT crop)
+    {
+        int l = Math.Clamp(crop.Left, 0, p.Width - 1), t = Math.Clamp(crop.Top, 0, p.Height - 1);
+        int r = Math.Clamp(crop.Right, l + 1, p.Width), b = Math.Clamp(crop.Bottom, t + 1, p.Height);
+        return Dc.CreateBitmap(new SizeI(r - l, b - t), p.Data + (nint)(((long)t * p.Width + l) * 4), (uint)(p.Width * 4),
+            new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, p.Opaque ? D2DAlpha.Ignore : D2DAlpha.Premultiplied), 96, 96, BitmapOptions.None));
+    }
+
     // A smaller copy made once with high-quality filtering, so small pictures cost nothing per frame.
     // Call between frames only.
     public ID2D1Bitmap1 Scaled(ID2D1Bitmap1 src, int w, int h, float radius = 0)
@@ -135,6 +150,43 @@ sealed class Gfx : IDisposable
         return bmp;
     }
 
+    // Draws into memory instead of the screen: `draw` uses the overlay's coordinates, and the
+    // pixels returned are the w x h of them from (x, y), premultiplied. Call between frames only.
+    (int W, int H, ID2D1Bitmap1 Target, ID2D1Bitmap1 Cpu)? _offscreen;
+
+    public Pixels Offscreen(int x, int y, int w, int h, Action draw)
+    {
+        var format = new D2DPixelFormat(Format.B8G8R8A8_UNorm, D2DAlpha.Premultiplied);
+        // Kept for the next call: Lanes' pill is drawn this way on every frame of a swipe.
+        if (_offscreen is not { } off || off.W != w || off.H != h)
+        {
+            _offscreen?.Target.Dispose();
+            _offscreen?.Cpu.Dispose();
+            _offscreen = off = (w, h,
+                Dc.CreateBitmap(new SizeI(w, h), IntPtr.Zero, 0, new BitmapProperties1(format, 96, 96, BitmapOptions.Target)),
+                Dc.CreateBitmap(new SizeI(w, h), IntPtr.Zero, 0, new BitmapProperties1(format, 96, 96, BitmapOptions.CpuRead | BitmapOptions.CannotDraw)));
+        }
+        var (bmp, cpu) = (off.Target, off.Cpu);
+        Dc.Target = bmp;
+        Dc.BeginDraw();
+        Dc.Transform = Matrix3x2.CreateTranslation(-x, -y);
+        Dc.Clear(new Color4(0, 0, 0, 0));
+        draw();
+        Dc.EndDraw();
+        Dc.Transform = Matrix3x2.Identity;
+        Dc.Target = _target;
+        cpu.CopyFromBitmap(bmp);
+        var map = cpu.Map(MapOptions.Read);
+        var p = new Pixels(w, h, opaque: false);
+        unsafe
+        {
+            for (int row = 0; row < h; row++)
+                Buffer.MemoryCopy((void*)(map.Bits + row * map.Pitch), (void*)(p.Data + row * w * 4), w * 4, w * 4);
+        }
+        cpu.Unmap();
+        return p;
+    }
+
     public ID2D1SolidColorBrush Brush(uint argb)
     {
         if (!_brushes.TryGetValue(argb, out var b))
@@ -145,11 +197,11 @@ sealed class Gfx : IDisposable
     public static Color4 Color(uint argb) =>
         new(((argb >> 16) & 0xFF) / 255f, ((argb >> 8) & 0xFF) / 255f, (argb & 0xFF) / 255f, ((argb >> 24) & 0xFF) / 255f);
 
-    public IDWriteTextFormat Font(float size, FontWeight weight = FontWeight.Normal, bool centred = false)
+    public IDWriteTextFormat Font(float size, FontWeight weight = FontWeight.Normal, bool centred = false, string? family = null)
     {
-        if (_formats.TryGetValue((size, weight, centred), out var f)) return f;
-        string family = size >= 14 ? "Segoe UI Variable Display" : "Segoe UI Variable Text";
-        try { f = Write.CreateTextFormat(family, null, weight, Vortice.DirectWrite.FontStyle.Normal, FontStretch.Normal, size, "en-us"); }
+        if (_formats.TryGetValue((size, weight, centred, family), out var f)) return f;
+        string name = family ?? (size >= 14 ? "Segoe UI Variable Display" : "Segoe UI Variable Text");
+        try { f = Write.CreateTextFormat(name, null, weight, Vortice.DirectWrite.FontStyle.Normal, FontStretch.Normal, size, "en-us"); }
         catch { f = Write.CreateTextFormat("Segoe UI", null, weight, Vortice.DirectWrite.FontStyle.Normal, FontStretch.Normal, size, "en-us"); }
         f.WordWrapping = WordWrapping.NoWrap;
         f.ParagraphAlignment = ParagraphAlignment.Center;
@@ -157,7 +209,7 @@ sealed class Gfx : IDisposable
         using (var sign = Write.CreateEllipsisTrimmingSign(f))
             f.SetTrimming(new Trimming { Granularity = TrimmingGranularity.Character }, sign);
         if (centred) f.TextAlignment = TextAlignment.Center;
-        return _formats[(size, weight, centred)] = f;
+        return _formats[(size, weight, centred, family)] = f;
     }
 
     readonly Dictionary<(string, IDWriteTextFormat), float> _widths = new();
@@ -170,8 +222,10 @@ sealed class Gfx : IDisposable
         return _widths[(text, format)] = layout.Metrics.WidthIncludingTrailingWhitespace;
     }
 
+    // A pixel to spare: text given exactly its own width would sometimes end in "…" as it moves,
+    // the box's width coming out a hair shorter at some places on the screen.
     public void Text(string text, IDWriteTextFormat format, float x, float y, float w, float h, uint argb) =>
-        Dc.DrawText(text, format, new Rect(x, y, w, h), Brush(argb), DrawTextOptions.Clip);
+        Dc.DrawText(text, format, new Rect(x - 0.5f, y, w + 1, h), Brush(argb), DrawTextOptions.Clip);
 
     public void RoundRect(float x, float y, float w, float h, float r, uint argb) =>
         Dc.FillRoundedRectangle(new RoundedRectangle(new System.Drawing.RectangleF(x, y, w, h), r, r), Brush(argb));
@@ -180,6 +234,9 @@ sealed class Gfx : IDisposable
         Dc.DrawRoundedRectangle(new RoundedRectangle(new System.Drawing.RectangleF(x, y, w, h), r, r), Brush(argb), stroke);
 
     public void Rect(float x, float y, float w, float h, uint argb) => Dc.FillRectangle(new Vortice.RawRectF(x, y, x + w, y + h), Brush(argb));
+
+    public void Line(float x0, float y0, float x1, float y1, uint argb, float stroke) =>
+        Dc.DrawLine(new System.Numerics.Vector2(x0, y0), new System.Numerics.Vector2(x1, y1), Brush(argb), stroke);
 
     // A soft shadow made of stacked translucent rounded rectangles; cheap and good enough at UI sizes.
     public void Shadow(float x, float y, float w, float h, float r, float blur, float dy, float alpha)
@@ -192,17 +249,6 @@ sealed class Gfx : IDisposable
             uint argb = (uint)(Math.Clamp(a, 0, 1) * 255) << 24;
             RoundRect(x - g / 2, y + dy - g / 2, w + g, h + g, r + g / 2, argb);
         }
-    }
-
-    // A strip fading from a colour to transparent, for the shadow on a moving desktop's edge.
-    public void Fade(float x, float y, float w, float h, bool horizontal, bool toEnd, float alpha)
-    {
-        var stops = new[] { new GradientStop(0, new Color4(0, 0, 0, toEnd ? alpha : 0)), new GradientStop(1, new Color4(0, 0, 0, toEnd ? 0 : alpha)) };
-        using var coll = Dc.CreateGradientStopCollection(stops, ExtendMode.Clamp);
-        var start = new Vector2(x, y);
-        var end = horizontal ? new Vector2(x + w, y) : new Vector2(x, y + h);
-        using var brush = Dc.CreateLinearGradientBrush(new LinearGradientBrushProperties(start, end), coll);
-        Dc.FillRectangle(new Vortice.RawRectF(x, y, x + w, y + h), brush);
     }
 
     public void Image(ID2D1Bitmap1 bmp, float x, float y, float w, float h, float opacity = 1) =>
@@ -267,6 +313,61 @@ sealed class Pixels : IDisposable
         Height = height;
         Opaque = opaque;
         Data = System.Runtime.InteropServices.Marshal.AllocHGlobal(width * height * 4);
+    }
+
+    public Pixels Copy()
+    {
+        var p = new Pixels(Width, Height, Opaque);
+        unsafe { Buffer.MemoryCopy((void*)Data, (void*)p.Data, (long)Width * Height * 4, (long)Width * Height * 4); }
+        return p;
+    }
+
+    // The part `r` of a picture of the same size, copied in.
+    public void Paste(Pixels from, Native.RECT r)
+    {
+        if (from.Width != Width || from.Height != Height) return;
+        int l = Math.Max(0, r.Left), t = Math.Max(0, r.Top), right = Math.Min(Width, r.Right), b = Math.Min(Height, r.Bottom);
+        if (right <= l) return;
+        unsafe
+        {
+            for (int y = t; y < b; y++)
+                Buffer.MemoryCopy((byte*)from.Data + ((long)y * Width + l) * 4, (byte*)Data + ((long)y * Width + l) * 4, (right - l) * 4, (right - l) * 4);
+        }
+    }
+
+    public void Fill(Native.RECT r, uint argb)
+    {
+        int l = Math.Max(0, r.Left), t = Math.Max(0, r.Top), right = Math.Min(Width, r.Right), b = Math.Min(Height, r.Bottom);
+        unsafe
+        {
+            for (int y = t; y < b; y++)
+            {
+                uint* row = (uint*)Data + (long)y * Width;
+                for (int x = l; x < right; x++) row[x] = argb;
+            }
+        }
+    }
+
+    // The colour most of this rectangle has (a bar's own colour, under what is on it).
+    public uint Plain(Native.RECT r)
+    {
+        var count = new Dictionary<uint, (int N, long B, long G, long R)>();
+        int l = Math.Max(0, r.Left), t = Math.Max(0, r.Top), right = Math.Min(Width, r.Right), b = Math.Min(Height, r.Bottom);
+        unsafe
+        {
+            for (int y = t + 1; y < b - 1; y += 3)
+                for (int x = l + 1; x < right - 1; x += 3)
+                {
+                    uint c = ((uint*)Data)[(long)y * Width + x];
+                    // Nearly equal colours count as one (a bar can have a faint texture).
+                    uint key = c & 0xF8F8F8;
+                    count.TryGetValue(key, out var n);
+                    count[key] = (n.N + 1, n.B + (c & 0xFF), n.G + ((c >> 8) & 0xFF), n.R + ((c >> 16) & 0xFF));
+                }
+        }
+        if (count.Count == 0) return 0xFF202020;
+        var best = count.Values.MaxBy(v => v.N);
+        return 0xFF000000 | (uint)(best.R / best.N) << 16 | (uint)(best.G / best.N) << 8 | (uint)(best.B / best.N);
     }
 
     public void Dispose() => System.Runtime.InteropServices.Marshal.FreeHGlobal(Data);
