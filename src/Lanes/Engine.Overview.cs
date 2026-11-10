@@ -398,7 +398,24 @@ sealed partial class Engine
             // Not once a swipe inside the overview has left its desktop: Windows would go back there.
             if (GetForegroundWindow() == bar && Desktops.WindowDesktop(over) == _current) AppWindows.Activate(over);
             var front = GetForegroundWindow();
+            _barLeftActive = front == bar;
             Log.Write($"full-screen window active again: {(front == over ? "yes" : $"no, {ClassName(front)} is")}");
+        }
+    }
+
+    // The taskbar was left the active window as a swipe in the overview went on to another
+    // desktop. Windows keeps an active taskbar in front, over a full-screen window too: as the
+    // overview closes, the window in front on the desktop it closes on is made the active one.
+    bool _barLeftActive;
+
+    void ActivateInFront()
+    {
+        if (!_barLeftActive) return;
+        _barLeftActive = false;
+        if (TaskbarWindow() is IntPtr bar && GetForegroundWindow() == bar && AppWindows.OnScreen(_overlay.Monitor, _overlay.Handle).LastOrDefault() is { } top)
+        {
+            AppWindows.Activate(top.Handle);
+            Log.Write("the taskbar was left active: the window in front is active again");
         }
     }
 
@@ -717,6 +734,7 @@ sealed partial class Engine
         if (o == null) return;
         _overview = null;
         NoHole();
+        ActivateInFront();
         _overlay.Hide();
         // A window may have been moved to another desktop: the next swipe shows it there.
         CheckOtherDesktops();
@@ -1278,7 +1296,11 @@ sealed partial class Engine
             if (full)
             {
                 // Back where it was, on the desktop it came from; the desktop made for it goes.
-                var (home, desk) = AppWindows.LeaveFullScreen(w.Handle);
+                if (AppWindows.LeaveFullScreen(w.Handle) is not var (home, desk))
+                {
+                    Log.Write("window NOT back from full screen: the browser has not left its own");
+                    return;
+                }
                 Log.Write("window back from full screen");
                 if (desk != Guid.Empty && o.Page.Desktop == desk && o.Page.Windows.Count == 1 && Desktops.Count > 1)
                 {
