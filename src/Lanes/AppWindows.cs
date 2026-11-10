@@ -176,18 +176,18 @@ static class AppWindows
     public static void FullScreen(IntPtr hwnd, Guid home = default, Guid desk = default)
     {
         bool max = IsZoomed(hwnd);
-        if (ClassName(hwnd) is "Chrome_WidgetWin_1" or "MozillaWindowClass")
+        if (IsBrowser(hwnd))
         {
+            // The browser takes the key in its own time (it asks the page first): no other way
+            // in is tried meanwhile, or both would apply. One already in its full screen stays.
             GetWindowRect(hwnd, out var before);
-            PressF11(hwnd);
-            for (int i = 0; i < 40 && !CoversMonitor(hwnd); i++) Thread.Sleep(10);
-            Log.Write($"full screen: the app's own, as by F11: {(CoversMonitor(hwnd) ? "taken" : "NOT TAKEN, the frame is taken off instead")}");
-            if (CoversMonitor(hwnd))
-            {
-                Full[hwnd] = (-1, 0, before, max, home, desk);
-                SaveFull();
-                return;
-            }
+            bool was = CoversMonitor(hwnd);
+            if (!was) PressF11(hwnd);
+            for (int i = 0; i < 100 && !CoversMonitor(hwnd); i++) Thread.Sleep(10);
+            Log.Write($"full screen: the app's own, as by F11: {(was ? "it was in it" : CoversMonitor(hwnd) ? "taken" : "NOT TAKEN YET")}");
+            Full[hwnd] = (-1, 0, before, max, home, desk);
+            SaveFull();
+            return;
         }
         if (max) SendMessageTimeout(hwnd, WM_SYSCOMMAND, (IntPtr)SC_RESTORE, IntPtr.Zero, SMTO_ABORTIFHUNG, 1000, out _);
         GetWindowRect(hwnd, out var r);
@@ -198,6 +198,20 @@ static class AppWindows
         SetWindowLongPtr(hwnd, GWL_EXSTYLE, (IntPtr)(ex & ~FrameEx));
         var m = MonitorOf(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)).Monitor;
         SetWindowPos(hwnd, IntPtr.Zero, m.Left, m.Top, m.Width, m.Height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    }
+
+    // A browser's own window (a site installed as an app too): F11 is its full screen. Other
+    // apps built on a browser have the same window class, but F11 may mean nothing to them.
+    static bool IsBrowser(IntPtr hwnd)
+    {
+        if (ClassName(hwnd) is not ("Chrome_WidgetWin_1" or "MozillaWindowClass")) return false;
+        GetWindowThreadProcessId(hwnd, out uint pid);
+        try
+        {
+            using var p = Process.GetProcessById((int)pid);
+            return p.ProcessName.ToLowerInvariant() is "chrome" or "msedge" or "firefox" or "brave" or "vivaldi" or "opera";
+        }
+        catch { return false; }
     }
 
     static void PressF11(IntPtr hwnd)
@@ -213,21 +227,26 @@ static class AppWindows
         return f.Left <= m.Left && f.Top <= m.Top && f.Right >= m.Right && f.Bottom >= m.Bottom;
     }
 
-    // Back as it was; hands back where it was before and the desktop made for it.
-    public static (Guid Home, Guid Desk) LeaveFullScreen(IntPtr hwnd)
+    // Back as it was; hands back where it was before and the desktop made for it, or null when
+    // the browser has not left its full screen (it stays one of the full-screen windows).
+    public static (Guid Home, Guid Desk)? LeaveFullScreen(IntPtr hwnd)
     {
-        if (!Full.Remove(hwnd, out var was)) return default;
-        SaveFull();
+        if (!Full.TryGetValue(hwnd, out var was)) return default((Guid, Guid));
         if (was.Style == -1)
         {
             // Unless it has left its full screen by itself (Esc, F11).
             if (CoversMonitor(hwnd))
             {
                 PressF11(hwnd);
-                for (int i = 0; i < 40 && CoversMonitor(hwnd); i++) Thread.Sleep(10);
+                for (int i = 0; i < 100 && CoversMonitor(hwnd); i++) Thread.Sleep(10);
+                if (CoversMonitor(hwnd)) return null;
             }
+            Full.Remove(hwnd);
+            SaveFull();
             return (was.Home, was.Desk);
         }
+        Full.Remove(hwnd);
+        SaveFull();
         SetWindowLongPtr(hwnd, GWL_STYLE, (IntPtr)was.Style);
         SetWindowLongPtr(hwnd, GWL_EXSTYLE, (IntPtr)was.Ex);
         SetWindowPos(hwnd, IntPtr.Zero, was.Rect.Left, was.Rect.Top, was.Rect.Width, was.Rect.Height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);

@@ -109,7 +109,8 @@ sealed partial class Engine
         double page = axis == Axis.Horizontal ? _gfx.Width : _gfx.Height;
         s.Track = new SwipeTrack(page, s.Previous != null, s.Next != null, _tuning);
         s.FromPicture = from ?? Picture(_current)!;
-        s.FromWindows = fromWindows ?? new();
+        // The desktop you set out from stays live too (a video goes on playing as it moves off).
+        s.FromWindows = fromWindows ?? AppWindows.OnScreen(_overlay.Area, _overlay.Handle).Select(w => (w, new Thumbnail(_overlay.Handle, w.Handle))).ToList();
         s.PreviousPicture = s.Previous is Guid p ? Beside(p, s.PreviousWindows) : null;
         s.NextPicture = s.Next is Guid n ? Beside(n, s.NextWindows) : null;
         _switch = s;
@@ -201,10 +202,15 @@ sealed partial class Engine
         var s = _switch!;
         SwitchNow(s);
         _switch = null;
+        // The live pictures go after the overlay: gone before it, a frame would show the older
+        // picture of the desktop that lies under them.
+        if (!keepOverlay)
+        {
+            LingerPill(s);
+            _overlay.Hide();
+        }
         foreach (var (_, thumb) in s.PreviousWindows.Concat(s.NextWindows).Concat(s.FromWindows)) thumb.Dispose();
         if (keepOverlay) return;
-        LingerPill(s);
-        _overlay.Hide();
         DropTaskbar();
         if (_lanesChanged) Settings.SaveLanes(_lanes);
         _lanesChanged = false;

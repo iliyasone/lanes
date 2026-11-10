@@ -665,6 +665,10 @@ sealed partial class Engine : IGestureSink
     bool FullScreenInFront(int width, int height)
     {
         var fg = GetForegroundWindow();
+        // The taskbar is the active window while the overview shows it over a full-screen window
+        // (see LiftTaskbar): then the window in front of the others tells.
+        if (fg != IntPtr.Zero && _overview != null && ClassName(fg) is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd")
+            fg = AppWindows.OnScreen(_overlay.Monitor, _overlay.Handle).LastOrDefault()?.Handle ?? IntPtr.Zero;
         if (fg == IntPtr.Zero || fg == _overlay.Handle || ClassName(fg) is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd") return false;
         var m = MonitorOf(MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST)).Monitor;
         if (m.Width != width || m.Height != height) return false;
