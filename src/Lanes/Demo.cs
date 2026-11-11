@@ -197,6 +197,7 @@ static class Demo
             await Task.Delay(500);
             Log.Write(clicked ? "click reached the window under the overlay" : "CLICK BLOCKED by the overlay");
             await WindowButtons(engine, dir, editor);
+            await AppWindowsShown(engine, dir, top);
             await FullScreenTaskbar(engine, dir);
             // With Windows' setting that Lanes turns on, the taskbar keeps the apps of other desktops.
             {
@@ -363,6 +364,74 @@ static class Demo
         notes.WindowState = FormWindowState.Normal;
         await Task.Delay(500);
         Log.Write("window buttons: done");
+    }
+
+    // Outside the overview: Terminal minimized flies into the taskbar; a click on the test
+    // windows' taskbar button (one app, several windows) spreads them all out, minimized
+    // Terminal too, which picked comes back; minimized again and brought from another desktop,
+    // it comes back there.
+    static async Task AppWindowsShown(Engine engine, string dir, Guid other)
+    {
+        var terminal = Application.OpenForms.Cast<Form>().First(f => f.Text == "Terminal").Handle;
+        var here = Desktops.Current;
+        AppWindows.Activate(terminal);
+        await Task.Delay(800);
+        PostMessage(terminal, Native.WM_SYSCOMMAND, (IntPtr)Native.SC_MINIMIZE, IntPtr.Zero);
+        await Task.Delay(130);
+        engine.Screenshot(Path.Combine(dir, "20-minimizing.png"));
+        await Task.Delay(1200);
+        Log.Write($"app windows: Terminal {(Native.IsIconic(terminal) ? "minimized" : "NOT MINIMIZED")}");
+
+        // The pointer over the taskbar has its buttons read; then a click on the test windows' one.
+        var bar = Screen.PrimaryScreen!.Bounds with { Y = Screen.PrimaryScreen.WorkingArea.Bottom, Height = Screen.PrimaryScreen.Bounds.Bottom - Screen.PrimaryScreen.WorkingArea.Bottom };
+        MoveTo(bar.Left + bar.Width / 2, bar.Top + bar.Height / 2);
+        await Task.Delay(2500);
+        var button = engine.Buttons?.Of(terminal);
+        Log.Write($"app windows: the test windows' taskbar button {(button == null ? "NOT FOUND" : $"at {button.Rect}, {button.Windows.Length} windows")}");
+        if (button != null)
+        {
+            MoveTo((button.Rect.Left + button.Rect.Right) / 2, (button.Rect.Top + button.Rect.Bottom) / 2);
+            await Task.Delay(300);
+            mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
+            mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
+        }
+        else engine.AppClicked(new AppRef(AppIds.Of(terminal) ?? "", AppWindows.AppName(terminal)));
+        await Task.Delay(1500);
+        engine.Screenshot(Path.Combine(dir, "21-app-windows.png"));
+        var (_, shown) = await engine.OverviewLayout();
+        Log.Write($"app windows: {shown.Count} shown: {string.Join(", ", shown.Select(w => w.Title))}");
+        if (shown.FirstOrDefault(w => w.Title == "Terminal") is { Title: not null } t)
+        {
+            Click(t.Rect.Left + t.Rect.Width / 2, t.Rect.Top + t.Rect.Height / 2);
+            await Task.Delay(150);
+            engine.Screenshot(Path.Combine(dir, "22-app-window-picked.png"));
+            await Task.Delay(1500);
+        }
+        Log.Write($"app windows: Terminal picked is {(Native.IsIconic(terminal) ? "STILL MINIMIZED" : "back")}, {(GetForegroundWindow() == terminal ? "in front" : "NOT IN FRONT")}; the overview is {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STILL OPEN")}");
+
+        // Minimized here, brought from another desktop: it comes to that one.
+        PostMessage(terminal, Native.WM_SYSCOMMAND, (IntPtr)Native.SC_MINIMIZE, IntPtr.Zero);
+        await Task.Delay(1000);
+        Desktops.Switch(other);
+        await Task.Delay(2500);
+        engine.Snapshot();
+        await Task.Delay(400);
+        engine.Bring(terminal);
+        await Task.Delay(170);
+        engine.Screenshot(Path.Combine(dir, "23-coming-back.png"));
+        await Task.Delay(1200);
+        Log.Write($"app windows: Terminal brought from another desktop is {(Native.IsIconic(terminal) ? "STILL MINIMIZED" : "back")}, {(Desktops.WindowDesktop(terminal) == Desktops.Current ? "on this desktop" : "NOT ON THIS DESKTOP")}, {(GetForegroundWindow() == terminal ? "in front" : "NOT IN FRONT")}");
+        Desktops.MoveWindow(terminal, here);
+        Desktops.Switch(here);
+        await Task.Delay(2500);
+    }
+
+    // Moves the pointer as a mouse would (low-level hooks see it).
+    static void MoveTo(int x, int y)
+    {
+        var b = SystemInformation.VirtualScreen;
+        mouse_event(0x8001 | 0x4000 /* MOVE | ABSOLUTE | VIRTUALDESK */, (x - b.Left) * 65535 / (b.Width - 1), (y - b.Top) * 65535 / (b.Height - 1), 0, IntPtr.Zero);
+        _pointer = new Point(x, y);
     }
 
     // A browser in full screen, as with a video, lies over the taskbar; in the overview the real

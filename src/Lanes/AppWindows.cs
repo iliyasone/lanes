@@ -70,17 +70,62 @@ static class AppWindows
     {
         frame = default;
         title = "";
+        if (!IsAppKind(h)) return false;
+        title = WindowText(h);
+        if (title.Length == 0) return false;
+        frame = Frame(h);
+        return frame.Width >= 40 && frame.Height >= 40;
+    }
+
+    // An app's own window by its kind alone, whatever its size (a minimized one too).
+    public static bool IsAppKind(IntPtr h)
+    {
         long ex = GetWindowLongPtr(h, GWL_EXSTYLE).ToInt64();
         if ((ex & WS_EX_TOOLWINDOW) != 0 && (ex & WS_EX_APPWINDOW) == 0) return false;
         if (GetWindow(h, GW_OWNER) != IntPtr.Zero && (ex & WS_EX_APPWINDOW) == 0) return false;
         // A window that never takes focus is something over the apps (a dictation pill, an
         // on-screen keyboard), not one of them.
         if ((ex & WS_EX_NOACTIVATE) != 0) return false;
-        if (ShellClasses.Contains(ClassName(h))) return false;
-        title = WindowText(h);
-        if (title.Length == 0) return false;
-        frame = Frame(h);
-        return frame.Width >= 40 && frame.Height >= 40;
+        return !ShellClasses.Contains(ClassName(h)) && GetWindowTextLength(h) > 0;
+    }
+
+    // An app's windows on every desktop, minimized ones too, back to front: the ones its
+    // taskbar button stands for.
+    public static List<IntPtr> OfApp(AppRef app) => All().Where(h => AppIds.Is(h, app)).ToList();
+
+    // Every app's windows on every desktop, minimized ones too, back to front.
+    public static List<IntPtr> All()
+    {
+        var list = new List<IntPtr>();
+        EnumWindows((h, _) =>
+        {
+            if (IsWindowVisible(h) && IsAppKind(h) && (!Cloaked(h) || CloakedByShell(h))) list.Add(h);
+            return true;
+        }, IntPtr.Zero);
+        list.Reverse();
+        return list;
+    }
+
+    // Where a minimized window comes back to on the screen: its whole window, and the visible
+    // frame inside it. Windows keeps the place without the invisible resize borders round the
+    // frame, which are worked out from the window's kind.
+    public static (RECT Window, RECT Frame) Restored(IntPtr h)
+    {
+        var p = new WINDOWPLACEMENT { Length = Marshal.SizeOf<WINDOWPLACEMENT>() };
+        GetWindowPlacement(h, ref p);
+        var r = p.NormalPosition;
+        var mi = MonitorOf(MonitorFromRect(ref r, MONITOR_DEFAULTTONEAREST));
+        // Kept relative to the work area, not the screen; and one that was maximized comes back so.
+        int dx = mi.Work.Left - mi.Monitor.Left, dy = mi.Work.Top - mi.Monitor.Top;
+        r = new RECT(r.Left + dx, r.Top + dy, r.Right + dx, r.Bottom + dy);
+        if ((p.Flags & 2 /* WPF_RESTORETOMAXIMIZED */) != 0) return (mi.Work, mi.Work);
+        int b = 0;
+        if ((GetWindowLongPtr(h, GWL_STYLE).ToInt64() & WS_THICKFRAME) != 0)
+        {
+            uint dpi = GetDpiForWindow(h);
+            b = GetSystemMetricsForDpi(32 /* SM_CXSIZEFRAME */, dpi) + GetSystemMetricsForDpi(92 /* SM_CXPADDEDBORDER */, dpi);
+        }
+        return (r, new RECT(r.Left + b, r.Top, r.Right - b, r.Bottom - b));
     }
 
     // "Telegram Desktop", "Google Chrome": the product name of the window's program. Store apps
@@ -275,6 +320,10 @@ static class AppWindows
     }
 
     [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern bool GetWindowPlacement(IntPtr hwnd, ref WINDOWPLACEMENT placement);
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromRect(ref RECT rect, uint flags);
+    [DllImport("user32.dll")] static extern int GetSystemMetricsForDpi(int index, uint dpi);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextLength(IntPtr hwnd);
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] static extern bool AttachThreadInput(uint from, uint to, bool attach);
     [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr hwnd);

@@ -145,6 +145,7 @@ static class Desktops
     public static Guid WindowDesktop(IntPtr hwnd) => GetWindowDesktopId(hwnd);
     public static bool OnCurrent(IntPtr hwnd) => IsWindowOnCurrentVirtualDesktop(hwnd) == 1;
     public static void MoveWindow(IntPtr hwnd, Guid desktop) => MoveWindowToDesktopNumber(hwnd, IndexOf(desktop));
+    public static bool IsPinned(IntPtr hwnd) => IsPinnedWindow(hwnd) == 1;
     public static void Pin(IntPtr hwnd) { if (IsPinnedWindow(hwnd) != 1) PinWindow(hwnd); }
 
     // Windows will post `message` to hwnd (wParam old number, lParam new number) on every switch.
