@@ -197,7 +197,9 @@ static class Demo
             await Task.Delay(500);
             Log.Write(clicked ? "click reached the window under the overlay" : "CLICK BLOCKED by the overlay");
             await WindowButtons(engine, dir, editor);
+            await AppWindowsShown(engine, dir, top);
             await FullScreenTaskbar(engine, dir);
+            await AltTab(engine, dir);
             // With Windows' setting that Lanes turns on, the taskbar keeps the apps of other desktops.
             {
                 // A File Explorer window (another program than these test windows) moved to the
@@ -212,12 +214,12 @@ static class Demo
                 using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"))
                     k.SetValue("VirtualDesktopTaskbarFilter", 1, Microsoft.Win32.RegistryValueKind.DWord);
                 long t0 = Environment.TickCount64;
-                SendMessageTimeout((IntPtr)0xFFFF, 0x001A, IntPtr.Zero, "TraySettings", 2, 3000, out _);
+                await Bounded("telling the taskbar", () => SendMessageTimeout((IntPtr)0xFFFF, 0x001A, IntPtr.Zero, "TraySettings", 2, 3000, out _));
                 Log.Write($"demo: taskbar told of this desktop's windows only in {Environment.TickCount64 - t0} ms");
                 await Task.Delay(2000);
                 using var shotBefore = TaskbarShot(Path.Combine(dir, "16-taskbar-this-desktop.png"));
                 t0 = Environment.TickCount64;
-                TaskbarSetting.ShowAllDesktops();
+                await Bounded("turning the setting on", TaskbarSetting.ShowAllDesktops);
                 Log.Write($"demo: taskbar told of all desktops' windows in {Environment.TickCount64 - t0} ms");
                 await Task.Delay(2000);
                 using var shotAfter = TaskbarShot(Path.Combine(dir, "17-taskbar-all-desktops.png"));
@@ -226,7 +228,7 @@ static class Demo
                     for (int x = shotBefore.Width / 4; x < shotBefore.Width * 3 / 4; x++)
                         if (shotBefore.GetPixel(x, y) != shotAfter.GetPixel(x, y)) changed++;
                 Log.Write($"taskbar: {changed} pixels in the middle changed when windows of all desktops were turned on");
-                TaskbarSetting.Restore();
+                await Bounded("giving the setting back", TaskbarSetting.Restore);
                 using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"))
                     k.DeleteValue("VirtualDesktopTaskbarFilter", false);
                 if (fx != IntPtr.Zero) PostMessage(fx, 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero);
@@ -243,6 +245,13 @@ static class Demo
             await Task.Delay(500);
             Application.Exit();
         }
+    }
+
+    // Telling every window of a setting can stall on the runner: the demo goes on after a while.
+    static async Task Bounded(string what, Action a)
+    {
+        var t = Task.Run(a);
+        if (await Task.WhenAny(t, Task.Delay(10000)) != t) Log.Write($"demo: {what} has not returned in 10 s; going on");
     }
 
     static double _x0 = 0.3, _y0 = 0.3;
@@ -277,7 +286,7 @@ static class Demo
     }
 
     [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string? title);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string? cls, string? title);
     [DllImport("user32.dll")] static extern bool PostMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessageTimeout(IntPtr hwnd, int msg, IntPtr wParam, string lParam, int flags, int timeout, out IntPtr result);
     [DllImport("user32.dll")] static extern void mouse_event(uint flags, int dx, int dy, uint data, IntPtr extra);
@@ -365,6 +374,74 @@ static class Demo
         Log.Write("window buttons: done");
     }
 
+    // Outside the overview: Terminal minimized flies into the taskbar; a click on the test
+    // windows' taskbar button (one app, several windows) spreads them all out, minimized
+    // Terminal too, which picked comes back; minimized again and brought from another desktop,
+    // it comes back there.
+    static async Task AppWindowsShown(Engine engine, string dir, Guid other)
+    {
+        var terminal = Application.OpenForms.Cast<Form>().First(f => f.Text == "Terminal").Handle;
+        var here = Desktops.Current;
+        AppWindows.Activate(terminal);
+        await Task.Delay(800);
+        PostMessage(terminal, Native.WM_SYSCOMMAND, (IntPtr)Native.SC_MINIMIZE, IntPtr.Zero);
+        await Task.Delay(130);
+        engine.Screenshot(Path.Combine(dir, "20-minimizing.png"));
+        await Task.Delay(1200);
+        Log.Write($"app windows: Terminal {(Native.IsIconic(terminal) ? "minimized" : "NOT MINIMIZED")}");
+
+        // The pointer over the taskbar has its buttons read; then a click on the test windows' one.
+        var bar = Screen.PrimaryScreen!.Bounds with { Y = Screen.PrimaryScreen.WorkingArea.Bottom, Height = Screen.PrimaryScreen.Bounds.Bottom - Screen.PrimaryScreen.WorkingArea.Bottom };
+        MoveTo(bar.Left + bar.Width / 2, bar.Top + bar.Height / 2);
+        await Task.Delay(2500);
+        var button = engine.Buttons?.Of(terminal);
+        Log.Write($"app windows: the test windows' taskbar button {(button == null ? "NOT FOUND" : $"at {button.Rect}, {button.Windows.Length} windows")}");
+        if (button != null)
+        {
+            MoveTo((button.Rect.Left + button.Rect.Right) / 2, (button.Rect.Top + button.Rect.Bottom) / 2);
+            await Task.Delay(300);
+            mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
+            mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
+        }
+        else engine.AppClicked(new AppRef(AppIds.Of(terminal) ?? "", AppWindows.AppName(terminal)));
+        await Task.Delay(1500);
+        engine.Screenshot(Path.Combine(dir, "21-app-windows.png"));
+        var (_, shown) = await engine.OverviewLayout();
+        Log.Write($"app windows: {shown.Count} shown: {string.Join(", ", shown.Select(w => w.Title))}");
+        if (shown.FirstOrDefault(w => w.Title == "Terminal") is { Title: not null } t)
+        {
+            Click(t.Rect.Left + t.Rect.Width / 2, t.Rect.Top + t.Rect.Height / 2);
+            await Task.Delay(150);
+            engine.Screenshot(Path.Combine(dir, "22-app-window-picked.png"));
+            await Task.Delay(1500);
+        }
+        Log.Write($"app windows: Terminal picked is {(Native.IsIconic(terminal) ? "STILL MINIMIZED" : "back")}, {(GetForegroundWindow() == terminal ? "in front" : "NOT IN FRONT")}; the overview is {((await engine.OverviewLayout()).Windows.Count == 0 ? "closed" : "STILL OPEN")}");
+
+        // Minimized here, brought from another desktop: it comes to that one.
+        PostMessage(terminal, Native.WM_SYSCOMMAND, (IntPtr)Native.SC_MINIMIZE, IntPtr.Zero);
+        await Task.Delay(1000);
+        Desktops.Switch(other);
+        await Task.Delay(2500);
+        engine.Snapshot();
+        await Task.Delay(400);
+        engine.Bring(terminal);
+        await Task.Delay(170);
+        engine.Screenshot(Path.Combine(dir, "23-coming-back.png"));
+        await Task.Delay(1200);
+        Log.Write($"app windows: Terminal brought from another desktop is {(Native.IsIconic(terminal) ? "STILL MINIMIZED" : "back")}, {(Desktops.WindowDesktop(terminal) == Desktops.Current ? "on this desktop" : "NOT ON THIS DESKTOP")}, {(GetForegroundWindow() == terminal ? "in front" : "NOT IN FRONT")}");
+        Desktops.MoveWindow(terminal, here);
+        Desktops.Switch(here);
+        await Task.Delay(2500);
+    }
+
+    // Moves the pointer as a mouse would (low-level hooks see it).
+    static void MoveTo(int x, int y)
+    {
+        var b = SystemInformation.VirtualScreen;
+        mouse_event(0x8001 | 0x4000 /* MOVE | ABSOLUTE | VIRTUALDESK */, (x - b.Left) * 65535 / (b.Width - 1), (y - b.Top) * 65535 / (b.Height - 1), 0, IntPtr.Zero);
+        _pointer = new Point(x, y);
+    }
+
     // A browser in full screen, as with a video, lies over the taskbar; in the overview the real
     // taskbar is in front of it (what is under the pointer there is the taskbar), and after the
     // overview the browser is in front again. Chrome tells the taskbar itself that it is in full
@@ -441,6 +518,42 @@ static class Demo
         form?.Close();
         try { browser?.Kill(entireProcessTree: true); } catch { }
         await Task.Delay(800);
+    }
+
+    // Alt+Tab with Alt held through two Tabs: the switcher's panel, then the app picked in front.
+    // File Explorer and Notepad, two programs other than these test windows, are the last used,
+    // so the second Tab picks the test windows' app.
+    static async Task AltTab(Engine engine, string dir)
+    {
+        System.Diagnostics.Process.Start("explorer.exe", @"/n,C:\Windows");
+        IntPtr fx = IntPtr.Zero, pad = IntPtr.Zero;
+        for (int i = 0; i < 60 && fx == IntPtr.Zero; i++) { await Task.Delay(100); fx = FindWindow("CabinetWClass", null); }
+        await Task.Delay(800);
+        try { System.Diagnostics.Process.Start("notepad.exe"); } catch (Exception e) { Log.Write($"alt+tab: no Notepad: {e.Message}"); }
+        for (int i = 0; i < 60 && pad == IntPtr.Zero; i++) { await Task.Delay(100); pad = FindWindow("Notepad", null); }
+        await Task.Delay(1000);
+        Log.Write($"alt+tab: in front before: {Describe(GetForegroundWindow())}");
+        // The panel is left out of screen pictures; here it is wanted in them.
+        Native.SetWindowDisplayAffinity(FindWindow(null, "Lanes switcher"), Native.WDA_NONE);
+        Key(0xA4, false);
+        Key(0x09, false); Key(0x09, true);
+        await Task.Delay(150);
+        Key(0x09, false); Key(0x09, true);
+        await Task.Delay(400);
+        engine.Screenshot(Path.Combine(dir, "alt-tab.png"));
+        await Task.Delay(400);
+        Key(0xA4, true);
+        await Task.Delay(1000);
+        Log.Write($"alt+tab: in front after: {Describe(GetForegroundWindow())}");
+        foreach (var w in new[] { pad, fx })
+            if (w != IntPtr.Zero) PostMessage(w, 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero);
+        await Task.Delay(800);
+    }
+
+    static void Key(ushort vk, bool up)
+    {
+        var input = new Native.INPUT { Type = Native.INPUT_KEYBOARD, U = new Native.InputUnion { Keyboard = new Native.KEYBDINPUT { Vk = vk, Flags = up ? Native.KEYEVENTF_KEYUP : 0 } } };
+        Native.SendInput(1, new[] { input }, Marshal.SizeOf<Native.INPUT>());
     }
 
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();

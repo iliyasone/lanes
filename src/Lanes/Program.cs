@@ -38,8 +38,9 @@ static class Program
         engine.Start();
         if (settings.Gestures && engine.Ready && !demo) WindowsGestures.TakeOver();
         if (engine.Ready && !demo) TaskbarSetting.ShowAllDesktops();
-        // Whatever ends Lanes, Windows gets its gestures back.
-        AppDomain.CurrentDomain.ProcessExit += (_, _) => { if (!demo) WindowsGestures.GiveBack(); };
+        if (engine.Ready) WindowAnimation.TakeOver();
+        // Whatever ends Lanes, Windows gets its gestures and its minimize animation back.
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => { if (!demo) WindowsGestures.GiveBack(); WindowAnimation.GiveBack(); };
 
         SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
         var updater = new Updater();
@@ -53,6 +54,7 @@ static class Program
         Application.Run();
         engine.Stop();
         if (!demo) WindowsGestures.GiveBack();
+        WindowAnimation.GiveBack();
         Log.Write("Lanes exited");
         _single.ReleaseMutex();
         return 0;

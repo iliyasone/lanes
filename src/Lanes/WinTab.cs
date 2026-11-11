@@ -5,17 +5,19 @@ namespace Lanes;
 // Win+Tab opens Lanes' overview in place of Windows' Task View (and closes it again). A
 // low-level keyboard hook on a thread of its own keeps the Tab from Windows; the Start menu,
 // which a Win key let go with no other key pressed would open, is held off by a key press that
-// means nothing (as PowerToys does).
+// means nothing (as PowerToys does). The same hook gives Alt+Tab its keys (see AltTab).
 sealed class WinTab
 {
     readonly Action _pressed;
+    readonly Func<int, bool, bool> _altTab;
     IntPtr _hook;
     HookProc? _proc;
     bool _taken;
 
-    public WinTab(Action pressed)
+    public WinTab(Action pressed, Func<int, bool, bool> altTab)
     {
         _pressed = pressed;
+        _altTab = altTab;
         new Thread(HookLoop) { IsBackground = true, Name = "win+tab" }.Start();
     }
 
@@ -33,6 +35,7 @@ sealed class WinTab
 
     IntPtr OnKey(int code, IntPtr wParam, IntPtr lParam)
     {
+        if (code >= 0 && _altTab(Marshal.ReadInt32(lParam), (int)wParam is 0x0100 or 0x0104)) return 1;
         if (code >= 0 && Marshal.ReadInt32(lParam) == 0x09 /* VK_TAB */)
         {
             bool down = (int)wParam is 0x0100 or 0x0104;

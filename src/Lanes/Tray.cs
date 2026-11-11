@@ -47,7 +47,7 @@ sealed class Tray : IDisposable
         long beat = Interlocked.Read(ref _engine.Heartbeat);
         if (beat == 0 || Environment.TickCount64 - beat < 3000)
         {
-            if (_stuck) { _stuck = false; Log.Write("engine running again"); if (_settings.Gestures) WindowsGestures.TakeOver(); }
+            if (_stuck) { _stuck = false; Log.Write("engine running again"); if (_settings.Gestures) WindowsGestures.TakeOver(); WindowAnimation.TakeOver(); }
             return;
         }
         if (_stuck) return;
@@ -59,6 +59,7 @@ sealed class Tray : IDisposable
             DwmSetWindowAttribute(_engine.OverlayHandle, 13 /* DWMWA_CLOAK */, ref cloak, 4);
         }
         WindowsGestures.GiveBack();
+        WindowAnimation.GiveBack();
         _icon.ShowBalloonTip(5000, "Lanes", "Lanes got stuck; Windows' own swipes are back. Restart it from this menu.", ToolTipIcon.Warning);
     }
 

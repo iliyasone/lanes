@@ -63,6 +63,7 @@ sealed partial class Engine : IGestureSink
     public IntPtr OverlayHandle => _overlay?.Handle ?? IntPtr.Zero;
     public TaskbarButtons? Buttons { get; private set; }
     WinTab? _winTab;
+    AltTab? _altTab;
     public event Action<string>? Status;
 
     public Engine(Settings settings, bool demo)
@@ -99,6 +100,7 @@ sealed partial class Engine : IGestureSink
             _msg = new MessageWindow(this);
             _overlay = new Overlay();
             _map = new MapWindow();
+            _flightWindow = new FlightWindow(inScreenshots: _demo);
             _overlay.PickArea();
             _picturesFor = _overlay.Area;
             _gfx = new Gfx();
@@ -117,14 +119,18 @@ sealed partial class Engine : IGestureSink
             {
                 Desktops.Pin(_overlay.Handle);
                 Desktops.Pin(_map.Handle);
+                Desktops.Pin(_flightWindow.Handle);
+                ListenForMinimize();
                 WindowsPill.Repair();
                 VolumeWatch.Changed += () => Post(OnVolumeChanged);
                 VolumeWatch.Watch();
                 Desktops.Listen(_msg.Handle, WM_DESKTOP_CHANGED);
                 SetUpLanes();
                 Ready = true;
-                Buttons = new TaskbarButtons();
-                _winTab = new WinTab(() => Post(ToggleOverview));
+                Buttons = new TaskbarButtons { Clicked = b => AppClicked(b.App) };
+                _altTab = new AltTab(this);
+                Desktops.Pin(_altTab.Handle);
+                _winTab = new WinTab(() => Post(ToggleOverview), _altTab.OnKey);
             }
             else Status?.Invoke("This Windows version is not supported");
             PrepareWallpapers();
@@ -145,7 +151,9 @@ sealed partial class Engine : IGestureSink
                 if (Animating)
                 {
                     if (!MessageLoop.Pump()) break;
-                    _gfx.WaitForFrame();
+                    // Only windows flying to or from the taskbar: the overlay's frames are not shown.
+                    if (_switch == null && _overview == null) DwmFlush();
+                    else _gfx.WaitForFrame();
                     if (!MessageLoop.Pump()) break;
                     Tick();
                     if (Animating || _overlay.Shown) Render();
@@ -176,7 +184,7 @@ sealed partial class Engine : IGestureSink
         WindowsPill.Restore();
     }
 
-    bool Animating => _switch != null || _overview is { } o && (o.Tracking || o.Spring != null || o.Zoom != null || o.Swipe != null || o.Moving || o.Added != null || o.Scroll != null || o.Dwell != null) || _redraw;
+    bool Animating => _switch != null || _overview is { } o && (o.Tracking || o.Spring != null || o.Zoom != null || o.Swipe != null || o.Moving || o.Added != null || o.Scroll != null || o.Dwell != null) || _flights.Count > 0 || _redraw;
     Awake? _awake;
     DesktopShadows? _shadows;
     bool _redraw;
@@ -196,6 +204,7 @@ sealed partial class Engine : IGestureSink
         double now = Now;
         if (_switch != null) StepSwitch(now);
         if (_overview != null) StepOverview(now);
+        if (_flights.Count > 0) StepFlights(now);
         if (_retakeAt > 0 && now >= _retakeAt) Retake();
         if (_map.Shown && _switch == null) StepLingeringPill(now);
         // Explorer's pop-up window goes back once Windows' pill would be gone (it stays 2 to 2.5
@@ -961,7 +970,7 @@ sealed partial class Engine : IGestureSink
         if (kind == GestureKind.Switch)
         {
             // Four fingers in the open overview move between desktops without leaving it.
-            if (_overview is { Open: true, Drag: null, Going: null }) { BeginInnerSwipe(axis); return; }
+            if (_overview is { Open: true, Drag: null, Going: null, App: null }) { BeginInnerSwipe(axis); return; }
             if (_overview != null || _switch is { Spring: null }) { _ignoring = true; return; }
             BeginSwitch(axis);
         }
@@ -1047,6 +1056,9 @@ sealed partial class Engine : IGestureSink
     }
 
     public void OpenOverviewFromMenu() => Post(OpenOverview);
+
+    // The overview is open or a swipe is going on; read from other threads.
+    public bool Busy => Volatile.Read(ref _overview) != null || Volatile.Read(ref _switch) != null;
 
     void OpenOverview()
     {

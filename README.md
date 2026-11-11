@@ -125,6 +125,47 @@ opens.
 The blue ring is the desktop you are on; the column it stands in holds, in every lane, the
 desktop a swipe up or down lands on.
 
+### Alt+Tab
+
+Alt+Tab works as Cmd+Tab on a Mac: it goes between apps, not windows. Held a moment, it shows
+a row of large app icons in the middle of the screen, with the name of the one picked under it.
+The row has every app with a window on any desktop, minimized ones too, in the order you last
+used them, so the first Tab picks the app you were in before. Each Tab moves one to the right
+and round from the end, Shift+Tab or the arrow keys go either way, and Alt+Shift+Tab picks the
+last one. Let go of Alt and the app's window you used last comes to the front, on its own
+desktop if it is on another (Lanes takes you there), or out of its taskbar button onto this
+desktop if it is minimized; Esc puts the row away. A quick Alt+Tab switches without the row
+showing. The row is light or dark as Windows is, and its icons get smaller only when there are
+more apps than fit across the screen.
+
+![Alt+Tab](docs/screenshots/alt-tab.png)
+
+### An app's windows
+
+A click on the taskbar button of an app with several windows shows them all, as the overview
+does but without the lanes: each window large, about where it is on the screen, over a darkened
+desktop, while the other windows here fade away. They come from every desktop: those of other
+desktops fade in, and minimized ones rise out of the taskbar button. Click one to go to it: a
+window of another desktop takes you there, and a minimized one grows back into its place here.
+A click on the same button again, Esc, or a click on empty space closes it.
+
+An app with one window works as Windows has it (the click brings it to the front, or minimizes
+it when it is in front), except that a minimized window comes back to the desktop you are on.
+
+![An app's windows](docs/screenshots/21-app-windows.png)
+
+### Minimizing
+
+A window minimized any way (its own button, the taskbar, Win+Down) flies into its app's
+taskbar button: it shrinks at once and travels as it does, faster as it goes, and fades only in
+the button. When Lanes brings it back (the taskbar, Alt+Tab, an app's windows) it flies out of
+the button the same way backwards, onto the desktop you are on: minimized, a window has left its
+desktop, as on a Mac. Lanes turns Windows' own animation off for this ("Animate windows when
+minimizing and maximizing", in System Properties → Performance), so maximizing is instant while
+Lanes runs; quitting puts the setting back.
+
+![A window flying into the taskbar](docs/screenshots/20-minimizing.png)
+
 ### Tray menu
 
 ![Tray menu](docs/screenshots/6-tray-menu.png)
@@ -179,7 +220,8 @@ click it.
   was last, and which desktops Lanes made;
 - `settings.json` — the tray menu switches;
 - `windows-gestures.txt` — your Windows gesture settings while Lanes holds them;
-- `taskbar.txt` — the taskbar setting you had before Lanes turned it on.
+- `taskbar.txt` — the taskbar setting you had before Lanes turned it on;
+- `window-animation.txt` — Windows' minimize animation setting while Lanes holds it.
 
 ## Limits
 
@@ -194,6 +236,11 @@ click it.
 - Windows' own Task View and Ctrl+Win+arrows still see one row of desktops.
 - A window that is on every desktop ("Show this window on all desktops") gets its shadow back
   a moment after each switch.
+- The taskbar button of an app with several windows cannot be dragged to another place: Lanes
+  takes the press. Windows' own row of thumbnails still comes up over such a button while
+  the pointer rests on it, over the app's windows shown large too; it goes as the pointer leaves.
+- A minimized window that comes back by itself (its app, a notification) appears at once, without
+  flying out of the taskbar.
 
 ## How it works
 
@@ -216,7 +263,12 @@ click it.
   runs through a second task, `Lanes session` (`SessionHelper.cs`). `Desktops.cs` talks to Windows' virtual desktops through
   [VirtualDesktopAccessor](https://github.com/Ciantic/VirtualDesktopAccessor) (embedded).
   `DesktopShadows.cs` keeps the windows' shadows on the desktop on a thread of its own,
-  told of every move by a WinEvent hook.
+  told of every move by a WinEvent hook. `TaskbarButtons.cs` knows which button is whose and
+  takes the clicks on an app's button; `Engine.Flights.cs` flies minimized windows into the
+  taskbar and back, with Windows' own animation off (`WindowAnimation.cs`).
+  `AltTab.cs` is Alt+Tab, on a thread of its own: it takes its keys from the Win+Tab
+  keyboard hook (`WinTab.cs`), keeps the order apps were used in from a WinEvent hook, and
+  draws its row of icons; `AppSwitch.cs` in `Lanes.Core` orders and groups the apps.
 - CI (`.github/workflows/ci.yml`) runs `Lanes.exe --demo` on a Windows runner set to dark
   theme at 1920×1080: it sets up desktops with sample windows, performs the swipes with
   made-up touchpad reports, checks that clicks pass through Lanes' window between swipes,

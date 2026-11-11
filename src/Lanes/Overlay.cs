@@ -249,11 +249,27 @@ sealed class Thumbnail : IDisposable
     {
         Window = window;
         if (DwmRegisterThumbnail(overlay, window, out _id) != 0) _id = IntPtr.Zero;
-        // Leave out the invisible resize borders around the visible frame.
-        GetWindowRect(window, out var wr);
-        var fr = Frame(window);
+        // Leave out the invisible resize borders around the visible frame; a minimized window's
+        // picture is of it as it was, where it comes back to.
+        var (wr, fr) = Native.IsIconic(window) ? AppWindows.Restored(window) : (Rect(window), Frame(window));
         _source = new RECT(fr.Left - wr.Left, fr.Top - wr.Top, fr.Right - wr.Left, fr.Bottom - wr.Top);
     }
+
+    Thumbnail(IntPtr overlay, IntPtr window, RECT source, bool _)
+    {
+        Window = window;
+        if (DwmRegisterThumbnail(overlay, window, out _id) != 0) _id = IntPtr.Zero;
+        _source = source;
+    }
+
+    // The whole window, its invisible borders too.
+    public static Thumbnail Whole(IntPtr overlay, IntPtr window)
+    {
+        var r = Native.IsIconic(window) ? AppWindows.Restored(window).Window : Rect(window);
+        return new Thumbnail(overlay, window, new RECT(0, 0, r.Width, r.Height), true);
+    }
+
+    static RECT Rect(IntPtr window) => GetWindowRect(window, out var r) ? r : default;
 
     // The part of `window` that is on the screen inside `area`.
     public Thumbnail(IntPtr overlay, IntPtr window, RECT area)

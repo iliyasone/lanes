@@ -9,14 +9,20 @@ namespace Lanes;
 // An app as the taskbar groups its windows: the id Windows gives it (see AppIds) and its name.
 sealed record AppRef(string Id, string Name);
 
-// Where each app's button is on the taskbar: a window minimized in the overview flies into its
-// app's button. Windows draws its taskbar itself; which button is where, Lanes reads through UI
-// Automation (each button's "Appid: ..." and place) whenever the pointer comes over the
-// taskbar, on a thread of its own. A low-level mouse hook on another thread only tells when the
-// pointer is there.
+// Where each app's button is on the taskbar, and its windows: a minimized window flies into its
+// app's button, and a click on the button of an app with several windows shows them (or brings a
+// minimized one back) instead of Windows' own answer. Windows draws its taskbar itself; which
+// button is where, Lanes reads through UI Automation (each button's "Appid: ..." and place)
+// whenever the pointer comes over the taskbar, on a thread of its own. A low-level mouse hook on
+// another thread tells when the pointer is there, and takes those clicks (a click with Shift,
+// Ctrl or Alt, a middle or right click, still go to Windows).
 sealed class TaskbarButtons
 {
-    public sealed record Button(AppRef App, RECT Rect);
+    public sealed record Button(AppRef App, RECT Rect, IntPtr[] Windows);
+
+    // A click on a button Lanes takes, once the mouse button is let go.
+    public Action<Button>? Clicked;
+    Button? _pressed;
 
     volatile Button[] _buttons = Array.Empty<Button>();
     volatile RECT[] _bars = Array.Empty<RECT>();
@@ -51,8 +57,35 @@ sealed class TaskbarButtons
 
     IntPtr OnMouse(int code, IntPtr wParam, IntPtr lParam)
     {
-        if (code >= 0 && (int)wParam == WM_MOUSEMOVE) Near(Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam).Pt);
+        if (code >= 0)
+        {
+            int m = (int)wParam;
+            var pt = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam).Pt;
+            if (m == WM_MOUSEMOVE) Near(pt);
+            else if (m == WM_LBUTTONDOWN && Taken(pt) is { } b)
+            {
+                _pressed = b;
+                return 1;
+            }
+            else if (m == WM_LBUTTONUP && _pressed is { } p)
+            {
+                _pressed = null;
+                Clicked?.Invoke(p);
+                return 1;
+            }
+        }
         return CallNextHookEx(_hook, code, wParam, lParam);
+    }
+
+    // The button under the pointer, if Lanes answers a click on it: its app has several windows,
+    // or one that is minimized.
+    Button? Taken(POINT pt)
+    {
+        if (Clicked == null || !_bars.Any(r => Inside(r, pt)) || GetAsyncKeyState(0x10) < 0 || GetAsyncKeyState(0x11) < 0 || GetAsyncKeyState(0x12) < 0) return null;
+        var b = _buttons.FirstOrDefault(x => Inside(x.Rect, pt));
+        if (b == null || !OverTaskbar(pt)) return null;
+        var live = b.Windows.Where(IsWindow).ToArray();
+        return live.Length >= 2 || live.Length == 1 && IsIconic(live[0]) ? b : null;
     }
 
     static bool Inside(RECT r, POINT pt) => pt.X >= r.Left && pt.X < r.Right && pt.Y >= r.Top && pt.Y < r.Bottom;
@@ -118,7 +151,12 @@ sealed class TaskbarButtons
                 }
             }
         _bars = bars.ToArray();
-        return found.Select(b => new Button(new AppRef(b.Id, TaskbarNames.App(b.Name)), b.Rect)).ToArray();
+        var windows = AppWindows.All();
+        return found.Select(b =>
+        {
+            var app = new AppRef(b.Id, TaskbarNames.App(b.Name));
+            return new Button(app, b.Rect, windows.Where(h => AppIds.Is(h, app)).ToArray());
+        }).ToArray();
     }
 
     // The button of `window`'s app, as last read.
@@ -131,6 +169,7 @@ sealed class TaskbarButtons
     [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int id, HookProc proc, IntPtr module, uint thread);
     [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT pt);
+    [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vk);
 }
 
 // The id Windows groups an app's windows by on the taskbar ("Chrome", "Telegram.TelegramDesktop",
