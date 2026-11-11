@@ -63,6 +63,7 @@ sealed partial class Engine : IGestureSink
     public IntPtr OverlayHandle => _overlay?.Handle ?? IntPtr.Zero;
     public TaskbarButtons? Buttons { get; private set; }
     WinTab? _winTab;
+    AltTab? _altTab;
     public event Action<string>? Status;
 
     public Engine(Settings settings, bool demo)
@@ -124,7 +125,9 @@ sealed partial class Engine : IGestureSink
                 SetUpLanes();
                 Ready = true;
                 Buttons = new TaskbarButtons();
-                _winTab = new WinTab(() => Post(ToggleOverview));
+                _altTab = new AltTab(this);
+                Desktops.Pin(_altTab.Handle);
+                _winTab = new WinTab(() => Post(ToggleOverview), _altTab.OnKey);
             }
             else Status?.Invoke("This Windows version is not supported");
             PrepareWallpapers();
@@ -1047,6 +1050,11 @@ sealed partial class Engine : IGestureSink
     }
 
     public void OpenOverviewFromMenu() => Post(OpenOverview);
+
+    public void Bring(IntPtr window) => Post(() => AppWindows.Activate(window));
+
+    // The overview is open or a swipe is going on; read from other threads.
+    public bool Busy => Volatile.Read(ref _overview) != null || Volatile.Read(ref _switch) != null;
 
     void OpenOverview()
     {

@@ -65,7 +65,7 @@ static class AppWindows
 
     // Whether this is an app's own window (the ones the overview shows and the desktop gives
     // shadows), with its frame and title: not a tool window, a pop-up of another window,
-    // something over the apps or a part of the shell.
+    // something over the apps or a part of the shell. A minimized one is, whatever its frame.
     public static bool IsApp(IntPtr h, out RECT frame, out string title)
     {
         frame = default;
@@ -80,7 +80,7 @@ static class AppWindows
         title = WindowText(h);
         if (title.Length == 0) return false;
         frame = Frame(h);
-        return frame.Width >= 40 && frame.Height >= 40;
+        return IsIconic(h) || frame.Width >= 40 && frame.Height >= 40;
     }
 
     // "Telegram Desktop", "Google Chrome": the product name of the window's program. Store apps
