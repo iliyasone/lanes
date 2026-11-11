@@ -138,6 +138,8 @@ desktop if it is minimized; Esc puts the row away. A quick Alt+Tab switches with
 showing. The row is light or dark as Windows is, and its icons get smaller only when there are
 more apps than fit across the screen.
 
+![Alt+Tab](docs/screenshots/alt-tab.png)
+
 ### An app's windows
 
 A click on the taskbar button of an app with several windows shows them all, as the overview
@@ -235,7 +237,8 @@ click it.
 - A window that is on every desktop ("Show this window on all desktops") gets its shadow back
   a moment after each switch.
 - The taskbar button of an app with several windows cannot be dragged to another place: Lanes
-  takes the press. Windows' own row of thumbnails still comes up over such a button.
+  takes the press. Windows' own row of thumbnails still comes up over such a button while
+  the pointer rests on it, over the app's windows shown large too; it goes as the pointer leaves.
 - A minimized window that comes back by itself (its app, a notification) appears at once, without
   flying out of the taskbar.
 

@@ -186,7 +186,6 @@ sealed partial class Engine
         // other windows of the desktop shown, which fade away under them, and a minimized one
         // picked, which comes back as the overview closes.
         public AppRef? App;
-        public double AppSince;
         public List<(ShadowPictures Shadow, Thumbnail Thumb, Box At)> Others = new();
         public IntPtr? Restore;
         public bool Open => !Tracking && Spring == null && Zoom == null && P > 0.99;
@@ -665,7 +664,6 @@ sealed partial class Engine
             LookAgain(o);
             if (_lifted != null) LiftTaskbar(true);
         }
-        if (o.App != null) HideThumbnails(o);
         if (o.Swipe != null) StepInnerSwipe(now);
         if (o.Going is Guid going && o.Zoom == null)
         {

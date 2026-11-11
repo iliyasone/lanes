@@ -160,28 +160,9 @@ sealed partial class Engine
         if (windows.Count == 0) return;
         _touchCaptureOf = _current;
         BeginOverview(app, windows);
-        _overview!.AppSince = Now;
         _overview!.Tracking = false;
         SettleOverview(1, 0);
     }
-
-    // Windows' own row of thumbnails comes up over the button just clicked, as the pointer rests
-    // there: a popup of the taskbar's, in a layer above every window Lanes can have. For a moment
-    // after an app's windows are shown it is put away; later ones (the pointer on another
-    // button, a right click) stay.
-    void HideThumbnails(OverviewState o)
-    {
-        if (Now - o.AppSince > 2) return;
-        if (TaskbarWindow() is not IntPtr bar) return;
-        GetWindowThreadProcessId(bar, out uint explorer);
-        for (IntPtr h = IntPtr.Zero; (h = FindWindowEx(IntPtr.Zero, h, "Xaml_WindowedPopupClass", null)) != IntPtr.Zero;)
-            if (IsWindowVisible(h) && GetWindowThreadProcessId(h, out uint pid) != 0 && pid == explorer)
-            {
-                ShowWindow(h, SW_HIDE);
-                Log.Write("taskbar: Windows' thumbnails put away");
-            }
-    }
-
 
     delegate void WinEventProc(IntPtr hook, uint ev, IntPtr hwnd, int obj, int child, uint thread, uint time);
     [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr module, WinEventProc proc, uint pid, uint thread, uint flags);
