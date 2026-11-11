@@ -232,6 +232,7 @@ static class Demo
                     k.DeleteValue("VirtualDesktopTaskbarFilter", false);
                 if (fx != IntPtr.Zero) PostMessage(fx, 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero);
             }
+            await AltTab(engine, dir);
             Tray.Instance?.ShowMenu(new Point(1800, 1000));
             await Task.Delay(800);
             engine.Screenshot(Path.Combine(dir, "6-tray-menu.png"));
@@ -278,7 +279,7 @@ static class Demo
     }
 
     [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string? title);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string? cls, string? title);
     [DllImport("user32.dll")] static extern bool PostMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessageTimeout(IntPtr hwnd, int msg, IntPtr wParam, string lParam, int flags, int timeout, out IntPtr result);
     [DllImport("user32.dll")] static extern void mouse_event(uint flags, int dx, int dy, uint data, IntPtr extra);
@@ -510,6 +511,42 @@ static class Demo
         form?.Close();
         try { browser?.Kill(entireProcessTree: true); } catch { }
         await Task.Delay(800);
+    }
+
+    // Alt+Tab with Alt held through two Tabs: the switcher's panel, then the app picked in front.
+    // File Explorer and Notepad, two programs other than these test windows, are the last used,
+    // so the second Tab picks the test windows' app.
+    static async Task AltTab(Engine engine, string dir)
+    {
+        System.Diagnostics.Process.Start("explorer.exe", @"/n,C:\Windows");
+        IntPtr fx = IntPtr.Zero, pad = IntPtr.Zero;
+        for (int i = 0; i < 60 && fx == IntPtr.Zero; i++) { await Task.Delay(100); fx = FindWindow("CabinetWClass", null); }
+        await Task.Delay(800);
+        try { System.Diagnostics.Process.Start("notepad.exe"); } catch (Exception e) { Log.Write($"alt+tab: no Notepad: {e.Message}"); }
+        for (int i = 0; i < 60 && pad == IntPtr.Zero; i++) { await Task.Delay(100); pad = FindWindow("Notepad", null); }
+        await Task.Delay(1000);
+        Log.Write($"alt+tab: in front before: {Describe(GetForegroundWindow())}");
+        // The panel is left out of screen pictures; here it is wanted in them.
+        Native.SetWindowDisplayAffinity(FindWindow(null, "Lanes switcher"), Native.WDA_NONE);
+        Key(0xA4, false);
+        Key(0x09, false); Key(0x09, true);
+        await Task.Delay(150);
+        Key(0x09, false); Key(0x09, true);
+        await Task.Delay(400);
+        engine.Screenshot(Path.Combine(dir, "alt-tab.png"));
+        await Task.Delay(400);
+        Key(0xA4, true);
+        await Task.Delay(1000);
+        Log.Write($"alt+tab: in front after: {Describe(GetForegroundWindow())}");
+        foreach (var w in new[] { pad, fx })
+            if (w != IntPtr.Zero) PostMessage(w, 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero);
+        await Task.Delay(800);
+    }
+
+    static void Key(ushort vk, bool up)
+    {
+        var input = new Native.INPUT { Type = Native.INPUT_KEYBOARD, U = new Native.InputUnion { Keyboard = new Native.KEYBDINPUT { Vk = vk, Flags = up ? Native.KEYEVENTF_KEYUP : 0 } } };
+        Native.SendInput(1, new[] { input }, Marshal.SizeOf<Native.INPUT>());
     }
 
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();

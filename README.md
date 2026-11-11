@@ -125,6 +125,18 @@ opens.
 The blue ring is the desktop you are on; the column it stands in holds, in every lane, the
 desktop a swipe up or down lands on.
 
+### Alt+Tab
+
+Alt+Tab works as Cmd+Tab on a Mac: it goes between apps, not windows. Held a moment, it shows
+a row of large app icons in the middle of the screen, with the name of the one picked under it.
+The row has every app with a window on any desktop, minimized ones too, in the order you last
+used them, so the first Tab picks the app you were in before. Each Tab moves one to the right
+and round from the end, Shift+Tab or the arrow keys go either way, and Alt+Shift+Tab picks the
+last one. Let go of Alt and the app's window you used last comes to the front, on its own
+desktop if it is on another; Esc puts the row away. A quick Alt+Tab switches without the row
+showing. The row is light or dark as Windows is, and its icons get smaller only when there are
+more apps than fit across the screen.
+
 ### Tray menu
 
 ![Tray menu](docs/screenshots/6-tray-menu.png)
@@ -217,6 +229,9 @@ click it.
   [VirtualDesktopAccessor](https://github.com/Ciantic/VirtualDesktopAccessor) (embedded).
   `DesktopShadows.cs` keeps the windows' shadows on the desktop on a thread of its own,
   told of every move by a WinEvent hook.
+  `AltTab.cs` is Alt+Tab, on a thread of its own: it takes its keys from the Win+Tab
+  keyboard hook (`WinTab.cs`), keeps the order apps were used in from a WinEvent hook, and
+  draws its row of icons; `AppSwitch.cs` in `Lanes.Core` orders and groups the apps.
 - CI (`.github/workflows/ci.yml`) runs `Lanes.exe --demo` on a Windows runner set to dark
   theme at 1920×1080: it sets up desktops with sample windows, performs the swipes with
   made-up touchpad reports, checks that clicks pass through Lanes' window between swipes,
