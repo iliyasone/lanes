@@ -158,32 +158,27 @@ sealed partial class Engine
             return;
         }
         if (windows.Count == 0) return;
-        HideThumbnails();
         _touchCaptureOf = _current;
         BeginOverview(app, windows);
+        _overview!.AppSince = Now;
         _overview!.Tracking = false;
         SettleOverview(1, 0);
     }
 
-    // Windows' own row of thumbnails, which comes up over the button the pointer rests on, is
-    // put away while an app's windows are shown large. Any other window of Explorer's that comes
-    // over them is named in the log once.
-    void HideThumbnails()
+    // Windows' own row of thumbnails comes up over the button just clicked, as the pointer rests
+    // there (a popup of the taskbar's): for a moment after an app's windows are shown, the
+    // overlay goes back over it. Later ones (the pointer on another button, a right click) stay.
+    void CoverThumbnails(OverviewState o)
     {
+        if (Now - o.AppSince > 2) return;
         for (IntPtr h = GetTopWindow(IntPtr.Zero); h != IntPtr.Zero && h != _overlay.Handle; h = GetWindow(h, 2 /* GW_HWNDNEXT */))
-        {
-            if (!IsWindowVisible(h) || Cloaked(h)) continue;
-            string cls = ClassName(h);
-            if (cls == "TaskListThumbnailWnd")
+            if (IsWindowVisible(h) && !Cloaked(h) && ClassName(h) == "Xaml_WindowedPopupClass")
             {
-                ShowWindow(h, SW_HIDE);
-                Log.Write("taskbar: Windows' thumbnails put away");
+                _overlay.Place();
+                Log.Write("taskbar: Windows' thumbnails covered");
+                return;
             }
-            else if (_seenOver.Add(cls)) Log.Write($"over an app's windows: {cls} \"{WindowText(h)}\"");
-        }
     }
-
-    readonly HashSet<string> _seenOver = new();
 
     [DllImport("user32.dll")] static extern IntPtr GetTopWindow(IntPtr parent);
 
