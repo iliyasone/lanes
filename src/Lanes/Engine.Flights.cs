@@ -166,21 +166,22 @@ sealed partial class Engine
     }
 
     // Windows' own row of thumbnails comes up over the button just clicked, as the pointer rests
-    // there (a popup of the taskbar's): for a moment after an app's windows are shown, the
-    // overlay goes back over it. Later ones (the pointer on another button, a right click) stay.
-    void CoverThumbnails(OverviewState o)
+    // there: a popup of the taskbar's, in a layer above every window Lanes can have. For a moment
+    // after an app's windows are shown it is put away; later ones (the pointer on another
+    // button, a right click) stay.
+    void HideThumbnails(OverviewState o)
     {
         if (Now - o.AppSince > 2) return;
-        for (IntPtr h = GetTopWindow(IntPtr.Zero); h != IntPtr.Zero && h != _overlay.Handle; h = GetWindow(h, 2 /* GW_HWNDNEXT */))
-            if (IsWindowVisible(h) && !Cloaked(h) && ClassName(h) == "Xaml_WindowedPopupClass")
+        if (TaskbarWindow() is not IntPtr bar) return;
+        GetWindowThreadProcessId(bar, out uint explorer);
+        for (IntPtr h = IntPtr.Zero; (h = FindWindowEx(IntPtr.Zero, h, "Xaml_WindowedPopupClass", null)) != IntPtr.Zero;)
+            if (IsWindowVisible(h) && GetWindowThreadProcessId(h, out uint pid) != 0 && pid == explorer)
             {
-                _overlay.Place();
-                Log.Write("taskbar: Windows' thumbnails covered");
-                return;
+                ShowWindow(h, SW_HIDE);
+                Log.Write("taskbar: Windows' thumbnails put away");
             }
     }
 
-    [DllImport("user32.dll")] static extern IntPtr GetTopWindow(IntPtr parent);
 
     delegate void WinEventProc(IntPtr hook, uint ev, IntPtr hwnd, int obj, int child, uint thread, uint time);
     [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr module, WinEventProc proc, uint pid, uint thread, uint flags);

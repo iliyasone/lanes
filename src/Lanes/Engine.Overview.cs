@@ -665,7 +665,7 @@ sealed partial class Engine
             LookAgain(o);
             if (_lifted != null) LiftTaskbar(true);
         }
-        if (o.App != null) CoverThumbnails(o);
+        if (o.App != null) HideThumbnails(o);
         if (o.Swipe != null) StepInnerSwipe(now);
         if (o.Going is Guid going && o.Zoom == null)
         {
