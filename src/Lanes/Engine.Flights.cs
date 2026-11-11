@@ -158,10 +158,23 @@ sealed partial class Engine
             return;
         }
         if (windows.Count == 0) return;
+        HideThumbnails();
         _touchCaptureOf = _current;
         BeginOverview(app, windows);
         _overview!.Tracking = false;
         SettleOverview(1, 0);
+    }
+
+    // Windows' own row of thumbnails, up over the button the pointer rests on, goes: the app's
+    // windows are about to be shown large. (Explorer shows it again when the pointer moves on.)
+    static void HideThumbnails()
+    {
+        for (IntPtr h = IntPtr.Zero; (h = FindWindowEx(IntPtr.Zero, h, "TaskListThumbnailWnd", null)) != IntPtr.Zero;)
+            if (IsWindowVisible(h))
+            {
+                ShowWindow(h, SW_HIDE);
+                Log.Write("taskbar: Windows' thumbnails put away");
+            }
     }
 
     delegate void WinEventProc(IntPtr hook, uint ev, IntPtr hwnd, int obj, int child, uint thread, uint time);

@@ -199,6 +199,7 @@ static class Demo
             await WindowButtons(engine, dir, editor);
             await AppWindowsShown(engine, dir, top);
             await FullScreenTaskbar(engine, dir);
+            await AltTab(engine, dir);
             // With Windows' setting that Lanes turns on, the taskbar keeps the apps of other desktops.
             {
                 // A File Explorer window (another program than these test windows) moved to the
@@ -213,12 +214,12 @@ static class Demo
                 using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"))
                     k.SetValue("VirtualDesktopTaskbarFilter", 1, Microsoft.Win32.RegistryValueKind.DWord);
                 long t0 = Environment.TickCount64;
-                SendMessageTimeout((IntPtr)0xFFFF, 0x001A, IntPtr.Zero, "TraySettings", 2, 3000, out _);
+                await Bounded("telling the taskbar", () => SendMessageTimeout((IntPtr)0xFFFF, 0x001A, IntPtr.Zero, "TraySettings", 2, 3000, out _));
                 Log.Write($"demo: taskbar told of this desktop's windows only in {Environment.TickCount64 - t0} ms");
                 await Task.Delay(2000);
                 using var shotBefore = TaskbarShot(Path.Combine(dir, "16-taskbar-this-desktop.png"));
                 t0 = Environment.TickCount64;
-                TaskbarSetting.ShowAllDesktops();
+                await Bounded("turning the setting on", TaskbarSetting.ShowAllDesktops);
                 Log.Write($"demo: taskbar told of all desktops' windows in {Environment.TickCount64 - t0} ms");
                 await Task.Delay(2000);
                 using var shotAfter = TaskbarShot(Path.Combine(dir, "17-taskbar-all-desktops.png"));
@@ -227,12 +228,11 @@ static class Demo
                     for (int x = shotBefore.Width / 4; x < shotBefore.Width * 3 / 4; x++)
                         if (shotBefore.GetPixel(x, y) != shotAfter.GetPixel(x, y)) changed++;
                 Log.Write($"taskbar: {changed} pixels in the middle changed when windows of all desktops were turned on");
-                TaskbarSetting.Restore();
+                await Bounded("giving the setting back", TaskbarSetting.Restore);
                 using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"))
                     k.DeleteValue("VirtualDesktopTaskbarFilter", false);
                 if (fx != IntPtr.Zero) PostMessage(fx, 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero);
             }
-            await AltTab(engine, dir);
             Tray.Instance?.ShowMenu(new Point(1800, 1000));
             await Task.Delay(800);
             engine.Screenshot(Path.Combine(dir, "6-tray-menu.png"));
@@ -245,6 +245,13 @@ static class Demo
             await Task.Delay(500);
             Application.Exit();
         }
+    }
+
+    // Telling every window of a setting can stall on the runner: the demo goes on after a while.
+    static async Task Bounded(string what, Action a)
+    {
+        var t = Task.Run(a);
+        if (await Task.WhenAny(t, Task.Delay(10000)) != t) Log.Write($"demo: {what} has not returned in 10 s; going on");
     }
 
     static double _x0 = 0.3, _y0 = 0.3;
