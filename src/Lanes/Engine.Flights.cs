@@ -165,17 +165,27 @@ sealed partial class Engine
         SettleOverview(1, 0);
     }
 
-    // Windows' own row of thumbnails, up over the button the pointer rests on, goes: the app's
-    // windows are about to be shown large. (Explorer shows it again when the pointer moves on.)
-    static void HideThumbnails()
+    // Windows' own row of thumbnails, which comes up over the button the pointer rests on, is
+    // put away while an app's windows are shown large. Any other window of Explorer's that comes
+    // over them is named in the log once.
+    void HideThumbnails()
     {
-        for (IntPtr h = IntPtr.Zero; (h = FindWindowEx(IntPtr.Zero, h, "TaskListThumbnailWnd", null)) != IntPtr.Zero;)
-            if (IsWindowVisible(h))
+        for (IntPtr h = GetTopWindow(IntPtr.Zero); h != IntPtr.Zero && h != _overlay.Handle; h = GetWindow(h, 2 /* GW_HWNDNEXT */))
+        {
+            if (!IsWindowVisible(h) || Cloaked(h)) continue;
+            string cls = ClassName(h);
+            if (cls == "TaskListThumbnailWnd")
             {
                 ShowWindow(h, SW_HIDE);
                 Log.Write("taskbar: Windows' thumbnails put away");
             }
+            else if (_seenOver.Add(cls)) Log.Write($"over an app's windows: {cls} \"{WindowText(h)}\"");
+        }
     }
+
+    readonly HashSet<string> _seenOver = new();
+
+    [DllImport("user32.dll")] static extern IntPtr GetTopWindow(IntPtr parent);
 
     delegate void WinEventProc(IntPtr hook, uint ev, IntPtr hwnd, int obj, int child, uint thread, uint time);
     [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr module, WinEventProc proc, uint pid, uint thread, uint flags);
