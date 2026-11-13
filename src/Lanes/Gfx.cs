@@ -15,6 +15,7 @@ namespace Lanes;
 sealed class Gfx : IDisposable
 {
     public readonly ID3D11Device Device;
+    readonly ID3D11DeviceContext _context;
     readonly IDXGIFactory2 _factory;
     readonly ID2D1Factory1 _d2dFactory;
     readonly ID2D1Device _d2dDevice;
@@ -38,6 +39,7 @@ sealed class Gfx : IDisposable
             Software = true;
         }
         Device = device!;
+        _context = Device.ImmediateContext;
         using var dxgiDevice = Device.QueryInterface<IDXGIDevice1>();
         dxgiDevice.MaximumFrameLatency = 1;
         using var adapter = dxgiDevice.GetAdapter();
@@ -110,6 +112,12 @@ sealed class Gfx : IDisposable
         Frames.Add(System.Diagnostics.Stopwatch.GetTimestamp());
         Thumbnail.Release();
     }
+
+    // Direct3D frees the GPU memory of a released picture only once its queue of work is handed
+    // to the GPU, which showing a frame does. Between swipes Lanes replaces pictures without
+    // drawing (the screen's picture every 5 seconds), so it hands the queue over itself: else
+    // every replaced picture stays, some 8 MB each on a 1080p screen, until Windows runs out of memory.
+    public void Flush() => _context.Flush();
 
     // When each frame was handed over, for the timing line in the log after each animation.
     public readonly List<long> Frames = new();

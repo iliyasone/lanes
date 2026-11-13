@@ -368,6 +368,8 @@ sealed partial class Engine : IGestureSink
     void Idle()
     {
         if (!Ready || _overlay.Shown || _switch != null || _overview != null || Touching) return;
+        // Pictures let go since the last frame are freed (see Gfx.Flush).
+        _gfx.Flush();
         long now = Environment.TickCount64;
         if (now - _lastWindowCheck >= 1000)
         {
