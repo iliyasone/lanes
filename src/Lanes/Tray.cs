@@ -286,9 +286,9 @@ sealed class Tray : IDisposable
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
             float s = S;
-            using var text = new Font("Segoe UI Variable Text", 10f, FontStyle.Regular);
-            using var bold = new Font("Segoe UI Variable Display", 10.5f, FontStyle.Bold);
-            using var hint = new Font("Segoe UI Variable Text", 9f, FontStyle.Regular);
+            using var text = new Font(UiFont("Segoe UI Variable Text"), 10f, FontStyle.Regular);
+            using var bold = new Font(UiFont("Segoe UI Variable Display"), 10.5f, FontStyle.Bold);
+            using var hint = new Font(UiFont("Segoe UI Variable Text"), 9f, FontStyle.Regular);
             using var white = new SolidBrush(Color.FromArgb(0xF0, 0xF0, 0xF0));
             using var grey = new SolidBrush(Color.FromArgb(0x8A, 0x8F, 0x98));
             using var accent = new SolidBrush(Color.FromArgb(0x4C, 0xC2, 0xFF));

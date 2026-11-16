@@ -208,7 +208,7 @@ sealed class Gfx : IDisposable
     public IDWriteTextFormat Font(float size, FontWeight weight = FontWeight.Normal, bool centred = false, string? family = null)
     {
         if (_formats.TryGetValue((size, weight, centred, family), out var f)) return f;
-        string name = family ?? (size >= 14 ? "Segoe UI Variable Display" : "Segoe UI Variable Text");
+        string name = Native.UiFont(family ?? (size >= 14 ? "Segoe UI Variable Display" : "Segoe UI Variable Text"));
         try { f = Write.CreateTextFormat(name, null, weight, Vortice.DirectWrite.FontStyle.Normal, FontStretch.Normal, size, "en-us"); }
         catch { f = Write.CreateTextFormat("Segoe UI", null, weight, Vortice.DirectWrite.FontStyle.Normal, FontStretch.Normal, size, "en-us"); }
         f.WordWrapping = WordWrapping.NoWrap;
