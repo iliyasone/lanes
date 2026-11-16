@@ -30,7 +30,7 @@ static class Program
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
-        Log.Write($"Lanes {Version} starting{(demo ? " (demo)" : "")}");
+        Log.Write($"Lanes {Version} starting{(demo ? " (demo)" : "")} on Windows build {Environment.OSVersion.Version.Build}");
         AppDomain.CurrentDomain.UnhandledException += (_, e) => Log.Write($"crash: {e.ExceptionObject}");
 
         var settings = Settings.Load();

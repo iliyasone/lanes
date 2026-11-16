@@ -1,6 +1,6 @@
 # Lanes
 
-Lanes of virtual desktops on Windows 11, one above the other, moved between with
+Lanes of virtual desktops on Windows 11 and 10, one above the other, moved between with
 four-finger swipes that follow your fingers, and an overview of every lane on a
 three-finger swipe up. Made for an Apple Magic Trackpad; works with any precision touchpad.
 
@@ -182,7 +182,8 @@ It opens against the taskbar, wherever the taskbar is.
 
 ## Install
 
-Requires Windows 11 (tested on 24H2 and 26H2), the
+Requires Windows 11 24H2 or later (tested on 24H2 and 26H2) or Windows 10 22H2 (see
+[On Windows 10](#on-windows-10)), the
 [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0), and a
 precision touchpad. A Magic Trackpad becomes one with the
 [mac-precision-touchpad](https://github.com/imbushuo/mac-precision-touchpad) driver.
@@ -198,6 +199,20 @@ It sets Windows' own four-finger swipes and three-finger up/down to
 *Nothing* (Settings → Bluetooth & devices → Touchpad → Advanced gestures) so the two never
 react to the same swipe, and puts back what you had when it quits. Three-finger
 left/right and taps stay with Windows.
+
+### On Windows 10
+
+Lanes talks to Windows 10's virtual desktops itself (the library it uses on Windows 11 knows
+only Windows 11). Swipes, lanes, the overview and Alt+Tab are meant to work as on Windows 11 —
+not yet tried on a real Windows 10 PC — with these differences:
+
+- A click on a taskbar button is left to Windows (no app's windows view), and a minimized
+  window flies to the middle of the taskbar rather than into its button: Lanes reads the
+  buttons' places from Windows 11's taskbar only.
+- Renaming a desktop needs version 2004 or later.
+- Windows 10 has no Segoe UI Variable font: Lanes' text is in Segoe UI there.
+- Windows' own gestures are under Settings → Devices → Touchpad → Advanced gesture
+  configuration.
 
 `Lanes.exe --uninstall` stops it, gives the gestures and the taskbar setting back (and
 tells Windows to use them again at once), removes the desktops Lanes made — their windows move to one of yours — and

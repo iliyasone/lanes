@@ -5,6 +5,15 @@ namespace Lanes;
 
 static class Native
 {
+    // Windows 11's UI font, or Segoe UI where it is missing (Windows 10).
+    public static string UiFont(string name) => HasVariableFont || !name.StartsWith("Segoe UI Variable") ? name : "Segoe UI";
+    static readonly bool HasVariableFont = HasFont("Segoe UI Variable Text");
+    static bool HasFont(string name)
+    {
+        try { using var f = new System.Drawing.FontFamily(name); return true; }
+        catch (ArgumentException) { return false; }
+    }
+
     public const int WM_INPUT = 0x00FF, WM_MOUSEMOVE = 0x0200, WM_LBUTTONDOWN = 0x0201, WM_LBUTTONUP = 0x0202,
         WM_RBUTTONUP = 0x0205, WM_MBUTTONUP = 0x0208, WM_SYSCOMMAND = 0x0112, WM_KEYDOWN = 0x0100, WM_MOUSEACTIVATE = 0x0021, WM_SETCURSOR = 0x0020,
         WM_NCHITTEST = 0x0084, WM_DISPLAYCHANGE = 0x007E, WM_DPICHANGED = 0x02E0, WM_USER = 0x0400;
