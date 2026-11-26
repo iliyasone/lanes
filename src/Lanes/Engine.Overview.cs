@@ -206,22 +206,27 @@ sealed partial class Engine
             return;
         }
         if (_switch != null) { _ignoring = true; return; }
+        long t0 = Environment.TickCount64;
         LookAtTheme();
         _current = Desktops.Current;
         Remember(_current, TakeTouchCapture());
         RefreshTitles();
         UseArea();
+        long t1 = Environment.TickCount64;
         var o = new OverviewState { Tracking = true, Track = new OverviewTrack(0, _tuning), LastStep = Now, App = app };
         Relayout(o, snap: true);
+        long t2 = Environment.TickCount64;
         o.Page = app == null ? NewPage(_current, o.Strip) : AppPage(o, windows!);
         _overview = o;
+        long t3 = Environment.TickCount64;
         _gfx.Frames.Clear();
         _overlay.Place();
         RenderOverview();
         _overlay.Show();
         // Lanes' pill, if it is still up, goes down as the overview opens (StepLingeringPill).
         if (_map.Shown) _map.Raise();
-        Log.Write($"overview{(app != null ? $" of {app.Name}" : "")}: {o.Page.Windows.Count} windows; {CaptureNote}");
+        Log.Write($"overview{(app != null ? $" of {app.Name}" : "")}: {o.Page.Windows.Count} windows; {CaptureNote}; " +
+            $"picture kept, names {t1 - t0} ms, lanes laid out {t2 - t1} ms, windows {t3 - t2} ms, first frame {Environment.TickCount64 - t3} ms");
     }
 
     // A window's picture in the overlay with its shadow (the same as on the desktop, ShadowLook)
@@ -274,9 +279,10 @@ sealed partial class Engine
         foreach (var t in o.Strip.Tiles) o.TileShown.TryAdd(Key(t), t.Rect);
         o.TileShown.TryAdd(ColumnKey, o.Strip.Column);
         o.TileShown.TryAdd(BandKey, Band(o.Strip));
-        foreach (var t in o.Strip.Tiles)
-            if (t.Kind != TileKind.Desktop) continue;
-            else TilePicture(t.Desktop, (float)t.Rect.W, (float)t.Rect.H);
+        // An app's windows keep the lanes out of sight: no pictures for them.
+        if (o.App == null)
+            foreach (var t in o.Strip.Tiles)
+                if (t.Kind == TileKind.Desktop) TilePicture(t.Desktop, (float)t.Rect.W, (float)t.Rect.H);
         // More or fewer lanes move where the windows may go: they glide there too.
         if (o.Page != null && Math.Abs(o.Strip.SpreadTop - spreadTop) > 0.5) Respread(o.Page, o.Strip, o);
         o.Moving = true;
@@ -406,7 +412,9 @@ sealed partial class Engine
     // closes without another window picked, the full-screen window is the active one again.
     void UpdateHole(OverviewState o)
     {
-        bool hole = o.Open && o.Zoom == null;
+        // Not for an app's windows: the pointer resting on its taskbar button would bring Windows'
+        // own row of thumbnails up over them. There the overlay takes the taskbar's clicks itself.
+        bool hole = o.Open && o.Zoom == null && o.App == null;
         LiftTaskbar(hole && FullScreen(_current));
         _overlay.Hole(hole ? TaskbarOn(_overlay.Monitor) : null);
     }
@@ -1164,6 +1172,16 @@ sealed partial class Engine
         if (o.Hover >= 0 && ButtonAt(o, o.Hover, x, y) is var button and >= 0)
         {
             PressButton(o, o.Hover, button);
+            return;
+        }
+        // Over an app's windows the taskbar is Lanes' live picture of it: a click on an app's
+        // button there is one on the button itself, anywhere else on it closes them.
+        if (o.App != null && OnTaskbar(x, y))
+        {
+            var b = Buttons?.At(new POINT { X = x + _overlay.Area.Left, Y = y + _overlay.Area.Top });
+            Log.Write($"overview click: the taskbar{(b != null ? $", {b.App.Name}" : "")}");
+            if (b != null) ShowApp(b.App);
+            else CloseOverview();
             return;
         }
         int w = HitWindow(o, x, y);

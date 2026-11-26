@@ -36,6 +36,20 @@ public class MotionTests
     }
 
     [Fact]
+    public void AKeyGoesTheWholeScreenOrGivesALittleAtTheEnd()
+    {
+        var s = new SwipeTrack(1536, false, true, _t);
+        Assert.Equal((Outcome.Next, -1536.0, 0.0), s.Key(next: true));
+        var (outcome, target, speed) = s.Key(next: false);
+        Assert.Equal((Outcome.Stay, 0.0), (outcome, target));
+        var sp = new Spring(0, speed, target, _t.SwitchResponse);
+        double furthest = 0;
+        for (double t = 0; t < 1; t += 0.001) furthest = Math.Max(furthest, sp.At(t));
+        Assert.Equal(_t.RubberBand * 1536 / 2, furthest, 0);
+        Assert.True(sp.Done(1));
+    }
+
+    [Fact]
     public void SpringStartsWhereTheFingersLeftItAndSettles()
     {
         var sp = new Spring(-900, -3000, -1536, _t.SwitchResponse);

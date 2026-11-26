@@ -1,23 +1,31 @@
 using System.Runtime.InteropServices;
+using Lanes.Core;
 
 namespace Lanes;
 
 // Win+Tab opens Lanes' overview in place of Windows' Task View (and closes it again). A
 // low-level keyboard hook on a thread of its own keeps the Tab from Windows; the Start menu,
 // which a Win key let go with no other key pressed would open, is held off by a key press that
-// means nothing (as PowerToys does). The same hook gives Alt+Tab its keys (see AltTab).
+// means nothing (as PowerToys does). The same hook gives Alt+Tab its keys (see AltTab), and
+// takes Win+Ctrl+arrows from Windows, which knows only one row of desktops: Lanes moves along
+// your lane with left and right, to the lane above or below with up and down.
 sealed class WinTab
 {
     readonly Action _pressed;
     readonly Func<int, bool, bool> _altTab;
+    readonly Action<Direction> _arrow;
+    readonly Action _arrowsReady;
     IntPtr _hook;
     HookProc? _proc;
     bool _taken;
+    int _arrowTaken;
 
-    public WinTab(Action pressed, Func<int, bool, bool> altTab)
+    public WinTab(Action pressed, Func<int, bool, bool> altTab, Action<Direction> arrow, Action arrowsReady)
     {
         _pressed = pressed;
         _altTab = altTab;
+        _arrow = arrow;
+        _arrowsReady = arrowsReady;
         new Thread(HookLoop) { IsBackground = true, Name = "win+tab" }.Start();
     }
 
@@ -36,6 +44,7 @@ sealed class WinTab
     IntPtr OnKey(int code, IntPtr wParam, IntPtr lParam)
     {
         if (code >= 0 && _altTab(Marshal.ReadInt32(lParam), (int)wParam is 0x0100 or 0x0104)) return 1;
+        if (code >= 0 && Arrow(Marshal.ReadInt32(lParam), (int)wParam is 0x0100 or 0x0104)) return 1;
         if (code >= 0 && Marshal.ReadInt32(lParam) == 0x09 /* VK_TAB */)
         {
             bool down = (int)wParam is 0x0100 or 0x0104;
@@ -57,6 +66,36 @@ sealed class WinTab
             }
         }
         return CallNextHookEx(_hook, code, wParam, lParam);
+    }
+
+    // Win+Ctrl+arrow, without Shift or Alt; held, it repeats. Win or Ctrl going down with the
+    // other held lets Lanes take a picture of the screen ahead, as fingers landing do.
+    bool Arrow(int vk, bool down)
+    {
+        // (Here the key's own state is still as before it went down: held means a repeat.)
+        if (down && vk is 0x5B or 0x5C or 0xA2 or 0xA3 && !Held(vk) && Held(vk is 0x5B or 0x5C ? new[] { 0xA2, 0xA3 } : new[] { 0x5B, 0x5C }))
+        {
+            _arrowsReady();
+            return false;
+        }
+        Direction? way = vk switch { 0x25 => Direction.Left, 0x26 => Direction.Up, 0x27 => Direction.Right, 0x28 => Direction.Down, _ => null };
+        if (way is not Direction w) return false;
+        if (!down)
+        {
+            if (_arrowTaken != vk) return false;
+            _arrowTaken = 0;
+            return true;
+        }
+        if (!Held(0x5B, 0x5C) || !Held(0x11) || Held(0x10) || Held(0x12)) return false;
+        if (_arrowTaken == 0)
+        {
+            // The Start menu stays shut when Win is let go.
+            keybd_event(0xE8, 0, 0, IntPtr.Zero);
+            keybd_event(0xE8, 0, 2 /* KEYEVENTF_KEYUP */, IntPtr.Zero);
+        }
+        _arrowTaken = vk;
+        _arrow(w);
+        return true;
     }
 
     static bool Held(params int[] keys) => keys.Any(k => GetAsyncKeyState(k) < 0);

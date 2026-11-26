@@ -20,9 +20,9 @@ sealed class TaskbarButtons
 {
     public sealed record Button(AppRef App, RECT Rect, IntPtr[] Windows);
 
-    // A click on a button Lanes takes, once the mouse button is let go.
+    // A click on a button Lanes takes, as the mouse button goes down.
     public Action<Button>? Clicked;
-    Button? _pressed;
+    bool _pressed;
 
     volatile Button[] _buttons = Array.Empty<Button>();
     volatile RECT[] _bars = Array.Empty<RECT>();
@@ -62,15 +62,17 @@ sealed class TaskbarButtons
             int m = (int)wParam;
             var pt = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam).Pt;
             if (m == WM_MOUSEMOVE) Near(pt);
+            // Answered as the button goes down, which saves the time it is held: Windows' own
+            // answer would only come as it is let go, but Lanes' takes a moment to show.
             else if (m == WM_LBUTTONDOWN && Taken(pt) is { } b)
             {
-                _pressed = b;
+                _pressed = true;
+                Clicked?.Invoke(b);
                 return 1;
             }
-            else if (m == WM_LBUTTONUP && _pressed is { } p)
+            else if (m == WM_LBUTTONUP && _pressed)
             {
-                _pressed = null;
-                Clicked?.Invoke(p);
+                _pressed = false;
                 return 1;
             }
         }
@@ -87,6 +89,10 @@ sealed class TaskbarButtons
         var live = b.Windows.Where(IsWindow).ToArray();
         return live.Length >= 2 || live.Length == 1 && IsIconic(live[0]) ? b : null;
     }
+
+    // The button of an app with windows at a point of the screen, as last read (the taskbar may
+    // be under Lanes' overlay there).
+    public Button? At(POINT pt) => _buttons.FirstOrDefault(x => Inside(x.Rect, pt) && x.Windows.Any(IsWindow));
 
     static bool Inside(RECT r, POINT pt) => pt.X >= r.Left && pt.X < r.Right && pt.Y >= r.Top && pt.Y < r.Bottom;
 
