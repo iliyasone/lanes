@@ -33,7 +33,6 @@ sealed partial class Engine : IGestureSink
     readonly Dictionary<Guid, Pixels> _snapshots = new();
     readonly Dictionary<Guid, ID2D1Bitmap1> _bitmaps = new();
     readonly Dictionary<Guid, ID2D1Bitmap1> _tilePictures = new();
-    readonly Dictionary<Guid, string> _appOf = new();
     readonly Dictionary<Guid, (Pixels Sharp, Pixels Blurred, string? Path)> _wallpaperPixels = new();
     readonly Dictionary<Guid, (ID2D1Bitmap1 Sharp, ID2D1Bitmap1 Blurred)> _wallpapers = new();
     // Whether a window covered the whole screen (the taskbar hidden) when the picture was taken.
@@ -50,7 +49,7 @@ sealed partial class Engine : IGestureSink
     readonly Dictionary<IntPtr, int> _fingersOn = new();
     bool Touching => _fingersOn.Values.Any(n => n > 0);
     readonly Dictionary<IntPtr, long> _lastReport = new();
-    readonly Dictionary<Guid, string> _titles = new(), _names = new();
+    readonly Dictionary<Guid, string> _titles = new();
     long _lastSnapshot;
 
     SwitchState? _switch;
@@ -130,7 +129,7 @@ sealed partial class Engine : IGestureSink
                 Buttons = new TaskbarButtons { Clicked = b => AppClicked(b.App) };
                 _altTab = new AltTab(this);
                 Desktops.Pin(_altTab.Handle);
-                _winTab = new WinTab(() => Post(ToggleOverview), _altTab.OnKey);
+                _winTab = new WinTab(() => Post(ToggleOverview), _altTab.OnKey, KeySwitch, KeysReady);
             }
             else Status?.Invoke("This Windows version is not supported");
             PrepareWallpapers();
@@ -342,26 +341,20 @@ sealed partial class Engine : IGestureSink
         PrepareWallpapers();
     }
 
-    // Names for the pill and the overview, worked out once per swipe: a name you gave the
-    // desktop, else the app in front on it when it was last seen, else "Desktop N".
+    // Desktops' names for the pill, the overview and the log, worked out once per swipe: the name
+    // you gave a desktop, else "Desktop N", as Windows itself shows it.
     void RefreshTitles()
     {
         _titles.Clear();
-        _names.Clear();
         var all = Desktops.All();
         for (int i = 0; i < all.Count; i++)
         {
             string name = Desktops.Name(all[i]);
-            _names[all[i]] = name.Length > 0 ? name : $"Desktop {i + 1}";
-            if (name.Length == 0 && _appOf.TryGetValue(all[i], out var app)) name = app;
             _titles[all[i]] = name.Length > 0 ? name : $"Desktop {i + 1}";
         }
     }
 
-    string Title(Guid desktop) => _titles.TryGetValue(desktop, out var t) ? t : "Desktop";
-
-    // The name Windows itself shows for a desktop: the one you gave it, or "Desktop N".
-    string WindowsName(Guid desktop) => _names.TryGetValue(desktop, out var t) ? t : $"Desktop {Desktops.IndexOf(desktop) + 1}";
+    string Title(Guid desktop) => _titles.TryGetValue(desktop, out var t) ? t : $"Desktop {Desktops.IndexOf(desktop) + 1}";
 
     // ---------- pictures ----------
 
@@ -448,7 +441,6 @@ sealed partial class Engine : IGestureSink
                 if (_wallpaperPixels.Remove(d, out var wp)) { Retire(wp.Sharp); Retire(wp.Blurred); }
             _windowsSeen.Remove(d);
             _fullScreen.Remove(d);
-            _appOf.Remove(d);
             Log.Write("pictures of a closed desktop let go");
         }
         lock (_retired)
@@ -553,7 +545,6 @@ sealed partial class Engine : IGestureSink
             if (_bitmaps.Remove(d, out var bmp)) bmp.Dispose();
             if (_tilePictures.Remove(d, out var tile)) tile.Dispose();
             _fullScreen[d] = full;
-            if (front != null) _appOf[d] = front.App; else _appOf.Remove(d);
             Repicture(d);
             Log.Write($"picture of desktop {Desktops.IndexOf(d) + 1} {(start != null ? $"took in {string.Join(", ", came!.Select(w => w.App))}" : "made again from its windows")}");
         }));
@@ -617,18 +608,6 @@ sealed partial class Engine : IGestureSink
         _snapshots[desktop] = pixels;
         if (_bitmaps.Remove(desktop, out var bmp)) bmp.Dispose();
         if (_tilePictures.Remove(desktop, out var tile)) tile.Dispose();
-        // The app in front names the desktop in the overview; with only the desktop itself or the
-        // taskbar in front it goes by its number. Something over the apps that is not one of them
-        // (the Snipping Tool's veil, a menu) names nothing: the app under it does.
-        var fg = GetForegroundWindow();
-        if (fg == IntPtr.Zero || ClassName(fg) is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "XamlExplorerHostIslandWindow")
-            _appOf.Remove(desktop);
-        else if (fg != _overlay.Handle && Desktops.OnCurrent(fg))
-        {
-            var front = AppWindows.OnScreen(PointerMonitor().Monitor, _overlay.Handle).LastOrDefault();
-            if (front == null) _appOf.Remove(desktop);
-            else _appOf[desktop] = ClassName(front.Handle) == "CabinetWClass" ? "File Explorer" : front.App;
-        }
         _fullScreen[desktop] = FullScreenInFront(pixels.Width, pixels.Height);
         var monitor = PointerMonitor().Monitor;
         if (!_fullScreen[desktop] && monitor.Width == pixels.Width && monitor.Height == pixels.Height && TaskbarOn(monitor) is RECT bar)
@@ -653,7 +632,7 @@ sealed partial class Engine : IGestureSink
         if (mi.Monitor.Width != fresh.Width || mi.Monitor.Height != fresh.Height) return;
         float s = _overlay.Scale, edge = 10 * s;
         var font = _gfx.Font(14 * s, FontWeight.Normal, centred: true, family: "Segoe UI Variable Text");
-        float pw = Math.Max(_gfx.TextWidth(WindowsName(_current), font) + 69 * s, 160 * s), ph = 48 * s;
+        float pw = Math.Max(_gfx.TextWidth(Title(_current), font) + 69 * s, 160 * s), ph = 48 * s;
         float cx = (mi.Work.Left + mi.Work.Right) / 2f - mi.Monitor.Left, bottom = mi.Work.Bottom - mi.Monitor.Top - 13 * s;
         int l = Math.Max(0, (int)(cx - pw / 2 - edge)), r = Math.Min(fresh.Width, (int)(cx + pw / 2 + edge));
         int t = Math.Max(0, (int)(bottom - ph - edge)), b = Math.Min(fresh.Height, (int)(bottom + edge));
@@ -892,7 +871,6 @@ sealed partial class Engine : IGestureSink
                         if (_bitmaps.Remove(d, out var bmp)) bmp.Dispose();
                         if (_tilePictures.Remove(d, out var tile)) tile.Dispose();
                         _fullScreen[d] = full;
-                        if (front != null) _appOf.TryAdd(d, front.App);
                         Repicture(d);
                     });
                 }
@@ -1072,6 +1050,46 @@ sealed partial class Engine : IGestureSink
     }
 
     // The overview key: opens it, or closes it when it is open.
+    // Win+Ctrl+arrow (see WinTab): the desktop beside you that way, in your lane or in the lane
+    // above or below, as a swipe that goes all the way by itself (where there is none, the
+    // picture gives a little); in the overview, which stays open, as four fingers there.
+    public void KeySwitch(Direction way) => Post(() => KeyStep(way));
+
+    // Win and Ctrl are both down: a picture of the screen for the switch an arrow may start.
+    public void KeysReady() => Post(() =>
+    {
+        if (Ready && !_overlay.Shown && _switch == null && _overview == null && !Touching) StartTouchCapture();
+    });
+
+    void KeyStep(Direction way)
+    {
+        if (!Ready || Touching) return;
+        var axis = way is Direction.Left or Direction.Right ? Axis.Horizontal : Axis.Vertical;
+        bool next = way is Direction.Right or Direction.Down;
+        Outcome outcome;
+        if (_overview != null)
+        {
+            if (_overview is not { Open: true, Drag: null, Going: null, App: null }) return;
+            BeginInnerSwipe(axis);
+            var sw = _overview.Swipe!;
+            (outcome, double target, double speed) = sw.Track.Key(next);
+            sw.Outcome = outcome;
+            sw.Spring = new Spring(0, speed, target, _tuning.SwitchResponse);
+            sw.SpringStart = Now;
+        }
+        else
+        {
+            if (_switch is { Spring: null }) return;
+            BeginSwitch(axis);
+            var s = _switch!;
+            (outcome, double target, double speed) = s.Track.Key(next);
+            s.Outcome = outcome;
+            s.Spring = new Spring(0, speed, target, _tuning.SwitchResponse);
+            s.SpringStart = Now;
+        }
+        Log.Write($"key {way}: {outcome}{(_overview != null ? " in the overview" : "")}");
+    }
+
     void ToggleOverview()
     {
         Log.Write("overview asked for by a key");
@@ -1115,6 +1133,9 @@ sealed partial class Engine : IGestureSink
 
     // For the demo run's log; call on the engine thread (through Ask).
     public int LaneOf(Guid desktop) => _lanes.Locate(desktop)?.Lane ?? -1;
+    // The desktop beside this one that way, if any (demo runs only).
+    public Guid? Beside(Direction way) => _lanes.Neighbor(_current, way);
+
     public string LanesText() => string.Join(" | ", _lanes.Lanes.Select(l => l.Desktops.Count)) + " desktops";
 
     sealed class MessageWindow : NativeWindow

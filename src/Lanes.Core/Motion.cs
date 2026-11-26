@@ -99,6 +99,18 @@ public sealed class SwipeTrack
             return (Outcome.Previous, _page);
         return (Outcome.Stay, 0);
     }
+
+    // A key press toward the next desktop (or the previous one): the picture sets off from rest
+    // and goes the whole screen; where there is none it gives a little (half the stretch a swipe
+    // can have) and springs back. The speed is what a critically damped spring, starting at the
+    // target, needs to reach that far out: it peaks at speed / (w e).
+    public (Outcome Outcome, double Target, double Speed) Key(bool next)
+    {
+        int way = next ? -1 : 1;
+        if (next ? _hasNext : _hasPrevious) return (next ? Outcome.Next : Outcome.Previous, way * _page, 0);
+        double w = 2 * Math.PI / _t.SwitchResponse;
+        return (Outcome.Stay, 0, way * _t.RubberBand * _page / 2 * w * Math.E);
+    }
 }
 
 // The three-finger overview swipe. Progress 0 is the desktop as it is, 1 the overview open.

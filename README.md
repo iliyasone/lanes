@@ -20,6 +20,11 @@ it works in all four directions:
 | 3 fingers down | Closes the overview |
 | 4 fingers in the overview | The next desktop or lane, and the overview stays open |
 
+Win+Ctrl+arrows do the same from the keyboard: left and right along your lane, up and down to
+the lane above or below (on a Mac, Ctrl+arrows go between Spaces, which lie in one row).
+The picture slides over by itself, and where there is no desktop it gives a little; in the
+overview they move as four fingers do there.
+
 Each lane remembers where you were. Say Messages lives in the lane above: from any desktop
 of your lane, a swipe down brings Messages. Go down to the lane below, open a code agent
 there, swipe over to a video, swipe up — you are back where you left your lane, and
@@ -147,7 +152,11 @@ does but without the lanes: each window large, about where it is on the screen, 
 desktop, while the other windows here fade away. They come from every desktop: those of other
 desktops fade in, and minimized ones rise out of the taskbar button. Click one to go to it: a
 window of another desktop takes you there, and a minimized one grows back into its place here.
-A click on the same button again, Esc, or a click on empty space closes it.
+They come up as the mouse button goes down. While they are shown the taskbar is Lanes' live
+picture of it, which takes the pointer from Windows' own, so Windows' row of thumbnails does not
+come up over them (and goes, if it was up before the click): a click on another app's button
+there shows that app's windows, and a click on the same button again, anywhere else on the
+taskbar, Esc, or a click on empty space closes them.
 
 An app with one window works as Windows has it (the click brings it to the front, or minimizes
 it when it is in front), except that a minimized window comes back to the desktop you are on.
@@ -248,12 +257,12 @@ click it.
 - Windows keeps its own copy of the gesture settings; Lanes tells it to reload them through
   the same undocumented interface the Settings app uses. If a future Windows breaks that,
   open Settings → Touchpad once and Windows reloads them.
-- Windows' own Task View and Ctrl+Win+arrows still see one row of desktops.
+- Windows' own Task View still sees one row of desktops.
 - A window that is on every desktop ("Show this window on all desktops") gets its shadow back
   a moment after each switch.
 - The taskbar button of an app with several windows cannot be dragged to another place: Lanes
-  takes the press. Windows' own row of thumbnails still comes up over such a button while
-  the pointer rests on it, over the app's windows shown large too; it goes as the pointer leaves.
+  takes the press. Windows' own row of thumbnails still comes up over such a button while the
+  pointer rests on it before a click.
 - A minimized window that comes back by itself (its app, a notification) appears at once, without
   flying out of the taskbar.
 
@@ -282,7 +291,7 @@ click it.
   takes the clicks on an app's button; `Engine.Flights.cs` flies minimized windows into the
   taskbar and back, with Windows' own animation off (`WindowAnimation.cs`).
   `AltTab.cs` is Alt+Tab, on a thread of its own: it takes its keys from the Win+Tab
-  keyboard hook (`WinTab.cs`), keeps the order apps were used in from a WinEvent hook, and
+  keyboard hook (`WinTab.cs`, which also takes Win+Ctrl+arrows), keeps the order apps were used in from a WinEvent hook, and
   draws its row of icons; `AppSwitch.cs` in `Lanes.Core` orders and groups the apps.
 - CI (`.github/workflows/ci.yml`) runs `Lanes.exe --demo` on a Windows runner set to dark
   theme at 1920×1080: it sets up desktops with sample windows, performs the swipes with

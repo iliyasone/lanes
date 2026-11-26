@@ -196,6 +196,7 @@ static class Demo
             Click(c.Left + c.Width / 2, c.Top + c.Height / 2);
             await Task.Delay(500);
             Log.Write(clicked ? "click reached the window under the overlay" : "CLICK BLOCKED by the overlay");
+            await KeySwitches(engine, dir);
             await WindowButtons(engine, dir, editor);
             await AppWindowsShown(engine, dir, top);
             await FullScreenTaskbar(engine, dir);
@@ -398,14 +399,37 @@ static class Demo
         Log.Write($"app windows: the test windows' taskbar button {(button == null ? "NOT FOUND" : $"at {button.Rect}, {button.Windows.Length} windows")}");
         if (button != null)
         {
+            // Resting there long enough for Windows' own row of thumbnails to come up first.
             MoveTo((button.Rect.Left + button.Rect.Right) / 2, (button.Rect.Top + button.Rect.Bottom) / 2);
+            await Task.Delay(1200);
+            Log.Write($"app windows: before the click Windows' thumbnails {(ThumbnailRows().Count == 0 ? "not shown" : "shown")}; on top: {OnTop()}");
+            engine.Screenshot(Path.Combine(dir, "21a-before-click.png"));
             await Task.Delay(300);
             mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
             mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
+            // A hand on a mouse is never quite still: the pointer moves a little, now over Lanes.
+            await Task.Delay(300);
+            MoveTo((button.Rect.Left + button.Rect.Right) / 2 + 4, (button.Rect.Top + button.Rect.Bottom) / 2);
         }
         else engine.AppClicked(new AppRef(AppIds.Of(terminal) ?? "", AppWindows.AppName(terminal)));
         await Task.Delay(1500);
         engine.Screenshot(Path.Combine(dir, "21-app-windows.png"));
+        // The pointer has rested on the button all along: Windows' own row of thumbnails must not
+        // have come up over the app's windows.
+        var rows = ThumbnailRows();
+        Log.Write($"app windows: Windows' thumbnails {(rows.Count == 0 ? "not shown" : $"SHOWN ({string.Join(", ", rows.Select(Describe))})")}; on top: {OnTop()}");
+        if (button != null)
+        {
+            // A click on the same button, now under Lanes' picture of the taskbar, puts them away;
+            // one more brings them back.
+            var at = new Point((button.Rect.Left + button.Rect.Right) / 2, (button.Rect.Top + button.Rect.Bottom) / 2);
+            Click(at.X, at.Y);
+            await Task.Delay(1200);
+            bool closed = (await engine.OverviewLayout()).Windows.Count == 0;
+            Click(at.X, at.Y);
+            await Task.Delay(1500);
+            Log.Write($"app windows: the button clicked again {(closed ? "put them away" : "DID NOT PUT THEM AWAY")}, and once more {((await engine.OverviewLayout()).Windows.Count > 0 ? "brought them back" : "DID NOT BRING THEM BACK")}");
+        }
         var (_, shown) = await engine.OverviewLayout();
         Log.Write($"app windows: {shown.Count} shown: {string.Join(", ", shown.Select(w => w.Title))}");
         if (shown.FirstOrDefault(w => w.Title == "Terminal") is { Title: not null } t)
@@ -432,6 +456,41 @@ static class Demo
         Desktops.MoveWindow(terminal, here);
         Desktops.Switch(here);
         await Task.Delay(2500);
+    }
+
+    // The windows shown, front to back, down to Lanes' overlay.
+    static string OnTop() => string.Join("; ", TopWindows().TakeWhile(h => Native.WindowText(h) != "Lanes")
+        .Where(h => !Native.Cloaked(h)).Take(12).Select(Describe));
+
+    // Windows' pop-ups over the taskbar, its row of thumbnails among them.
+    static List<IntPtr> ThumbnailRows() =>
+        TopWindows().Where(h => Native.ClassName(h) == "Xaml_WindowedPopupClass" && !Native.Cloaked(h) && Native.Frame(h).Width > 1).ToList();
+
+    // Win+Ctrl+arrows: up to the lane above (a picture as it goes) and back down, then along
+    // the lane and back; each lands where a swipe that way would.
+    static async Task KeySwitches(Engine engine, string dir)
+    {
+        async Task<string> Press(Direction way, ushort vk, string? shot = null)
+        {
+            var expected = await engine.Ask(() => engine.Beside(way)) ?? Desktops.Current;
+            Key(0x5B, false); Key(0xA2, false); Key(vk, false); Key(vk, true); Key(0xA2, true); Key(0x5B, true);
+            if (shot != null)
+            {
+                await Task.Delay(140);
+                engine.Screenshot(Path.Combine(dir, shot));
+            }
+            await Task.Delay(1500);
+            return $"{way} {(Desktops.Current == expected ? "landed where a swipe would" : "LANDED ELSEWHERE")}";
+        }
+        var start = Desktops.Current;
+        var done = new List<string>
+        {
+            await Press(Direction.Up, 0x26, "24-key-up.png"),
+            await Press(Direction.Down, 0x28),
+            await Press(Direction.Right, 0x27),
+            await Press(Direction.Left, 0x25),
+        };
+        Log.Write($"keys: {string.Join(", ", done)}; {(Desktops.Current == start ? "back where they started" : "NOT BACK")}; in front {Describe(GetForegroundWindow())}");
     }
 
     // Moves the pointer as a mouse would (low-level hooks see it).
