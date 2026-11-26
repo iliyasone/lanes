@@ -402,7 +402,9 @@ static class Demo
             // Resting there long enough for Windows' own row of thumbnails to come up first.
             MoveTo((button.Rect.Left + button.Rect.Right) / 2, (button.Rect.Top + button.Rect.Bottom) / 2);
             await Task.Delay(1200);
-            Log.Write($"app windows: before the click Windows' thumbnails {(ThumbnailRows().Count == 0 ? "not shown" : "shown")}");
+            Log.Write($"app windows: before the click Windows' thumbnails {(ThumbnailRows().Count == 0 ? "not shown" : "shown")}; on top: {OnTop()}");
+            engine.Screenshot(Path.Combine(dir, "21a-before-click.png"));
+            await Task.Delay(300);
             mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
             mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
         }
@@ -412,7 +414,9 @@ static class Demo
         // The pointer has rested on the button all along: Windows' own row of thumbnails must not
         // have come up over the app's windows.
         var rows = ThumbnailRows();
-        Log.Write($"app windows: Windows' thumbnails {(rows.Count == 0 ? "not shown" : $"SHOWN ({string.Join(", ", rows.Select(Describe))})")}");
+        Log.Write($"app windows: Windows' thumbnails {(rows.Count == 0 ? "not shown" : $"SHOWN ({string.Join(", ", rows.Select(Describe))})")}; on top: {OnTop()}");
+        await Task.Delay(2500);
+        engine.Screenshot(Path.Combine(dir, "21b-app-windows-later.png"));
         if (button != null)
         {
             // A click on the same button, now under Lanes' picture of the taskbar, puts them away;
@@ -452,6 +456,10 @@ static class Demo
         Desktops.Switch(here);
         await Task.Delay(2500);
     }
+
+    // The windows shown, front to back, down to Lanes' overlay.
+    static string OnTop() => string.Join("; ", TopWindows().TakeWhile(h => Native.WindowText(h) != "Lanes")
+        .Where(h => !Native.Cloaked(h)).Take(12).Select(Describe));
 
     // Windows' pop-ups over the taskbar, its row of thumbnails among them.
     static List<IntPtr> ThumbnailRows() =>
