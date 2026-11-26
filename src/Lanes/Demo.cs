@@ -407,6 +407,9 @@ static class Demo
             await Task.Delay(300);
             mouse_event(0x2, 0, 0, 0, IntPtr.Zero);
             mouse_event(0x4, 0, 0, 0, IntPtr.Zero);
+            // A hand on a mouse is never quite still: the pointer moves a little, now over Lanes.
+            await Task.Delay(300);
+            MoveTo((button.Rect.Left + button.Rect.Right) / 2 + 4, (button.Rect.Top + button.Rect.Bottom) / 2);
         }
         else engine.AppClicked(new AppRef(AppIds.Of(terminal) ?? "", AppWindows.AppName(terminal)));
         await Task.Delay(1500);
@@ -415,8 +418,6 @@ static class Demo
         // have come up over the app's windows.
         var rows = ThumbnailRows();
         Log.Write($"app windows: Windows' thumbnails {(rows.Count == 0 ? "not shown" : $"SHOWN ({string.Join(", ", rows.Select(Describe))})")}; on top: {OnTop()}");
-        await Task.Delay(2500);
-        engine.Screenshot(Path.Combine(dir, "21b-app-windows-later.png"));
         if (button != null)
         {
             // A click on the same button, now under Lanes' picture of the taskbar, puts them away;
